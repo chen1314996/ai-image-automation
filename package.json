@@ -1,0 +1,21 @@
+{
+  "name": "ai-image-automation",
+  "version": "1.0.0",
+  "description": "自动化AI生图网页控制平台 - 第一阶段基础搭建",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "keywords": [
+    "automation",
+    "ai",
+    "image-generation"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "canvas": "^3.2.3",
+    "express": "^4.18.2",
+    "playwright": "^1.59.1"
+  }
+}

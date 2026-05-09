@@ -1,0 +1,1590 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI生图自动化平台</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --primary: #6366f1;
+            --primary-dark: #4f46e5;
+            --primary-light: #818cf8;
+            --secondary: #ec4899;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --error: #ef4444;
+            --gray-50: #f9fafb;
+            --gray-100: #f3f4f6;
+            --gray-200: #e5e7eb;
+            --gray-300: #d1d5db;
+            --gray-600: #4b5563;
+            --gray-800: #1f2937;
+            --gray-900: #111827;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: var(--gray-800);
+            line-height: 1.6;
+        }
+
+        .app {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+
+        /* Header */
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+            color: white;
+        }
+
+        .header h1 {
+            font-size: 42px;
+            font-weight: 800;
+            margin-bottom: 12px;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+
+        .header p {
+            font-size: 16px;
+            opacity: 0.9;
+        }
+
+        /* Main Grid */
+        .main-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 24px;
+            margin-bottom: 24px;
+        }
+
+        @media (max-width: 900px) {
+            .main-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* Card */
+        .card {
+            background: white;
+            border-radius: 20px;
+            padding: 28px;
+            box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1), 0 10px 10px -5px rgba(0,0,0,0.04);
+        }
+
+        .card-title {
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--gray-900);
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .card-title .icon {
+            width: 36px;
+            height: 36px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+        }
+
+        .icon-blue { background: linear-gradient(135deg, #667eea, #764ba2); }
+        .icon-pink { background: linear-gradient(135deg, #f093fb, #f5576c); }
+        .icon-green { background: linear-gradient(135deg, #4facfe, #00f2fe); }
+        .icon-purple { background: linear-gradient(135deg, #fa709a, #fee140); }
+
+        /* Form Elements */
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--gray-600);
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .input-wrapper {
+            position: relative;
+        }
+
+        input[type="text"] {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid var(--gray-200);
+            border-radius: 12px;
+            font-size: 14px;
+            transition: all 0.3s;
+            background: var(--gray-50);
+        }
+
+        input[type="text"]:focus {
+            outline: none;
+            border-color: var(--primary);
+            background: white;
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+        }
+
+        .input-actions {
+            display: flex;
+            gap: 8px;
+            margin-top: 8px;
+        }
+
+        /* Buttons */
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 10px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px -5px rgba(99, 102, 241, 0.4);
+        }
+
+        .btn-secondary {
+            background: var(--gray-100);
+            color: var(--gray-600);
+        }
+
+        .btn-secondary:hover {
+            background: var(--gray-200);
+        }
+
+        .btn-success {
+            background: linear-gradient(135deg, var(--success), #059669);
+            color: white;
+        }
+
+        .btn-success:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px -5px rgba(16, 185, 129, 0.4);
+        }
+
+        .btn-danger {
+            background: linear-gradient(135deg, var(--error), #dc2626);
+            color: white;
+        }
+
+        .btn-large {
+            padding: 16px 32px;
+            font-size: 16px;
+            border-radius: 14px;
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none !important;
+        }
+
+        /* Status Indicators */
+        .status-bar {
+            display: flex;
+            gap: 16px;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+        }
+
+        .status-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 14px;
+            background: var(--gray-50);
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 500;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+        }
+
+        .status-online .status-dot { background: var(--success); box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.3); }
+        .status-offline .status-dot { background: var(--gray-300); }
+        .status-busy .status-dot { background: var(--warning); animation: pulse 2s infinite; }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        /* Info Box */
+        .info-box {
+            padding: 12px 16px;
+            border-radius: 10px;
+            font-size: 13px;
+            margin-top: 10px;
+            display: none;
+        }
+
+        .info-box.success {
+            background: #d1fae5;
+            color: #065f46;
+            display: block;
+        }
+
+        .info-box.error {
+            background: #fee2e2;
+            color: #991b1b;
+            display: block;
+        }
+
+        .info-box.loading {
+            background: #fef3c7;
+            color: #92400e;
+            display: block;
+        }
+
+        /* Action Buttons Grid */
+        .action-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 12px;
+            margin-top: 20px;
+        }
+
+        .action-grid .btn {
+            justify-content: center;
+        }
+
+        /* Workflow Section */
+        .workflow-section {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 24px;
+            padding: 32px;
+            color: white;
+            margin-bottom: 24px;
+        }
+
+        .workflow-header {
+            text-align: center;
+            margin-bottom: 28px;
+        }
+
+        .workflow-header h2 {
+            font-size: 28px;
+            font-weight: 800;
+            margin-bottom: 8px;
+        }
+
+        .workflow-header p {
+            opacity: 0.9;
+            font-size: 15px;
+        }
+
+        .workflow-steps {
+            display: flex;
+            justify-content: center;
+            gap: 16px;
+            margin-bottom: 28px;
+            flex-wrap: wrap;
+        }
+
+        .step {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 18px;
+            background: rgba(255,255,255,0.15);
+            border-radius: 12px;
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        .step-number {
+            width: 24px;
+            height: 24px;
+            background: rgba(255,255,255,0.3);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            font-weight: 700;
+        }
+
+        .workflow-actions {
+            text-align: center;
+        }
+
+        .workflow-actions .btn {
+            background: white;
+            color: #764ba2;
+            font-size: 18px;
+            padding: 18px 48px;
+            border-radius: 16px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+
+        .workflow-actions .btn:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 20px 40px rgba(0,0,0,0.3);
+        }
+
+        /* Progress Panel */
+        .progress-panel {
+            background: white;
+            border-radius: 20px;
+            padding: 28px;
+            margin-top: 20px;
+            display: none;
+        }
+
+        .progress-panel.active {
+            display: block;
+            animation: slideDown 0.3s ease;
+        }
+
+        @keyframes slideDown {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .progress-header {
+            font-size: 16px;
+            font-weight: 700;
+            margin-bottom: 20px;
+            color: var(--gray-900);
+        }
+
+        .progress-item {
+            margin-bottom: 20px;
+        }
+
+        .progress-label {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+
+        .progress-bar {
+            height: 10px;
+            background: var(--gray-100);
+            border-radius: 5px;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--primary), var(--secondary));
+            border-radius: 5px;
+            transition: width 0.5s ease;
+        }
+
+        .progress-fill.success {
+            background: linear-gradient(90deg, var(--success), #34d399);
+        }
+
+        .status-text {
+            padding: 14px;
+            background: var(--gray-50);
+            border-radius: 12px;
+            margin-top: 16px;
+            font-size: 14px;
+            color: var(--gray-600);
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+            margin-top: 16px;
+        }
+
+        .stat-item {
+            text-align: center;
+            padding: 16px;
+            background: var(--gray-50);
+            border-radius: 12px;
+        }
+
+        .stat-value {
+            font-size: 24px;
+            font-weight: 800;
+            color: var(--primary);
+        }
+
+        .stat-label {
+            font-size: 12px;
+            color: var(--gray-600);
+            margin-top: 4px;
+        }
+
+        /* Prompts Section */
+        .prompts-section {
+            background: white;
+            border-radius: 20px;
+            padding: 28px;
+            margin-bottom: 24px;
+        }
+
+        .prompts-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+
+        .prompts-title {
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--gray-900);
+        }
+
+        .prompts-actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .prompts-container {
+            min-height: 200px;
+        }
+
+        .prompts-empty {
+            text-align: center;
+            padding: 40px 20px;
+            color: var(--gray-500);
+        }
+
+        .empty-icon {
+            font-size: 48px;
+            margin-bottom: 12px;
+        }
+
+        .empty-text {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+
+        .empty-hint {
+            font-size: 13px;
+            color: var(--gray-400);
+        }
+
+        .prompts-list {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .prompt-card {
+            background: var(--gray-50);
+            border-radius: 12px;
+            padding: 16px;
+            border-left: 4px solid var(--primary);
+            transition: all 0.3s ease;
+        }
+
+        .prompt-card:hover {
+            background: #f3f4f6;
+            transform: translateX(4px);
+        }
+
+        .prompt-card.sent {
+            border-left-color: var(--success);
+            opacity: 0.7;
+        }
+
+        .prompt-card.sending {
+            border-left-color: var(--warning);
+        }
+
+        .prompt-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .prompt-number {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .prompt-badge {
+            background: var(--primary);
+            color: white;
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            font-weight: 700;
+        }
+
+        .prompt-badge.sent {
+            background: var(--success);
+        }
+
+        .prompt-badge.sending {
+            background: var(--warning);
+        }
+
+        .prompt-title-text {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--gray-700);
+        }
+
+        .prompt-status {
+            font-size: 12px;
+            color: var(--gray-500);
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .prompt-content {
+            background: white;
+            border-radius: 8px;
+            padding: 12px;
+            font-size: 13px;
+            line-height: 1.6;
+            color: var(--gray-700);
+            max-height: 120px;
+            overflow-y: auto;
+            margin-bottom: 12px;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .prompt-actions {
+            display: flex;
+            gap: 8px;
+            justify-content: flex-end;
+        }
+
+        .btn-small {
+            padding: 6px 12px;
+            font-size: 12px;
+            border-radius: 6px;
+            border: none;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            transition: all 0.2s;
+        }
+
+        .btn-copy {
+            background: var(--gray-200);
+            color: var(--gray-700);
+        }
+
+        .btn-copy:hover {
+            background: var(--gray-300);
+        }
+
+        .btn-send {
+            background: var(--primary);
+            color: white;
+        }
+
+        .btn-send:hover {
+            background: var(--primary-dark);
+        }
+
+        .btn-send:disabled {
+            background: var(--gray-300);
+            cursor: not-allowed;
+        }
+
+        /* Log Section */
+        .log-section {
+            background: white;
+            border-radius: 20px;
+            padding: 28px;
+        }
+
+        .log-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+
+        .log-title {
+            font-size: 16px;
+            font-weight: 700;
+            color: var(--gray-900);
+        }
+
+        .log-indicator {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            color: var(--success);
+        }
+
+        .log-indicator::before {
+            content: '';
+            width: 8px;
+            height: 8px;
+            background: var(--success);
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        .log-area {
+            background: var(--gray-900);
+            color: #e5e7eb;
+            padding: 20px;
+            border-radius: 12px;
+            height: 300px;
+            overflow-y: auto;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 13px;
+            line-height: 1.7;
+        }
+
+        .log-entry {
+            margin-bottom: 6px;
+        }
+
+        .log-time {
+            color: #6b7280;
+            margin-right: 8px;
+        }
+
+        .log-info { color: #34d399; }
+        .log-warn { color: #fbbf24; }
+        .log-error { color: #f87171; }
+        .log-system { color: #60a5fa; }
+        .log-browser { color: #a78bfa; }
+
+        /* Modal */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.6);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            backdrop-filter: blur(4px);
+        }
+
+        .modal-overlay.active {
+            display: flex;
+            animation: fadeIn 0.3s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        .modal {
+            background: white;
+            border-radius: 24px;
+            padding: 32px;
+            max-width: 480px;
+            width: 90%;
+            text-align: center;
+            animation: scaleIn 0.3s ease;
+        }
+
+        @keyframes scaleIn {
+            from { opacity: 0; transform: scale(0.9); }
+            to { opacity: 1; transform: scale(1); }
+        }
+
+        .modal-icon {
+            width: 72px;
+            height: 72px;
+            background: linear-gradient(135deg, var(--success), #059669);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 20px;
+            font-size: 36px;
+        }
+
+        .modal h3 {
+            font-size: 22px;
+            font-weight: 700;
+            margin-bottom: 12px;
+            color: var(--gray-900);
+        }
+
+        .modal p {
+            color: var(--gray-600);
+            margin-bottom: 24px;
+            line-height: 1.6;
+        }
+
+        .modal-actions {
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+        }
+
+        /* Toast */
+        .toast {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: white;
+            padding: 16px 24px;
+            border-radius: 12px;
+            box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1);
+            display: none;
+            align-items: center;
+            gap: 12px;
+            z-index: 1001;
+            animation: slideInRight 0.3s ease;
+        }
+
+        .toast.active {
+            display: flex;
+        }
+
+        @keyframes slideInRight {
+            from { opacity: 0; transform: translateX(100%); }
+            to { opacity: 1; transform: translateX(0); }
+        }
+
+        .toast-icon {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .toast.success .toast-icon { background: #d1fae5; color: #065f46; }
+        .toast.error .toast-icon { background: #fee2e2; color: #991b1b; }
+    </style>
+</head>
+<body>
+    <div class="app">
+        <!-- Header -->
+        <header class="header">
+            <h1>🎨 AI生图自动化平台</h1>
+            <p>豆包生成提示词 → Legil生成图片 → 全自动循环处理</p>
+        </header>
+
+        <!-- Status Bar -->
+        <div class="status-bar">
+            <div class="status-item" id="browserStatusItem">
+                <span class="status-dot"></span>
+                <span id="browserStatusText">浏览器未启动</span>
+            </div>
+            <div class="status-item" id="doubaoStatusItem">
+                <span class="status-dot"></span>
+                <span id="doubaoStatusText">豆包未连接</span>
+            </div>
+            <div class="status-item" id="legilStatusItem">
+                <span class="status-dot"></span>
+                <span id="legilStatusText">Legil未连接</span>
+            </div>
+        </div>
+
+        <!-- Main Grid -->
+        <div class="main-grid">
+            <!-- Configuration Card -->
+            <div class="card">
+                <div class="card-title">
+                    <span class="icon icon-blue">📁</span>
+                    文件夹配置
+                </div>
+
+                <div class="form-group">
+                    <label>豆包参考图文件夹</label>
+                    <div class="input-wrapper">
+                        <input type="text" id="referenceFolder" placeholder="选择包含参考图片的文件夹" value="D:\工作\自动化工作流1\输入">
+                        <div class="input-actions">
+                            <button class="btn btn-primary" onclick="checkReferenceFolder()">确认</button>
+                            <button class="btn btn-secondary" onclick="openBothWebsites()">打开网站</button>
+                        </div>
+                    </div>
+                    <div class="info-box" id="refCountInfo"></div>
+                </div>
+
+                <div class="form-group">
+                    <label>Legil参考图文件夹</label>
+                    <div class="input-wrapper">
+                        <input type="text" id="legilReferenceFolder" placeholder="选择Legil参考图文件夹" value="D:\工作\自动化工作流1\Legil参考图">
+                        <div class="input-actions">
+                            <button class="btn btn-primary" onclick="checkLegilReferenceFolder()">确认</button>
+                            <button class="btn btn-secondary" onclick="saveLegilRefFolder()">保存配置</button>
+                        </div>
+                    </div>
+                    <div class="info-box" id="legilRefCountInfo"></div>
+                </div>
+
+                <div class="form-group">
+                    <label>输出文件夹</label>
+                    <input type="text" id="saveFolder" placeholder="选择图片保存位置" value="D:\工作\自动化工作流1\输出">
+                </div>
+
+                <div class="action-grid">
+                    <button class="btn btn-secondary" onclick="openSingleWebsite('doubao')">打开豆包</button>
+                    <button class="btn btn-secondary" onclick="openSingleWebsite('legil')">打开Legil</button>
+                    <button class="btn btn-danger" onclick="closeBrowser()">关闭浏览器</button>
+                    <button class="btn btn-secondary" onclick="checkWorkflowStatus()">刷新状态</button>
+                </div>
+            </div>
+
+            <!-- Settings Card -->
+            <div class="card">
+                <div class="card-title">
+                    <span class="icon icon-pink">⚙️</span>
+                    网址配置
+                </div>
+
+                <div class="form-group">
+                    <label>豆包网址</label>
+                    <input type="text" id="doubaoUrl" value="https://www.doubao.com/chat/">
+                </div>
+
+                <div class="form-group">
+                    <label>Legil网址</label>
+                    <input type="text" id="legilUrl" value="https://lumos.diandian.info/legil/image-ai/image-to-image">
+                </div>
+
+                <div style="background: #fef3c7; border-radius: 12px; padding: 16px; margin-top: 20px;">
+                    <div style="font-size: 13px; font-weight: 600; color: #92400e; margin-bottom: 8px;">⚠️ 使用前请先完成以下步骤：</div>
+                    <ol style="font-size: 13px; color: #78350f; padding-left: 18px; line-height: 1.8;">
+                        <li>确保豆包和Legil网址正确</li>
+                        <li>点击"打开网站"按钮打开浏览器</li>
+                        <li>在浏览器中登录豆包和Legil账号</li>
+                        <li>配置参考图文件夹并确认</li>
+                        <li>点击"一键启动"开始自动化</li>
+                    </ol>
+                </div>
+            </div>
+        </div>
+
+        <!-- Workflow Section -->
+        <div class="workflow-section">
+            <div class="workflow-header">
+                <h2>🚀 一键启动完整工作流</h2>
+                <p>自动处理所有参考图：上传豆包 → 获取提示词 → Legil生成 → 循环处理</p>
+            </div>
+
+            <div class="workflow-steps">
+                <div class="step">
+                    <span class="step-number">1</span>
+                    <span>上传豆包</span>
+                </div>
+                <div class="step">
+                    <span class="step-number">2</span>
+                    <span>获取提示词</span>
+                </div>
+                <div class="step">
+                    <span class="step-number">3</span>
+                    <span>Legil生成</span>
+                </div>
+                <div class="step">
+                    <span class="step-number">4</span>
+                    <span>保存图片</span>
+                </div>
+                <div class="step">
+                    <span class="step-number">5</span>
+                    <span>循环下一张</span>
+                </div>
+            </div>
+
+            <div class="workflow-actions">
+                <button class="btn btn-large" id="oneClickStartBtn" onclick="startWorkflowWithConfirm()">
+                    ▶️ 开始自动化流程
+                </button>
+            </div>
+
+            <!-- Progress Panel -->
+            <div class="progress-panel" id="progressPanel">
+                <div class="progress-header">📊 执行进度</div>
+
+                <div class="progress-item">
+                    <div class="progress-label">
+                        <span>📷 参考图处理进度</span>
+                        <span id="imageProgressText">0 / 0</span>
+                    </div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="imageProgressBar" style="width: 0%"></div>
+                    </div>
+                </div>
+
+                <div class="progress-item">
+                    <div class="progress-label">
+                        <span>🎨 当前图片生成进度</span>
+                        <span id="promptProgressText">0 / 5</span>
+                    </div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="promptProgressBar" style="width: 0%"></div>
+                    </div>
+                </div>
+
+                <div class="status-text" id="currentStatusText">准备就绪...</div>
+
+                <div class="stats-grid">
+                    <div class="stat-item">
+                        <div class="stat-value" id="statsSuccess">0</div>
+                        <div class="stat-label">成功</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="statsFailed">0</div>
+                        <div class="stat-label">失败</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="statsGenerated">0</div>
+                        <div class="stat-label">已生成</div>
+                    </div>
+                </div>
+
+                <div style="text-align: center; margin-top: 20px;">
+                    <button class="btn btn-danger" onclick="stopWorkflow()">⏹️ 停止工作流</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Prompts Management Section -->
+        <div class="prompts-section" id="promptsSection">
+            <div class="prompts-header">
+                <span class="prompts-title">📝 提示词管理</span>
+                <div class="prompts-actions">
+                    <button class="btn btn-secondary" onclick="fetchLatestPrompts()">🔄 获取最新提示词</button>
+                    <button class="btn btn-primary" onclick="sendAllPromptsToLegil()">🚀 全部发送到Legil</button>
+                </div>
+            </div>
+            <div class="prompts-container" id="promptsContainer">
+                <div class="prompts-empty" id="promptsEmpty">
+                    <div class="empty-icon">📝</div>
+                    <div class="empty-text">暂无提示词</div>
+                    <div class="empty-hint">工作流运行后会自动提取提示词，或点击"获取最新提示词"按钮</div>
+                </div>
+                <div class="prompts-list" id="promptsList" style="display: none;"></div>
+            </div>
+        </div>
+
+        <!-- Log Section -->
+        <div class="log-section">
+            <div class="log-header">
+                <span class="log-title">📋 实时日志</span>
+                <span class="log-indicator">实时连接中</span>
+            </div>
+            <div class="log-area" id="logArea"></div>
+        </div>
+    </div>
+
+    <!-- Completion Modal -->
+    <div class="modal-overlay" id="completionModal">
+        <div class="modal">
+            <div class="modal-icon">🎉</div>
+            <h3>工作流完成！</h3>
+            <p id="completionMessage">所有参考图已处理完毕，图片已保存到指定文件夹。</p>
+            <div class="modal-actions">
+                <button class="btn btn-primary" onclick="closeModal()">确定</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast -->
+    <div class="toast" id="toast">
+        <div class="toast-icon">✓</div>
+        <span id="toastMessage">操作成功</span>
+    </div>
+
+    <script>
+        // Global config
+        const config = {
+            referenceFolder: 'D:\\工作\\自动化工作流1\\输入',
+            saveFolder: 'D:\\工作\\自动化工作流1\\输出',
+            doubaoUrl: 'https://www.doubao.com/chat/',
+            legilUrl: 'https://lumos.diandian.info/legil/image-ai/image-to-image',
+            legilReferenceFolder: 'D:\\工作\\自动化工作流1\\Legil参考图'
+        };
+
+        // SSE connection
+        let eventSource = null;
+        let progressInterval = null;
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            addLog('系统初始化完成', 'system');
+            connectLogStream();
+            checkBrowserStatus();
+            loadLegilRefFolderConfig();
+        });
+
+        // Logging
+        function addLog(message, level = 'info') {
+            const logArea = document.getElementById('logArea');
+            const now = new Date();
+            const timeStr = now.toTimeString().split(' ')[0];
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            entry.innerHTML = `<span class="log-time">[${timeStr}]</span><span class="log-${level}">${message}</span>`;
+            logArea.appendChild(entry);
+            logArea.scrollTop = logArea.scrollHeight;
+        }
+
+        // SSE connection
+        function connectLogStream() {
+            if (eventSource) eventSource.close();
+            eventSource = new EventSource('/api/logs');
+            eventSource.onmessage = (e) => {
+                try {
+                    const data = JSON.parse(e.data);
+                    addLog(data.message, data.type);
+                } catch (err) {}
+            };
+        }
+
+        // Status updates
+        function updateStatus(type, online, text) {
+            const item = document.getElementById(type + 'StatusItem');
+            const label = document.getElementById(type + 'StatusText');
+            if (item && label) {
+                item.className = 'status-item ' + (online ? 'status-online' : 'status-offline');
+                label.textContent = text;
+            }
+        }
+
+        // Toast
+        function showToast(message, type = 'success') {
+            const toast = document.getElementById('toast');
+            document.getElementById('toastMessage').textContent = message;
+            toast.className = 'toast ' + type + ' active';
+            setTimeout(() => toast.classList.remove('active'), 3000);
+        }
+
+        // Modal
+        function closeModal() {
+            document.getElementById('completionModal').classList.remove('active');
+        }
+
+        // Check reference folder
+        async function checkReferenceFolder() {
+            const path = document.getElementById('referenceFolder').value.trim();
+            const infoBox = document.getElementById('refCountInfo');
+            if (!path) return showToast('请输入文件夹路径', 'error');
+
+            infoBox.className = 'info-box loading';
+            infoBox.textContent = '统计中...';
+
+            try {
+                const res = await fetch('/api/count-images', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ folderPath: path })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    infoBox.className = 'info-box success';
+                    infoBox.innerHTML = `✅ 找到 ${data.count} 张参考图`;
+                    showToast(`成功找到 ${data.count} 张图片`);
+                } else {
+                    infoBox.className = 'info-box error';
+                    infoBox.textContent = '❌ ' + data.message;
+                }
+            } catch (e) {
+                infoBox.className = 'info-box error';
+                infoBox.textContent = '❌ 请求失败';
+            }
+        }
+
+        // Check Legil reference folder
+        async function checkLegilReferenceFolder() {
+            const path = document.getElementById('legilReferenceFolder').value.trim();
+            const infoBox = document.getElementById('legilRefCountInfo');
+            if (!path) return showToast('请输入文件夹路径', 'error');
+
+            infoBox.className = 'info-box loading';
+            infoBox.textContent = '统计中...';
+
+            try {
+                const res = await fetch('/api/count-images', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ folderPath: path })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    infoBox.className = 'info-box success';
+                    infoBox.innerHTML = `✅ 找到 ${data.count} 张参考图`;
+                    await saveLegilRefFolder();
+                } else {
+                    infoBox.className = 'info-box error';
+                    infoBox.textContent = '❌ ' + data.message;
+                }
+            } catch (e) {
+                infoBox.className = 'info-box error';
+                infoBox.textContent = '❌ 请求失败';
+            }
+        }
+
+        // Save Legil ref folder
+        async function saveLegilRefFolder() {
+            const path = document.getElementById('legilReferenceFolder').value.trim();
+            if (!path) return;
+
+            try {
+                await fetch('/api/config/legil-ref-folder', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ folderPath: path })
+                });
+                showToast('配置已保存');
+            } catch (e) {}
+        }
+
+        // Load config
+        async function loadLegilRefFolderConfig() {
+            try {
+                const res = await fetch('/api/config/legil-ref-folder');
+                const data = await res.json();
+                if (data.success && data.folderPath) {
+                    document.getElementById('legilReferenceFolder').value = data.folderPath;
+                }
+            } catch (e) {}
+        }
+
+        // Open websites
+        async function openSingleWebsite(name) {
+            const url = document.getElementById(name + 'Url').value.trim();
+            if (!url) return showToast('请输入网址', 'error');
+
+            addLog(`正在打开 ${name}...`, 'browser');
+            try {
+                const res = await fetch('/api/open-website', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name, url })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    addLog(`${name} 已打开`, 'browser');
+                    updateStatus(name, true, name === 'doubao' ? '豆包已连接' : 'Legil已连接');
+                    updateStatus('browser', true, '浏览器运行中');
+                }
+            } catch (e) {
+                showToast('打开失败', 'error');
+            }
+        }
+
+        async function openBothWebsites() {
+            const doubaoUrl = document.getElementById('doubaoUrl').value.trim();
+            const legilUrl = document.getElementById('legilUrl').value.trim();
+
+            addLog('正在打开两个网站...', 'browser');
+            try {
+                const res = await fetch('/api/open-both-websites', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ doubaoUrl, legilUrl })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    addLog('两个网站已打开', 'browser');
+                    updateStatus('doubao', true, '豆包已连接');
+                    updateStatus('legil', true, 'Legil已连接');
+                    updateStatus('browser', true, '浏览器运行中');
+                }
+            } catch (e) {
+                showToast('打开失败', 'error');
+            }
+        }
+
+        async function closeBrowser() {
+            addLog('正在关闭浏览器...', 'browser');
+            try {
+                await fetch('/api/close-browser', { method: 'POST' });
+                addLog('浏览器已关闭', 'browser');
+                updateStatus('browser', false, '浏览器未启动');
+                updateStatus('doubao', false, '豆包未连接');
+                updateStatus('legil', false, 'Legil未连接');
+            } catch (e) {}
+        }
+
+        async function checkBrowserStatus() {
+            try {
+                const res = await fetch('/api/browser-status');
+                const data = await res.json();
+                if (data.success && data.status) {
+                    const s = data.status;
+                    if (s.browserRunning) updateStatus('browser', true, '浏览器运行中');
+                    if (s.pages.doubao) updateStatus('doubao', true, '豆包已连接');
+                    if (s.pages.legil) updateStatus('legil', true, 'Legil已连接');
+                }
+            } catch (e) {}
+        }
+
+        // Workflow
+        async function startWorkflowWithConfirm() {
+            const confirmed = confirm(
+                '请确认以下事项：\n\n' +
+                '✅ 已在浏览器中登录豆包账号\n' +
+                '✅ 已在浏览器中登录Legil账号\n' +
+                '✅ 参考图文件夹路径正确\n' +
+                '✅ 输出文件夹路径正确\n\n' +
+                '点击"确定"开始自动化流程。'
+            );
+            if (!confirmed) return;
+
+            await startWorkflow();
+        }
+
+        async function startWorkflow() {
+            const inputFolder = document.getElementById('referenceFolder').value.trim();
+            const outputFolder = document.getElementById('saveFolder').value.trim();
+            const legilRefFolder = document.getElementById('legilReferenceFolder').value.trim();
+
+            if (!inputFolder) return showToast('请输入参考图文件夹路径', 'error');
+
+            document.getElementById('oneClickStartBtn').disabled = true;
+            document.getElementById('oneClickStartBtn').textContent = '⏳ 运行中...';
+            document.getElementById('progressPanel').classList.add('active');
+
+            addLog('🚀 启动工作流...', 'system');
+
+            try {
+                const res = await fetch('/api/workflow/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ inputFolder, outputFolder, legilReferenceFolder: legilRefFolder })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    showToast('工作流已启动');
+                    startProgressPolling();
+                } else {
+                    showToast(data.message, 'error');
+                    resetUI();
+                }
+            } catch (e) {
+                showToast('启动失败', 'error');
+                resetUI();
+            }
+        }
+
+        function startProgressPolling() {
+            checkWorkflowStatus();
+            progressInterval = setInterval(checkWorkflowStatus, 3000);
+        }
+
+        async function checkWorkflowStatus() {
+            try {
+                const res = await fetch('/api/workflow/status');
+                const data = await res.json();
+                if (!data.success) return;
+
+                const s = data.status;
+                const ds = s.currentStatus || {};
+
+                // Update progress
+                const currentImg = ds.currentImageIndex || s.currentIndex + 1 || 0;
+                const totalImgs = ds.totalImages || s.totalImages || 0;
+                const imgPct = totalImgs > 0 ? Math.round(((currentImg - 1) / totalImgs) * 100) : 0;
+
+                document.getElementById('imageProgressText').textContent = `${currentImg} / ${totalImgs}`;
+                document.getElementById('imageProgressBar').style.width = `${imgPct}%`;
+
+                const currentPrompt = ds.currentPromptIndex || 0;
+                const promptPct = Math.round((currentPrompt / 5) * 100);
+
+                document.getElementById('promptProgressText').textContent = `${currentPrompt} / 5`;
+                document.getElementById('promptProgressBar').style.width = `${promptPct}%`;
+
+                document.getElementById('currentStatusText').textContent = ds.currentAction || '处理中...';
+
+                if (s.stats) {
+                    document.getElementById('statsSuccess').textContent = s.stats.processed || 0;
+                    document.getElementById('statsFailed').textContent = s.stats.failed || 0;
+                    document.getElementById('statsGenerated').textContent = s.stats.totalGenerated || 0;
+                }
+
+                // Check completion
+                if (!s.isRunning && s.totalImages > 0 && ds.phase === 'completed') {
+                    if (progressInterval) {
+                        clearInterval(progressInterval);
+                        progressInterval = null;
+                    }
+                    showCompletionModal(s.stats);
+                    resetUI();
+                }
+            } catch (e) {}
+        }
+
+        function showCompletionModal(stats) {
+            const msg = stats
+                ? `成功: ${stats.processed} 张参考图<br>失败: ${stats.failed} 张<br>共生成: ${stats.totalGenerated} 张图片`
+                : '所有任务已完成';
+            document.getElementById('completionMessage').innerHTML = msg;
+            document.getElementById('completionModal').classList.add('active');
+                        onWorkflowComplete();
+        }
+
+        async function stopWorkflow() {
+            addLog('正在停止工作流...', 'system');
+            try {
+                await fetch('/api/workflow/stop', { method: 'POST' });
+                if (progressInterval) {
+                    clearInterval(progressInterval);
+                    progressInterval = null;
+                }
+                resetUI();
+                showToast('工作流已停止');
+            } catch (e) {}
+        }
+
+        function resetUI() {
+            document.getElementById('oneClickStartBtn').disabled = false;
+            document.getElementById('oneClickStartBtn').textContent = '▶️ 开始自动化流程';
+        }
+
+        // ==================== Prompts Management ====================
+        let currentPrompts = [];
+        let sentPromptIndices = new Set();
+
+        async function fetchLatestPrompts() {
+            addLog('正在获取最新提示词...', 'system');
+            try {
+                const response = await fetch('/api/workflow/extracted-prompts');
+                const data = await response.json();
+
+                if (data.success && data.prompts && data.prompts.length > 0) {
+                    currentPrompts = data.prompts;
+                    displayPrompts(data.prompts);
+                    showToast(`已获取 ${data.prompts.length} 组提示词`);
+                    addLog(`✅ 已获取 ${data.prompts.length} 组提示词`, 'success');
+                } else {
+                    showToast('暂无提示词，请先运行工作流');
+                    addLog('⚠️ 暂无提示词，请先运行工作流', 'warning');
+                }
+            } catch (e) {
+                showToast('获取提示词失败');
+                addLog('❌ 获取提示词失败', 'error');
+            }
+        }
+
+        function displayPrompts(prompts) {
+            const emptyDiv = document.getElementById('promptsEmpty');
+            const listDiv = document.getElementById('promptsList');
+
+            emptyDiv.style.display = 'none';
+            listDiv.style.display = 'flex';
+            listDiv.innerHTML = '';
+
+            prompts.forEach((prompt, index) => {
+                const promptCard = createPromptCard(prompt, index + 1);
+                listDiv.appendChild(promptCard);
+            });
+        }
+
+        function createPromptCard(prompt, number) {
+            const card = document.createElement('div');
+            card.className = 'prompt-card';
+            card.id = `prompt-card-${number}`;
+
+            const isSent = sentPromptIndices.has(number);
+            if (isSent) {
+                card.classList.add('sent');
+            }
+
+            const content = typeof prompt === 'string' ? prompt : prompt.content;
+            const preview = content.substring(0, 150) + (content.length > 150 ? '...' : '');
+
+            card.innerHTML = `
+                <div class="prompt-header">
+                    <div class="prompt-number">
+                        <span class="prompt-badge ${isSent ? 'sent' : ''}" id="prompt-badge-${number}">${number}</span>
+                        <span class="prompt-title-text">提示词 ${number}</span>
+                    </div>
+                    <span class="prompt-status" id="prompt-status-${number}">${isSent ? '✅ 已发送' : '⏳ 待发送'}</span>
+                </div>
+                <div class="prompt-content" id="prompt-content-${number}">${escapeHtml(content)}</div>
+                <div class="prompt-actions">
+                    <button class="btn-small btn-copy" onclick="copyPrompt(${number})" title="复制到剪贴板">
+                        📋 复制
+                    </button>
+                    <button class="btn-small btn-send" onclick="sendPromptToLegil(${number})" id="btn-send-${number}" ${isSent ? 'disabled' : ''} title="发送到Legil生成图片">
+                        🚀 发送到Legil
+                    </button>
+                </div>
+            `;
+
+            return card;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        async function copyPrompt(number) {
+            const prompt = currentPrompts[number - 1];
+            if (!prompt) return;
+
+            const content = typeof prompt === 'string' ? prompt : prompt.content;
+
+            try {
+                await navigator.clipboard.writeText(content);
+                showToast(`提示词 ${number} 已复制`);
+                addLog(`📋 提示词 ${number} 已复制到剪贴板`, 'info');
+            } catch (e) {
+                // 降级方案
+                const textarea = document.createElement('textarea');
+                textarea.value = content;
+                document.body.appendChild(textarea);
+                textarea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textarea);
+                showToast(`提示词 ${number} 已复制`);
+            }
+        }
+
+        async function copyAllPrompts() {
+            if (currentPrompts.length === 0) {
+                showToast('暂无提示词可复制');
+                return;
+            }
+
+            const allContent = currentPrompts.map((p, i) => {
+                const content = typeof p === 'string' ? p : p.content;
+                return `【提示词 ${i + 1}】\n${content}`;
+            }).join('\n\n');
+
+            try {
+                await navigator.clipboard.writeText(allContent);
+                showToast('全部提示词已复制');
+                addLog('📋 全部提示词已复制到剪贴板', 'info');
+            } catch (e) {
+                showToast('复制失败');
+            }
+        }
+
+        async function sendPromptToLegil(number) {
+            const prompt = currentPrompts[number - 1];
+            if (!prompt) return;
+
+            const content = typeof prompt === 'string' ? prompt : prompt.content;
+
+            // 更新UI状态
+            const card = document.getElementById(`prompt-card-${number}`);
+            const badge = document.getElementById(`prompt-badge-${number}`);
+            const status = document.getElementById(`prompt-status-${number}`);
+            const btn = document.getElementById(`btn-send-${number}`);
+
+            card.classList.add('sending');
+            badge.classList.add('sending');
+            status.textContent = '🔄 发送中...';
+            btn.disabled = true;
+
+            addLog(`正在发送提示词 ${number} 到Legil...`, 'system');
+
+            try {
+                const response = await fetch('/api/legil/generate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ prompt: content, index: number })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    sentPromptIndices.add(number);
+                    card.classList.remove('sending');
+                    card.classList.add('sent');
+                    badge.classList.remove('sending');
+                    badge.classList.add('sent');
+                    status.textContent = '✅ 已发送';
+                    showToast(`提示词 ${number} 发送成功`);
+                    addLog(`✅ 提示词 ${number} 已发送到Legil`, 'success');
+                } else {
+                    throw new Error(data.message || '发送失败');
+                }
+            } catch (e) {
+                card.classList.remove('sending');
+                badge.classList.remove('sending');
+                status.textContent = '❌ 发送失败';
+                btn.disabled = false;
+                showToast(`提示词 ${number} 发送失败: ${e.message}`);
+                addLog(`❌ 提示词 ${number} 发送失败: ${e.message}`, 'error');
+            }
+        }
+
+        async function sendAllPromptsToLegil() {
+            if (currentPrompts.length === 0) {
+                showToast('暂无提示词可发送');
+                addLog('⚠️ 暂无提示词可发送', 'warning');
+                return;
+            }
+
+            addLog(`开始批量发送 ${currentPrompts.length} 组提示词到Legil...`, 'system');
+
+            for (let i = 1; i <= currentPrompts.length; i++) {
+                if (!sentPromptIndices.has(i)) {
+                    await sendPromptToLegil(i);
+                    // 每组之间等待5秒
+                    if (i < currentPrompts.length) {
+                        await new Promise(r => setTimeout(r, 5000));
+                    }
+                }
+            }
+
+            addLog('✅ 批量发送完成', 'success');
+            showToast('全部提示词发送完成');
+        }
+
+        // 工作流完成后自动获取提示词
+        function onWorkflowComplete() {
+            setTimeout(() => {
+                fetchLatestPrompts();
+            }, 1000);
+        }
+    </script>
+</body>
+</html>

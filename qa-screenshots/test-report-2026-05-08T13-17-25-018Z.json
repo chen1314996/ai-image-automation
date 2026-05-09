@@ -1,0 +1,74 @@
+[
+  {
+    "testName": "页面标题",
+    "passed": true,
+    "message": "标题: 自动化AI生图控制平台",
+    "timestamp": "2026-05-08T13:17:12.813Z"
+  },
+  {
+    "testName": "参考图文件夹输入框存在",
+    "passed": true,
+    "message": "",
+    "timestamp": "2026-05-08T13:17:12.816Z"
+  },
+  {
+    "testName": "Legil参考图文件夹输入框存在",
+    "passed": true,
+    "message": "",
+    "timestamp": "2026-05-08T13:17:12.816Z"
+  },
+  {
+    "testName": "确认按钮存在",
+    "passed": true,
+    "message": "",
+    "timestamp": "2026-05-08T13:17:12.818Z"
+  },
+  {
+    "testName": "一键启动按钮存在",
+    "passed": true,
+    "message": "",
+    "timestamp": "2026-05-08T13:17:12.820Z"
+  },
+  {
+    "testName": "打开豆包按钮存在",
+    "passed": true,
+    "message": "",
+    "timestamp": "2026-05-08T13:17:12.822Z"
+  },
+  {
+    "testName": "打开Legil按钮存在",
+    "passed": true,
+    "message": "",
+    "timestamp": "2026-05-08T13:17:12.824Z"
+  },
+  {
+    "testName": "文件夹统计结果显示",
+    "passed": true,
+    "message": "✅ 成功找到 3 张参考图📋 文件列表: 巨大建筑_冰封气象巨塔_01.png, 废弃载具_青椒越",
+    "timestamp": "2026-05-08T13:17:15.176Z"
+  },
+  {
+    "testName": "Legil参考图输入框可见",
+    "passed": true,
+    "message": "",
+    "timestamp": "2026-05-08T13:17:15.262Z"
+  },
+  {
+    "testName": "浏览器状态显示",
+    "passed": false,
+    "message": "\n                        \n                        浏览器未启动\n                    ",
+    "timestamp": "2026-05-08T13:17:19.748Z"
+  },
+  {
+    "testName": "日志区域可见",
+    "passed": true,
+    "message": "",
+    "timestamp": "2026-05-08T13:17:24.832Z"
+  },
+  {
+    "testName": "日志有内容",
+    "passed": true,
+    "message": "日志长度: 2036",
+    "timestamp": "2026-05-08T13:17:24.833Z"
+  }
+]

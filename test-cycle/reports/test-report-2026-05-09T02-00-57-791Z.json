@@ -1,0 +1,73 @@
+{
+  "timestamp": "2026-05-09T02:00:57.791Z",
+  "summary": {
+    "total": 9,
+    "passed": 8,
+    "failed": 1
+  },
+  "results": [
+    {
+      "name": "页面加载",
+      "passed": true,
+      "message": "标题: AI生图自动化平台",
+      "status": "PASS",
+      "timestamp": "2026-05-08T14:17:10.328Z"
+    },
+    {
+      "name": "豆包参考图文件夹统计",
+      "passed": true,
+      "message": "✅ 找到 3 张参考图",
+      "status": "PASS",
+      "timestamp": "2026-05-08T14:17:12.593Z"
+    },
+    {
+      "name": "Legil参考图配置保存",
+      "passed": true,
+      "message": "",
+      "status": "PASS",
+      "timestamp": "2026-05-08T14:17:13.999Z"
+    },
+    {
+      "name": "输出文件夹配置",
+      "passed": true,
+      "message": "",
+      "status": "PASS",
+      "timestamp": "2026-05-08T14:17:14.122Z"
+    },
+    {
+      "name": "浏览器打开",
+      "passed": true,
+      "message": "请确保已完成登录",
+      "status": "PASS",
+      "timestamp": "2026-05-08T14:17:19.425Z"
+    },
+    {
+      "name": "工作流启动",
+      "passed": true,
+      "message": "",
+      "status": "PASS",
+      "timestamp": "2026-05-08T14:17:26.778Z"
+    },
+    {
+      "name": "进度面板显示",
+      "passed": true,
+      "message": "",
+      "status": "PASS",
+      "timestamp": "2026-05-08T14:17:26.779Z"
+    },
+    {
+      "name": "输出图片生成",
+      "passed": true,
+      "message": "生成 6 张图片",
+      "status": "PASS",
+      "timestamp": "2026-05-09T02:00:27.390Z"
+    },
+    {
+      "name": "全流程完成",
+      "passed": false,
+      "message": "",
+      "status": "FAIL",
+      "timestamp": "2026-05-09T02:00:57.791Z"
+    }
+  ]
+}
