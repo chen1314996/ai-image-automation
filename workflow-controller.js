@@ -15,6 +15,7 @@ const browserController = require('./playwright-controller');
 const doubaoAutomation = require('./doubao-automation');
 const legilAutomation = require('./legil-automation');
 const logger = require('./logger');
+const { formatDateTimeForFile, sortNaturallyByName } = require('./file-utils');
 
 class WorkflowController {
     constructor() {
@@ -45,6 +46,7 @@ class WorkflowController {
         // 用于强制停止的信号
         this.abortController = null;
         this.pendingPromises = [];
+        this.currentRunId = '';
     }
 
     /**
@@ -62,6 +64,95 @@ class WorkflowController {
         // 这里可以通过 logger 的特殊方式推送，或者前端通过轮询获取
     }
 
+    normalizeFolderPath(folderPath) {
+        if (typeof folderPath !== 'string') {
+            return '';
+        }
+        return folderPath.replace(/["']/g, '').trim();
+    }
+
+    ensureDirectory(folderPath, label) {
+        const normalizedPath = this.normalizeFolderPath(folderPath);
+        if (!normalizedPath) {
+            throw new Error(`${label}不能为空`);
+        }
+
+        if (!fs.existsSync(normalizedPath)) {
+            fs.mkdirSync(normalizedPath, { recursive: true });
+        }
+
+        const stats = fs.statSync(normalizedPath);
+        if (!stats.isDirectory()) {
+            throw new Error(`${label}不是文件夹`);
+        }
+
+        return normalizedPath;
+    }
+
+    validateStart(inputFolder, outputFolder, legilRefFolder) {
+        if (this.isRunning) {
+            return {
+                success: false,
+                message: '工作流正在运行中，请勿重复启动'
+            };
+        }
+
+        const resolvedInput = this.normalizeFolderPath(inputFolder) || this.inputFolder;
+        const resolvedOutput = this.normalizeFolderPath(outputFolder) || this.outputFolder;
+        const resolvedLegilRef = this.normalizeFolderPath(legilRefFolder) || this.legilReferenceFolder;
+
+        try {
+            if (!fs.existsSync(resolvedInput)) {
+                return {
+                    success: false,
+                    message: `输入文件夹不存在: ${resolvedInput}`
+                };
+            }
+
+            const inputStats = fs.statSync(resolvedInput);
+            if (!inputStats.isDirectory()) {
+                return {
+                    success: false,
+                    message: `输入路径不是文件夹: ${resolvedInput}`
+                };
+            }
+
+            const imageFiles = this.getImageFiles(resolvedInput);
+            if (imageFiles.length === 0) {
+                return {
+                    success: false,
+                    message: '输入文件夹中没有图片'
+                };
+            }
+
+            const safeOutput = this.ensureDirectory(resolvedOutput, '输出文件夹');
+
+            return {
+                success: true,
+                inputFolder: resolvedInput,
+                outputFolder: safeOutput,
+                legilReferenceFolder: resolvedLegilRef,
+                totalImages: imageFiles.length
+            };
+        } catch (error) {
+            return {
+                success: false,
+                message: error.message
+            };
+        }
+    }
+
+    isAbortRequested() {
+        return !this.isRunning || (this.abortController && this.abortController.signal.aborted);
+    }
+
+    getCancellationOptions() {
+        return {
+            signal: this.abortController ? this.abortController.signal : null,
+            shouldAbort: () => this.isAbortRequested()
+        };
+    }
+
     /**
      * =====================================================
      * 主流程：启动完整工作流
@@ -71,19 +162,26 @@ class WorkflowController {
      * @param {string} legilRefFolder - Legil参考图文件夹路径（可选）
      */
     async startWorkflow(inputFolder, outputFolder, legilRefFolder) {
-        if (this.isRunning) {
-            return {
-                success: false,
-                message: '工作流正在运行中，请勿重复启动'
-            };
+        const validation = this.validateStart(inputFolder, outputFolder, legilRefFolder);
+        if (!validation.success) {
+            this.updateStatus({
+                phase: 'error',
+                currentAction: validation.message,
+                error: validation.message
+            });
+            return validation;
         }
 
         this.isRunning = true;
         this.abortController = new AbortController();
-        this.inputFolder = inputFolder || this.inputFolder;
-        this.outputFolder = outputFolder || this.outputFolder;
-        this.legilReferenceFolder = legilRefFolder || this.legilReferenceFolder;
+        this.inputFolder = validation.inputFolder;
+        this.outputFolder = validation.outputFolder;
+        this.legilReferenceFolder = validation.legilReferenceFolder;
         this.stats = { processed: 0, failed: 0, totalGenerated: 0 };
+        this.currentRunId = formatDateTimeForFile();
+
+        // 确保前端传入的输出目录真正用于 Legil 图片保存
+        legilAutomation.setSaveFolder(this.outputFolder);
 
         // 设置Legil参考图文件夹
         if (this.legilReferenceFolder) {
@@ -175,20 +273,27 @@ class WorkflowController {
 
                 } catch (error) {
                     const imageName = path.basename(imagePath);
-                    const isTimeout = error.message.includes('超时');
+                    const errorMessage = error && error.message ? error.message : String(error);
+
+                    if (this.isAbortRequested() || errorMessage.includes('取消') || errorMessage.includes('停止')) {
+                        logger.info('⏹️ 工作流已停止，退出当前图片处理');
+                        break;
+                    }
+
+                    const isTimeout = errorMessage.includes('超时');
 
                     if (isTimeout) {
                         logger.error(`❌ 图片处理超时: ${imageName}`);
-                        logger.error(`   原因: ${error.message}`);
+                        logger.error(`   原因: ${errorMessage}`);
                         logger.error(`   该图片将被记录到失败日志，继续处理下一张...`);
                     } else {
-                        logger.error(`❌ 处理失败: ${error.message}`);
+                        logger.error(`❌ 处理失败: ${errorMessage}`);
                     }
 
                     this.updateStatus({
                         phase: 'error',
-                        currentAction: `处理失败: ${error.message}`,
-                        error: error.message
+                        currentAction: `处理失败: ${errorMessage}`,
+                        error: errorMessage
                     });
                     this.stats.failed++;
 
@@ -202,6 +307,22 @@ class WorkflowController {
                         await this.sleep(5000);
                     }
                 }
+            }
+
+            const stopped = this.abortController && this.abortController.signal.aborted;
+            if (stopped || !this.isRunning) {
+                this.isRunning = false;
+                this.updateStatus({
+                    phase: 'stopped',
+                    currentAction: '工作流已停止'
+                });
+                logger.info('⏹️ 工作流已停止');
+                return {
+                    success: false,
+                    message: '工作流已停止',
+                    stats: this.stats,
+                    totalImages: this.totalImages
+                };
             }
 
             // 第3步：完成总结
@@ -231,17 +352,20 @@ class WorkflowController {
 
         } catch (error) {
             this.isRunning = false;
+            const errorMessage = error && error.message ? error.message : String(error);
             this.updateStatus({
                 phase: 'error',
-                currentAction: `工作流执行失败: ${error.message}`,
-                error: error.message
+                currentAction: `工作流执行失败: ${errorMessage}`,
+                error: errorMessage
             });
-            logger.error(`❌ 工作流执行失败: ${error.message}`);
+            logger.error(`❌ 工作流执行失败: ${errorMessage}`);
             return {
                 success: false,
-                message: error.message,
+                message: errorMessage,
                 stats: this.stats
             };
+        } finally {
+            this.abortController = null;
         }
     }
 
@@ -296,7 +420,12 @@ class WorkflowController {
             currentAction: `正在上传参考图到豆包: ${imageName}`
         });
 
-        const doubaoResult = await doubaoAutomation.uploadAndPrompt(imagePath, { imageIndex, totalImages, useNewChat: imageIndex > 1 });
+        const doubaoResult = await doubaoAutomation.uploadAndPrompt(imagePath, {
+            imageIndex,
+            totalImages,
+            useNewChat: imageIndex > 1,
+            ...this.getCancellationOptions()
+        });
 
         if (!doubaoResult.success || !doubaoResult.response) {
             throw new Error('豆包生成提示词失败');
@@ -338,6 +467,11 @@ class WorkflowController {
             const promptData = prompts[i];
             const promptText = typeof promptData === 'string' ? promptData : promptData.content;
 
+            if (!promptText || typeof promptText !== 'string') {
+                logger.warn(`提示词 ${i + 1}/5 为空，跳过`);
+                continue;
+            }
+
             // 更新状态 - 正在Legil生成图片
             this.updateStatus({
                 phase: 'generating_in_legil',
@@ -352,16 +486,35 @@ class WorkflowController {
             logger.info(`│ ${promptText.substring(0, 50)}...`);
             logger.info(`└────────────────────────────────────────────────────────────┘`);
 
-            const legilResult = await legilAutomation.generateImage(promptText, i + 1);
+            const legilOutputQuantity = legilAutomation.getConfig().settings.outputQuantity || 1;
+            const nextOutputSequence = this.stats.totalGenerated + 1;
+            const legilResult = await legilAutomation.generateImage(promptText, i + 1, {
+                saveFolder: this.outputFolder,
+                referenceFolder: this.legilReferenceFolder,
+                outputSequence: nextOutputSequence,
+                outputTotal: totalImages * prompts.length * legilOutputQuantity,
+                runId: this.currentRunId,
+                referenceImageIndex: imageIndex,
+                totalReferenceImages: totalImages,
+                referenceImageName: imageName,
+                promptIndexWithinImage: i + 1,
+                totalPromptsForImage: prompts.length,
+                ...this.getCancellationOptions()
+            });
 
             if (legilResult.success) {
-                this.stats.totalGenerated++;
-                logger.info(`✅ 图片 ${i + 1}/5 生成成功`);
+                const savedCount = Number(legilResult.savedCount) || 1;
+                this.stats.totalGenerated += savedCount;
+                logger.info(`✅ 提示词 ${i + 1}/5 生成成功，保存 ${savedCount} 张图片`);
                 // 更新状态 - 图片已保存
                 this.updateStatus({
-                    currentAction: `第 ${i + 1}/5 张图片已保存`
+                    currentAction: `第 ${i + 1}/5 组已保存 ${savedCount} 张图片`
                 });
             } else {
+                if (this.isAbortRequested()) {
+                    logger.info('⏹️ 工作流已停止，中断 Legil 生成循环');
+                    break;
+                }
                 logger.error(`❌ 图片 ${i + 1}/5 生成失败: ${legilResult.message}`);
             }
 
@@ -370,6 +523,10 @@ class WorkflowController {
                 logger.info('⏳ 等待5秒后继续下一张...');
                 await this.sleep(5000);
             }
+        }
+
+        if (this.isAbortRequested()) {
+            throw new Error('工作流已停止');
         }
 
         logger.info('');
@@ -469,13 +626,12 @@ class WorkflowController {
         const files = fs.readdirSync(folderPath);
         const imageExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.bmp', '.gif'];
 
-        return files
+        return sortNaturallyByName(files)
             .filter(file => {
                 const ext = path.extname(file).toLowerCase();
                 return imageExtensions.includes(ext);
             })
-            .map(file => path.join(folderPath, file))
-            .sort(); // 按文件名排序，确保顺序一致
+            .map(file => path.join(folderPath, file));
     }
 
     /**
@@ -484,13 +640,18 @@ class WorkflowController {
      * =====================================================
      */
     getStatus() {
+        const completed = this.currentStatus.phase === 'completed';
+        const progress = this.totalImages > 0
+            ? (completed ? 100 : Math.min(99, Math.round((this.stats.processed / this.totalImages) * 100)))
+            : 0;
+
         return {
             isRunning: this.isRunning,
             currentIndex: this.currentIndex,
             totalImages: this.totalImages,
             currentImage: this.imageFiles[this.currentIndex] || null,
             stats: this.stats,
-            progress: this.totalImages > 0 ? Math.round((this.currentIndex / this.totalImages) * 100) : 0,
+            progress,
             lastExtractedPrompts: this.lastExtractedPrompts || null,
             // 阶段10新增：详细状态
             currentStatus: this.currentStatus

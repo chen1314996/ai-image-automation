@@ -127,7 +127,8 @@
             position: relative;
         }
 
-        input[type="text"] {
+        input[type="text"],
+        textarea {
             width: 100%;
             padding: 12px 16px;
             border: 2px solid var(--gray-200);
@@ -135,9 +136,17 @@
             font-size: 14px;
             transition: all 0.3s;
             background: var(--gray-50);
+            font-family: inherit;
         }
 
-        input[type="text"]:focus {
+        textarea {
+            min-height: 150px;
+            resize: vertical;
+            line-height: 1.6;
+        }
+
+        input[type="text"]:focus,
+        textarea:focus {
             outline: none;
             border-color: var(--primary);
             background: white;
@@ -148,6 +157,104 @@
             display: flex;
             gap: 8px;
             margin-top: 8px;
+            flex-wrap: wrap;
+        }
+
+        .card-wide {
+            grid-column: 1 / -1;
+        }
+
+        .field-meta {
+            display: flex;
+            justify-content: flex-end;
+            margin-top: 6px;
+            font-size: 12px;
+            color: var(--gray-600);
+        }
+
+        .setting-group {
+            margin-bottom: 18px;
+        }
+
+        .setting-options {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .setting-option {
+            min-width: 62px;
+            padding: 10px 12px;
+            border: 2px solid var(--gray-200);
+            border-radius: 12px;
+            background: var(--gray-50);
+            color: var(--gray-800);
+            font-size: 13px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-family: inherit;
+        }
+
+        .setting-option:hover {
+            border-color: var(--primary-light);
+            background: white;
+        }
+
+        .setting-option.active {
+            border-color: var(--primary);
+            background: #eef2ff;
+            color: var(--primary-dark);
+        }
+
+        .model-options {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 10px;
+        }
+
+        .model-option {
+            min-height: 74px;
+            padding: 12px;
+            border: 2px solid var(--gray-200);
+            border-radius: 12px;
+            background: var(--gray-50);
+            color: var(--gray-800);
+            cursor: pointer;
+            transition: all 0.2s;
+            text-align: left;
+            font-family: inherit;
+        }
+
+        .model-option:hover {
+            border-color: var(--primary-light);
+            background: white;
+        }
+
+        .model-option.active {
+            border-color: var(--primary);
+            background: #eef2ff;
+            color: var(--primary-dark);
+        }
+
+        .model-option-title {
+            display: block;
+            font-size: 14px;
+            font-weight: 800;
+            margin-bottom: 4px;
+        }
+
+        .model-option-desc {
+            display: block;
+            font-size: 12px;
+            color: var(--gray-600);
+            line-height: 1.4;
+        }
+
+        @media (max-width: 640px) {
+            .model-options {
+                grid-template-columns: 1fr;
+            }
         }
 
         /* Buttons */
@@ -696,6 +803,7 @@
         .log-error { color: #f87171; }
         .log-system { color: #60a5fa; }
         .log-browser { color: #a78bfa; }
+        .log-success { color: #86efac; }
 
         /* Modal */
         .modal-overlay {
@@ -760,6 +868,7 @@
             color: var(--gray-600);
             margin-bottom: 24px;
             line-height: 1.6;
+            white-space: pre-line;
         }
 
         .modal-actions {
@@ -904,6 +1013,66 @@
                     </ol>
                 </div>
             </div>
+
+            <div class="card card-wide">
+                <div class="card-title">
+                    <span class="icon icon-green">🧠</span>
+                    豆包配置
+                </div>
+
+                <div class="form-group">
+                    <label>豆包对话模型</label>
+                    <div class="model-options" id="doubaoModelOptions"></div>
+                </div>
+
+                <div class="form-group">
+                    <label>发送给豆包的固定文字指令</label>
+                    <textarea id="doubaoPromptTemplate" placeholder="请输入每次上传图片后发送给豆包的固定指令"></textarea>
+                    <div class="field-meta">
+                        <span id="doubaoPromptCount">0 字</span>
+                    </div>
+                </div>
+
+                <div class="input-actions">
+                    <button class="btn btn-primary" onclick="saveDoubaoConfig()">保存豆包配置</button>
+                    <button class="btn btn-secondary" onclick="resetDoubaoPrompt()">恢复默认指令</button>
+                    <button class="btn btn-secondary" onclick="loadDoubaoConfig()">刷新配置</button>
+                </div>
+                <div class="info-box" id="doubaoConfigInfo"></div>
+            </div>
+
+            <div class="card card-wide">
+                <div class="card-title">
+                    <span class="icon icon-purple">🖼️</span>
+                    Legil生成参数
+                </div>
+
+                <div class="setting-group">
+                    <label>图生图模型</label>
+                    <div class="model-options" id="legilImageModelOptions"></div>
+                </div>
+
+                <div class="setting-group">
+                    <label>宽高比</label>
+                    <div class="setting-options" id="legilAspectRatioOptions"></div>
+                </div>
+
+                <div class="setting-group">
+                    <label>分辨率</label>
+                    <div class="setting-options" id="legilResolutionOptions"></div>
+                </div>
+
+                <div class="setting-group">
+                    <label>输出数量</label>
+                    <div class="setting-options" id="legilOutputQuantityOptions"></div>
+                </div>
+
+                <div class="input-actions">
+                    <button class="btn btn-primary" onclick="saveLegilGenerationConfig()">保存Legil参数</button>
+                    <button class="btn btn-secondary" onclick="loadLegilGenerationConfig()">刷新参数</button>
+                </div>
+                <div class="info-box" id="legilGenerationConfigInfo"></div>
+            </div>
         </div>
 
         <!-- Workflow Section -->
@@ -1043,12 +1212,21 @@
             saveFolder: 'D:\\工作\\自动化工作流1\\输出',
             doubaoUrl: 'https://www.doubao.com/chat/',
             legilUrl: 'https://lumos.diandian.info/legil/image-ai/image-to-image',
-            legilReferenceFolder: 'D:\\工作\\自动化工作流1\\Legil参考图'
+            legilReferenceFolder: 'D:\\工作\\自动化工作流1\\Legil参考图',
+            doubaoPromptTemplate: '',
+            doubaoChatModel: 'quick',
+            legilGeneration: {
+                imageModel: 'nano-banana-2',
+                aspectRatio: '1:1',
+                resolution: '2K',
+                outputQuantity: 1
+            }
         };
 
         // SSE connection
         let eventSource = null;
         let progressInterval = null;
+        const maxLogEntries = 1000;
 
         // Initialize
         document.addEventListener('DOMContentLoaded', () => {
@@ -1056,6 +1234,12 @@
             connectLogStream();
             checkBrowserStatus();
             loadLegilRefFolderConfig();
+            loadDoubaoConfig();
+            loadLegilGenerationConfig();
+            const promptTextarea = document.getElementById('doubaoPromptTemplate');
+            if (promptTextarea) {
+                promptTextarea.addEventListener('input', updateDoubaoPromptCount);
+            }
         });
 
         // Logging
@@ -1063,10 +1247,29 @@
             const logArea = document.getElementById('logArea');
             const now = new Date();
             const timeStr = now.toTimeString().split(' ')[0];
+            const normalizedLevel = level === 'warning' ? 'warn' : level;
+            const safeLevel = ['info', 'warn', 'error', 'system', 'browser', 'success'].includes(normalizedLevel)
+                ? normalizedLevel
+                : 'info';
             const entry = document.createElement('div');
             entry.className = 'log-entry';
-            entry.innerHTML = `<span class="log-time">[${timeStr}]</span><span class="log-${level}">${message}</span>`;
+
+            const timeSpan = document.createElement('span');
+            timeSpan.className = 'log-time';
+            timeSpan.textContent = `[${timeStr}]`;
+
+            const messageSpan = document.createElement('span');
+            messageSpan.className = `log-${safeLevel}`;
+            messageSpan.textContent = String(message ?? '');
+
+            entry.appendChild(timeSpan);
+            entry.appendChild(messageSpan);
             logArea.appendChild(entry);
+
+            while (logArea.children.length > maxLogEntries) {
+                logArea.removeChild(logArea.firstElementChild);
+            }
+
             logArea.scrollTop = logArea.scrollHeight;
         }
 
@@ -1123,7 +1326,7 @@
                 const data = await res.json();
                 if (data.success) {
                     infoBox.className = 'info-box success';
-                    infoBox.innerHTML = `✅ 找到 ${data.count} 张参考图`;
+                    infoBox.textContent = `✅ 找到 ${data.count} 张参考图`;
                     showToast(`成功找到 ${data.count} 张图片`);
                 } else {
                     infoBox.className = 'info-box error';
@@ -1153,7 +1356,7 @@
                 const data = await res.json();
                 if (data.success) {
                     infoBox.className = 'info-box success';
-                    infoBox.innerHTML = `✅ 找到 ${data.count} 张参考图`;
+                    infoBox.textContent = `✅ 找到 ${data.count} 张参考图`;
                     await saveLegilRefFolder();
                 } else {
                     infoBox.className = 'info-box error';
@@ -1189,6 +1392,343 @@
                     document.getElementById('legilReferenceFolder').value = data.folderPath;
                 }
             } catch (e) {}
+        }
+
+        function updateDoubaoPromptCount() {
+            const textarea = document.getElementById('doubaoPromptTemplate');
+            const counter = document.getElementById('doubaoPromptCount');
+            if (textarea && counter) {
+                counter.textContent = `${textarea.value.length} 字`;
+            }
+        }
+
+        function setDoubaoModel(modelValue) {
+            config.doubaoChatModel = modelValue || 'quick';
+            document.querySelectorAll('[data-doubao-model]').forEach(button => {
+                button.classList.toggle('active', button.dataset.doubaoModel === config.doubaoChatModel);
+            });
+        }
+
+        function renderDoubaoModelOptions(options) {
+            const container = document.getElementById('doubaoModelOptions');
+            if (!container) return;
+
+            container.textContent = '';
+            const safeOptions = Array.isArray(options) && options.length
+                ? options
+                : [
+                    { value: 'quick', label: '快速', description: '适用于大部分情况' },
+                    { value: 'thinking', label: '思考', description: '擅长解决更难的问题' },
+                    { value: 'expert', label: '专家', description: '研究级智能模型' }
+                ];
+
+            safeOptions.forEach(option => {
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.className = 'model-option';
+                button.dataset.doubaoModel = option.value;
+                button.onclick = () => setDoubaoModel(option.value);
+
+                const title = document.createElement('span');
+                title.className = 'model-option-title';
+                title.textContent = option.label || option.value;
+
+                const desc = document.createElement('span');
+                desc.className = 'model-option-desc';
+                desc.textContent = option.description || '';
+
+                button.appendChild(title);
+                button.appendChild(desc);
+                container.appendChild(button);
+            });
+
+            setDoubaoModel(config.doubaoChatModel);
+        }
+
+        async function loadDoubaoConfig() {
+            const infoBox = document.getElementById('doubaoConfigInfo');
+            try {
+                const res = await fetch('/api/config/doubao');
+                const data = await res.json();
+                if (!data.success || !data.config) {
+                    throw new Error(data.message || '读取豆包配置失败');
+                }
+
+                config.doubaoPromptTemplate = data.config.promptTemplate || '';
+                config.doubaoChatModel = data.config.chatModel || 'quick';
+                renderDoubaoModelOptions(data.config.modelOptions || []);
+
+                const textarea = document.getElementById('doubaoPromptTemplate');
+                if (textarea) {
+                    textarea.value = config.doubaoPromptTemplate;
+                    updateDoubaoPromptCount();
+                }
+
+                if (infoBox) {
+                    infoBox.className = 'info-box success';
+                    infoBox.textContent = `✅ 豆包配置已加载，当前模型：${data.config.chatModelLabel || '快速'}`;
+                }
+            } catch (e) {
+                if (infoBox) {
+                    infoBox.className = 'info-box error';
+                    infoBox.textContent = '❌ 豆包配置读取失败';
+                }
+            }
+        }
+
+        async function saveDoubaoConfig(options = {}) {
+            const silent = options.silent === true;
+            const textarea = document.getElementById('doubaoPromptTemplate');
+            const infoBox = document.getElementById('doubaoConfigInfo');
+            const promptTemplate = textarea ? textarea.value.trim() : '';
+
+            if (!promptTemplate) {
+                if (!silent) showToast('豆包固定指令不能为空', 'error');
+                return false;
+            }
+
+            if (promptTemplate.length > 10000) {
+                if (!silent) showToast('豆包固定指令过长', 'error');
+                return false;
+            }
+
+            if (infoBox) {
+                infoBox.className = 'info-box loading';
+                infoBox.textContent = '保存中...';
+            }
+
+            try {
+                const res = await fetch('/api/config/doubao', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        chatModel: config.doubaoChatModel,
+                        promptTemplate
+                    })
+                });
+                const data = await res.json();
+
+                if (!data.success) {
+                    throw new Error(data.message || '保存失败');
+                }
+
+                config.doubaoPromptTemplate = data.config.promptTemplate;
+                config.doubaoChatModel = data.config.chatModel || 'quick';
+                renderDoubaoModelOptions(data.config.modelOptions || []);
+                if (textarea) {
+                    textarea.value = config.doubaoPromptTemplate;
+                    updateDoubaoPromptCount();
+                }
+
+                if (infoBox) {
+                    infoBox.className = 'info-box success';
+                    infoBox.textContent = `✅ 豆包配置已保存，当前模型：${data.config.chatModelLabel || '快速'}`;
+                }
+                if (!silent) {
+                    showToast('豆包配置已保存');
+                    addLog(`✅ 豆包配置已保存，当前模型：${data.config.chatModelLabel || '快速'}`, 'success');
+                }
+                return true;
+            } catch (e) {
+                if (infoBox) {
+                    infoBox.className = 'info-box error';
+                    infoBox.textContent = '❌ ' + e.message;
+                }
+                if (!silent) showToast(e.message || '豆包配置保存失败', 'error');
+                return false;
+            }
+        }
+
+        async function resetDoubaoPrompt() {
+            const infoBox = document.getElementById('doubaoConfigInfo');
+            try {
+                const res = await fetch('/api/config/doubao/reset-prompt', { method: 'POST' });
+                const data = await res.json();
+                if (!data.success) {
+                    throw new Error(data.message || '恢复失败');
+                }
+
+                config.doubaoPromptTemplate = data.config.promptTemplate;
+                config.doubaoChatModel = data.config.chatModel || 'quick';
+                renderDoubaoModelOptions(data.config.modelOptions || []);
+                const textarea = document.getElementById('doubaoPromptTemplate');
+                if (textarea) {
+                    textarea.value = config.doubaoPromptTemplate;
+                    updateDoubaoPromptCount();
+                }
+
+                if (infoBox) {
+                    infoBox.className = 'info-box success';
+                    infoBox.textContent = '✅ 已恢复默认指令';
+                }
+                showToast('已恢复默认指令');
+            } catch (e) {
+                if (infoBox) {
+                    infoBox.className = 'info-box error';
+                    infoBox.textContent = '❌ ' + e.message;
+                }
+                showToast(e.message || '恢复失败', 'error');
+            }
+        }
+
+        function getLegilImageModelLabel(value, options) {
+            const option = (options || []).find(item => item.value === value);
+            return option ? option.label : (value || 'Nano Banana 2');
+        }
+
+        function setLegilGenerationValue(key, value) {
+            config.legilGeneration[key] = key === 'outputQuantity' ? Number(value) : value;
+            document.querySelectorAll(`[data-legil-setting="${key}"]`).forEach(button => {
+                button.classList.toggle('active', String(button.dataset.value) === String(config.legilGeneration[key]));
+            });
+        }
+
+        function renderLegilImageModelOptions(options) {
+            const container = document.getElementById('legilImageModelOptions');
+            if (!container) return;
+            container.textContent = '';
+
+            const safeOptions = Array.isArray(options) && options.length
+                ? options
+                : [
+                    { value: 'seedream-4.5', label: 'Seedream 4.5' },
+                    { value: 'gpt-image-2', label: 'GPT-Image-2' },
+                    { value: 'gpt-image-1', label: 'GPT-Image-1' },
+                    { value: 'nano-banana-2', label: 'Nano Banana 2' },
+                    { value: 'nano-banana-pro', label: 'Nano Banana Pro' },
+                    { value: 'nano-banana', label: 'Nano Banana' },
+                    { value: 'imagen-3', label: 'Imagen-3' }
+                ];
+
+            safeOptions.forEach(option => {
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.className = 'model-option';
+                button.dataset.legilSetting = 'imageModel';
+                button.dataset.value = option.value;
+                button.onclick = () => setLegilGenerationValue('imageModel', option.value);
+
+                const title = document.createElement('span');
+                title.className = 'model-option-title';
+                title.textContent = option.label || option.value;
+
+                const desc = document.createElement('span');
+                desc.className = 'model-option-desc';
+                desc.textContent = option.description || '';
+
+                button.appendChild(title);
+                button.appendChild(desc);
+                container.appendChild(button);
+            });
+
+            setLegilGenerationValue('imageModel', config.legilGeneration.imageModel);
+        }
+
+        function renderLegilSettingOptions(key, values) {
+            const idMap = {
+                aspectRatio: 'legilAspectRatioOptions',
+                resolution: 'legilResolutionOptions',
+                outputQuantity: 'legilOutputQuantityOptions'
+            };
+            const container = document.getElementById(idMap[key]);
+            if (!container) return;
+            container.textContent = '';
+
+            (values || []).forEach(value => {
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.className = 'setting-option';
+                button.dataset.legilSetting = key;
+                button.dataset.value = value;
+                button.textContent = value;
+                button.onclick = () => setLegilGenerationValue(key, value);
+                container.appendChild(button);
+            });
+
+            setLegilGenerationValue(key, config.legilGeneration[key]);
+        }
+
+        function renderLegilGenerationConfig(dataConfig) {
+            const settings = dataConfig.settings || {};
+            const options = dataConfig.options || {};
+            config.legilGeneration = {
+                imageModel: settings.imageModel || 'nano-banana-2',
+                aspectRatio: settings.aspectRatio || '1:1',
+                resolution: settings.resolution || '2K',
+                outputQuantity: Number(settings.outputQuantity) || 1
+            };
+
+            renderLegilImageModelOptions(options.imageModels || []);
+            renderLegilSettingOptions('aspectRatio', options.aspectRatios || []);
+            renderLegilSettingOptions('resolution', options.resolutions || []);
+            renderLegilSettingOptions('outputQuantity', options.outputQuantities || []);
+        }
+
+        async function loadLegilGenerationConfig() {
+            const infoBox = document.getElementById('legilGenerationConfigInfo');
+            try {
+                const res = await fetch('/api/config/legil-generation');
+                const data = await res.json();
+                if (!data.success || !data.config) {
+                    throw new Error(data.message || '读取Legil参数失败');
+                }
+
+                renderLegilGenerationConfig(data.config);
+
+                if (infoBox) {
+                    const s = data.config.settings;
+                    const modelLabel = getLegilImageModelLabel(s.imageModel, data.config.options?.imageModels);
+                    infoBox.className = 'info-box success';
+                    infoBox.textContent = `✅ 当前参数：${modelLabel} / ${s.aspectRatio} / ${s.resolution} / ${s.outputQuantity}张`;
+                }
+            } catch (e) {
+                if (infoBox) {
+                    infoBox.className = 'info-box error';
+                    infoBox.textContent = '❌ Legil参数读取失败';
+                }
+            }
+        }
+
+        async function saveLegilGenerationConfig(options = {}) {
+            const silent = options.silent === true;
+            const infoBox = document.getElementById('legilGenerationConfigInfo');
+
+            if (infoBox) {
+                infoBox.className = 'info-box loading';
+                infoBox.textContent = '保存中...';
+            }
+
+            try {
+                const res = await fetch('/api/config/legil-generation', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(config.legilGeneration)
+                });
+                const data = await res.json();
+                if (!data.success || !data.config) {
+                    throw new Error(data.message || '保存失败');
+                }
+
+                renderLegilGenerationConfig(data.config);
+                const s = data.config.settings;
+                const modelLabel = getLegilImageModelLabel(s.imageModel, data.config.options?.imageModels);
+                if (infoBox) {
+                    infoBox.className = 'info-box success';
+                    infoBox.textContent = `✅ 已保存：${modelLabel} / ${s.aspectRatio} / ${s.resolution} / ${s.outputQuantity}张`;
+                }
+                if (!silent) {
+                    showToast('Legil参数已保存');
+                    addLog(`✅ Legil参数已保存：${modelLabel} / ${s.aspectRatio} / ${s.resolution} / ${s.outputQuantity}张`, 'success');
+                }
+                return true;
+            } catch (e) {
+                if (infoBox) {
+                    infoBox.className = 'info-box error';
+                    infoBox.textContent = '❌ ' + e.message;
+                }
+                if (!silent) showToast(e.message || 'Legil参数保存失败', 'error');
+                return false;
+            }
         }
 
         // Open websites
@@ -1290,6 +1830,19 @@
             addLog('🚀 启动工作流...', 'system');
 
             try {
+                const configSaved = await saveDoubaoConfig({ silent: true });
+                if (!configSaved) {
+                    showToast('请先检查豆包配置', 'error');
+                    resetUI();
+                    return;
+                }
+                const legilConfigSaved = await saveLegilGenerationConfig({ silent: true });
+                if (!legilConfigSaved) {
+                    showToast('请先检查Legil生成参数', 'error');
+                    resetUI();
+                    return;
+                }
+
                 const res = await fetch('/api/workflow/start', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -1310,6 +1863,10 @@
         }
 
         function startProgressPolling() {
+            if (progressInterval) {
+                clearInterval(progressInterval);
+                progressInterval = null;
+            }
             checkWorkflowStatus();
             progressInterval = setInterval(checkWorkflowStatus, 3000);
         }
@@ -1353,17 +1910,30 @@
                     }
                     showCompletionModal(s.stats);
                     resetUI();
+                } else if (!s.isRunning && ds.phase === 'stopped') {
+                    if (progressInterval) {
+                        clearInterval(progressInterval);
+                        progressInterval = null;
+                    }
+                    resetUI();
+                } else if (!s.isRunning && ds.phase === 'error') {
+                    if (progressInterval) {
+                        clearInterval(progressInterval);
+                        progressInterval = null;
+                    }
+                    showToast(ds.error || '工作流执行失败', 'error');
+                    resetUI();
                 }
             } catch (e) {}
         }
 
         function showCompletionModal(stats) {
             const msg = stats
-                ? `成功: ${stats.processed} 张参考图<br>失败: ${stats.failed} 张<br>共生成: ${stats.totalGenerated} 张图片`
+                ? `成功: ${stats.processed} 张参考图\n失败: ${stats.failed} 张\n共生成: ${stats.totalGenerated} 张图片`
                 : '所有任务已完成';
-            document.getElementById('completionMessage').innerHTML = msg;
+            document.getElementById('completionMessage').textContent = msg;
             document.getElementById('completionModal').classList.add('active');
-                        onWorkflowComplete();
+            onWorkflowComplete();
         }
 
         async function stopWorkflow() {
@@ -1526,10 +2096,15 @@
             addLog(`正在发送提示词 ${number} 到Legil...`, 'system');
 
             try {
+                const legilConfigSaved = await saveLegilGenerationConfig({ silent: true });
+                if (!legilConfigSaved) {
+                    throw new Error('Legil生成参数保存失败');
+                }
+
                 const response = await fetch('/api/legil/generate', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ prompt: content, index: number })
+                    body: JSON.stringify({ prompt: content, promptIndex: number })
                 });
 
                 const data = await response.json();

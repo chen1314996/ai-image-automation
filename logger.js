@@ -11,7 +11,8 @@
 class Logger {
     constructor() {
         // 存储所有连接的客户端（前端页面）
-        this.clients = [];
+        this.clients = new Set();
+        this.heartbeats = new Map();
     }
 
     /**
@@ -24,21 +25,44 @@ class Logger {
         res.writeHead(200, {
             'Content-Type': 'text/event-stream',  // SSE 的 MIME 类型
             'Cache-Control': 'no-cache',           // 禁用缓存
-            'Connection': 'keep-alive'             // 保持长连接
+            'Connection': 'keep-alive',            // 保持长连接
+            'X-Accel-Buffering': 'no'
         });
 
         // 发送初始连接成功消息
-        res.write('data: {"type":"system","message":"日志连接已建立","timestamp":"' + new Date().toISOString() + '"}\n\n');
+        this.writeToClient(res, {
+            type: 'system',
+            message: '日志连接已建立',
+            timestamp: new Date().toISOString()
+        });
 
         // 保存客户端响应对象
-        this.clients.push(res);
+        this.clients.add(res);
+
+        // 定期发送注释心跳，避免代理或浏览器长时间无数据后断开
+        const heartbeat = setInterval(() => {
+            try {
+                if (res.destroyed || res.writableEnded) {
+                    this.removeClient(res);
+                    return;
+                }
+                res.write(': ping\n\n');
+            } catch (error) {
+                this.removeClient(res);
+            }
+        }, 30000);
+        this.heartbeats.set(res, heartbeat);
 
         // 当客户端断开连接时移除
         res.on('close', () => {
             this.removeClient(res);
         });
 
-        console.log('📡 新的日志客户端已连接，当前连接数:', this.clients.length);
+        res.on('error', () => {
+            this.removeClient(res);
+        });
+
+        console.log('📡 新的日志客户端已连接，当前连接数:', this.clients.size);
     }
 
     /**
@@ -46,11 +70,26 @@ class Logger {
      * @param {Object} res - HTTP 响应对象
      */
     removeClient(res) {
-        const index = this.clients.indexOf(res);
-        if (index !== -1) {
-            this.clients.splice(index, 1);
-            console.log('📡 日志客户端已断开，当前连接数:', this.clients.length);
+        if (this.clients.has(res)) {
+            this.clients.delete(res);
+            const heartbeat = this.heartbeats.get(res);
+            if (heartbeat) {
+                clearInterval(heartbeat);
+                this.heartbeats.delete(res);
+            }
+            console.log('📡 日志客户端已断开，当前连接数:', this.clients.size);
         }
+    }
+
+    writeToClient(client, logData) {
+        if (!client || client.destroyed || client.writableEnded) {
+            this.removeClient(client);
+            return false;
+        }
+
+        const sseData = `data: ${JSON.stringify(logData)}\n\n`;
+        client.write(sseData);
+        return true;
     }
 
     /**
@@ -66,19 +105,16 @@ class Logger {
             timestamp: new Date().toISOString()
         };
 
-        // 转换为 SSE 格式
-        // SSE 格式：data: {json}\n\n
-        const sseData = `data: ${JSON.stringify(logData)}\n\n`;
-
         // 发送给所有连接的客户端
-        this.clients.forEach(client => {
+        for (const client of Array.from(this.clients)) {
             try {
-                client.write(sseData);
+                this.writeToClient(client, logData);
             } catch (error) {
                 // 如果发送失败，可能是连接已断开
                 console.error('发送日志失败:', error.message);
+                this.removeClient(client);
             }
-        });
+        }
 
         // 同时在服务器控制台也输出
         const timeStr = new Date().toLocaleTimeString();

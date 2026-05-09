@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+
+# Browser/login state and local caches
+browser_data/
+browser_data_backup_*/
+storage_state.json
+
+# Runtime logs
+*.log
+failed_images.log
+automation-config.json
+
+# Generated QA/test artifacts
+qa-screenshots/
+test-cycle/screenshots/
+test-cycle/reports/
+test-cycle/status-checks/
+test-reports/
+
+# Local scratch files created during automation experiments
+.doubao-part*.js
+temp*.js
+
+# OS/editor noise
+.DS_Store
+Thumbs.db

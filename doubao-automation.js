@@ -20,22 +20,54 @@ const logger = require('./logger');
 const path = require('path');
 const fs = require('fs');
 
-// 引入工作流控制器（用于检查停止状态）
-let workflowController = null;
-function getWorkflowController() {
-    if (!workflowController) {
-        workflowController = require('./workflow-controller');
+// 取消状态由调用方通过 options.signal / options.shouldAbort 传入，
+// 避免普通豆包接口被全局工作流状态误判为“已停止”。
+
+const DEFAULT_PROMPT_TEMPLATE = '帮我参考这张图，生成五组不同画面提示词，要求画面直观、主题明确、高质量3D卡通渲染、商业级游戏宣传海报风格、电影镜头感、内容尽可能详细。';
+
+const DOUBAO_MODEL_OPTIONS = {
+    quick: {
+        label: '快速',
+        description: '适用于大部分情况'
+    },
+    thinking: {
+        label: '思考',
+        description: '擅长解决更难的问题'
+    },
+    expert: {
+        label: '专家',
+        description: '研究级智能模型'
     }
-    return workflowController;
-}
+};
 
 class DoubaoAutomation {
     constructor() {
         // 固定提示词
-        this.promptTemplate = `帮我参考这张图，生成五组不同画面提示词，要求画面直观、主题明确、高质量3D卡通渲染、商业级游戏宣传海报风格、电影镜头感、内容尽可能详细。`;
+        this.promptTemplate = DEFAULT_PROMPT_TEMPLATE;
+        this.chatModel = 'quick';
 
         // 存储最近提取的提示词（第六阶段）
         this.lastExtractedPrompts = null;
+    }
+
+    isAbortRequested(options = {}) {
+        if (options.signal && options.signal.aborted) {
+            return true;
+        }
+        if (typeof options.shouldAbort === 'function') {
+            try {
+                return !!options.shouldAbort();
+            } catch (error) {
+                logger.warn(`检查取消状态失败: ${error.message}`);
+            }
+        }
+        return false;
+    }
+
+    throwIfAborted(options = {}) {
+        if (this.isAbortRequested(options)) {
+            throw new Error('操作已取消');
+        }
     }
 
     /**
@@ -55,16 +87,30 @@ class DoubaoAutomation {
     async uploadAndPrompt(imagePath, options = {}) {
         const { imageIndex = 1, totalImages = 1, useNewChat = true } = options;
         const isFirstImage = imageIndex === 1;
+        const normalizedImagePath = typeof imagePath === 'string'
+            ? imagePath.replace(/["']/g, '').trim()
+            : '';
+
+        if (!normalizedImagePath) {
+            return {
+                success: false,
+                response: null,
+                message: '请提供图片路径',
+                newChatCreated: false
+            };
+        }
 
         logger.info('========================================');
         logger.info(`🔄 开始处理第 ${imageIndex}/${totalImages} 张参考图`);
-        logger.info(`图片路径: ${imagePath}`);
+        logger.info(`图片路径: ${normalizedImagePath}`);
         logger.info('========================================');
 
         let page = null;
         let newChatCreated = false;
 
         try {
+            this.throwIfAborted(options);
+
             // 获取或创建豆包页面
             page = browserController.getPage('doubao');
 
@@ -75,14 +121,18 @@ class DoubaoAutomation {
                     throw new Error('无法打开豆包页面');
                 }
                 page = browserController.getPage('doubao');
-                await browserController.sleep(3000);
+                await this.interruptibleSleep(3000, options);
+            }
+
+            if (!page || page.isClosed()) {
+                throw new Error('豆包页面不可用');
             }
 
             // 为每张参考图新建对话窗口（除了第一张，如果是首次启动）
             if (useNewChat && !isFirstImage) {
                 logger.info('');
                 logger.info(`📱 正在为第 ${imageIndex} 张参考图新建豆包对话窗口...`);
-                const newChatSuccess = await this.startNewChat(page);
+                const newChatSuccess = await this.startNewChat(page, options);
                 if (newChatSuccess) {
                     newChatCreated = true;
                     logger.info(`✅ 已为第 ${imageIndex} 张参考图新建豆包对话窗口`);
@@ -90,23 +140,23 @@ class DoubaoAutomation {
                     logger.warn('⚠️ 新建对话失败，将使用当前对话窗口');
                 }
                 // 等待页面加载稳定
-                await browserController.sleep(3000);
+                await this.interruptibleSleep(3000, options);
             }
 
             // 第一步：上传图片
             logger.browser('正在上传图片...');
-            const uploadSuccess = await this.uploadImage(page, imagePath);
+            const uploadSuccess = await this.uploadImage(page, normalizedImagePath, options);
             if (!uploadSuccess) {
                 throw new Error('图片上传失败');
             }
 
             // 等待图片上传完成
             logger.info('等待图片上传完成（约 5-10 秒）...');
-            await browserController.sleep(8000);
+            await this.interruptibleSleep(8000, options);
 
             // 第二步：发送提示词
             logger.browser('正在发送提示词...');
-            const promptSuccess = await this.sendPrompt(page);
+            const promptSuccess = await this.sendPrompt(page, options);
             if (!promptSuccess) {
                 throw new Error('发送提示词失败');
             }
@@ -120,11 +170,10 @@ class DoubaoAutomation {
             let isGenerating = false;
 
             while (Date.now() - startTime < maxWaitTime) {
-                // 检查工作流是否已停止
-                const wfController = getWorkflowController();
-                if (wfController && !wfController.isRunning) {
-                    logger.info('⏹️ 检测到工作流已停止，中断等待');
-                    throw new Error('工作流已停止');
+                // 检查调用方是否请求取消
+                if (this.isAbortRequested(options)) {
+                    logger.info('⏹️ 检测到取消信号，中断等待');
+                    throw new Error('操作已取消');
                 }
 
                 const elapsed = Math.floor((Date.now() - startTime) / 1000);
@@ -155,14 +204,14 @@ class DoubaoAutomation {
                 }
 
                 // 等待30秒后再次检查（使用可中断的sleep）
-                await this.interruptibleSleep(pollInterval);
+                await this.interruptibleSleep(pollInterval, options);
             }
 
             // 检查是否超时
             if (Date.now() - startTime >= maxWaitTime) {
-                logger.error(`❌ 等待回复超时（超过3分钟），图片处理失败: ${path.basename(imagePath)}`);
+                logger.error(`❌ 等待回复超时（超过3分钟），图片处理失败: ${path.basename(normalizedImagePath)}`);
                 // 记录失败信息
-                await this.logFailedImage(imagePath, '等待回复超时（超过3分钟）');
+                await this.logFailedImage(normalizedImagePath, '等待回复超时（超过3分钟）');
                 throw new Error('等待豆包回复超时');
             }
 
@@ -198,8 +247,9 @@ class DoubaoAutomation {
      * @param {Page} page - Playwright 页面对象
      * @returns {Promise<boolean>}
      */
-    async startNewChat(page) {
+    async startNewChat(page, options = {}) {
         try {
+            this.throwIfAborted(options);
             logger.info('正在点击"新对话"按钮...');
 
             // 根据截图，新对话按钮在左上角侧边栏，带蓝色图标，位于"AI创作"上方
@@ -253,7 +303,7 @@ class DoubaoAutomation {
             }
 
             // 等待新对话加载完成（等待"有什么我能帮你的吗"或输入框出现）
-            await browserController.sleep(3000);
+            await this.interruptibleSleep(3000, options);
 
             // 验证新对话是否成功开启
             const bodyText = await page.$eval('body', body => body.innerText).catch(() => '');
@@ -305,19 +355,20 @@ class DoubaoAutomation {
      * @param {string} imagePath - 图片路径
      * @returns {Promise<boolean>}
      */
-    async uploadImage(page, imagePath) {
+    async uploadImage(page, imagePath, options = {}) {
         try {
+            this.throwIfAborted(options);
             logger.info('定位上传按钮...');
 
             // 先等待一下，模拟人工操作节奏
-            await this.randomDelay(1000, 2000);
+            await this.randomDelay(1000, 2000, options);
 
             // 检查页面是否有效
             const url = page.url();
             if (url.startsWith('chrome-error://')) {
                 logger.warn('页面是错误页面，尝试刷新...');
                 await page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
-                await browserController.sleep(5000);
+                await this.interruptibleSleep(5000, options);
             }
 
             // 尝试直接找文件输入框（最多重试3次）
@@ -326,7 +377,7 @@ class DoubaoAutomation {
                 fileInput = await page.$('input[type="file"]');
                 if (fileInput) break;
                 logger.info(`未找到文件输入框，等待重试 (${attempt}/3)...`);
-                await browserController.sleep(2000);
+                await this.interruptibleSleep(2000, options);
             }
 
             if (fileInput) {
@@ -337,10 +388,10 @@ class DoubaoAutomation {
                 logger.info('图片已选择，等待上传完成...');
 
                 // 等待更长时间，让图片上传完成
-                await this.randomDelay(5000, 8000);
+                await this.randomDelay(5000, 8000, options);
 
                 // 验证图片是否上传成功（检查是否有图片预览、"解释图片"等标识）
-                await browserController.sleep(3000); // 等待图片渲染
+                await this.interruptibleSleep(3000, options); // 等待图片渲染
                 const hasImagePreview = await page.$eval('body', body => {
                     const text = body.innerText;
                     // 检查多种图片已上传的标志
@@ -381,15 +432,15 @@ class DoubaoAutomation {
                     logger.info(`找到上传按钮: ${selector}`);
 
                     // 使用自然点击（带延迟）
-                    await this.naturalClick(uploadBtn);
-                    await this.randomDelay(1500, 2500);
+                    await this.naturalClick(uploadBtn, options);
+                    await this.randomDelay(1500, 2500, options);
 
                     // 查找文件输入框
                     const fileInputAfterClick = await page.$('input[type="file"]');
                     if (fileInputAfterClick) {
                         await fileInputAfterClick.setInputFiles(imagePath);
                         logger.info('图片已选择');
-                        await this.randomDelay(3000, 5000);
+                        await this.randomDelay(3000, 5000, options);
                         return true;
                     }
                 }
@@ -403,6 +454,285 @@ class DoubaoAutomation {
         }
     }
 
+    getChatModelLabel(modelKey = this.chatModel) {
+        return (DOUBAO_MODEL_OPTIONS[modelKey] || DOUBAO_MODEL_OPTIONS.quick).label;
+    }
+
+    getChatModelOptions() {
+        return Object.entries(DOUBAO_MODEL_OPTIONS).map(([value, option]) => ({
+            value,
+            ...option
+        }));
+    }
+
+    async clickElementFast(element, page, description, options = {}) {
+        if (!element) {
+            return false;
+        }
+
+        this.throwIfAborted(options);
+
+        try {
+            await element.click({ timeout: 2000 });
+            return true;
+        } catch (clickError) {
+            logger.warn(`${description}常规点击失败，尝试兜底点击: ${clickError.message.split('\n')[0]}`);
+        }
+
+        this.throwIfAborted(options);
+
+        try {
+            const clicked = await element.evaluate((el) => {
+                const target = el instanceof HTMLElement ? el : el.parentElement;
+                if (!target) return false;
+
+                target.scrollIntoView({ block: 'center', inline: 'center' });
+                const rect = target.getBoundingClientRect();
+                const eventInit = {
+                    bubbles: true,
+                    cancelable: true,
+                    view: window,
+                    clientX: rect.left + rect.width / 2,
+                    clientY: rect.top + rect.height / 2
+                };
+
+                target.dispatchEvent(new MouseEvent('pointerdown', eventInit));
+                target.dispatchEvent(new MouseEvent('mousedown', eventInit));
+                target.dispatchEvent(new MouseEvent('pointerup', eventInit));
+                target.dispatchEvent(new MouseEvent('mouseup', eventInit));
+                target.dispatchEvent(new MouseEvent('click', eventInit));
+                return true;
+            });
+
+            if (clicked) {
+                return true;
+            }
+        } catch (domError) {
+            logger.warn(`${description}DOM 兜底点击失败: ${domError.message}`);
+        }
+
+        this.throwIfAborted(options);
+
+        try {
+            const box = await element.boundingBox();
+            if (box && box.width > 0 && box.height > 0) {
+                await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+                return true;
+            }
+        } catch (mouseError) {
+            logger.warn(`${description}坐标点击失败: ${mouseError.message}`);
+        }
+
+        return false;
+    }
+
+    async detectCurrentChatModel(page) {
+        const labels = this.getChatModelOptions().map(option => option.label);
+        return page.evaluate((modelLabels) => {
+            const normalizeText = (value) => String(value || '').replace(/\s+/g, '').trim();
+            const isVisible = (el) => {
+                const rect = el.getBoundingClientRect();
+                const style = window.getComputedStyle(el);
+                return rect.width > 0 &&
+                    rect.height > 0 &&
+                    style.visibility !== 'hidden' &&
+                    style.display !== 'none' &&
+                    style.opacity !== '0';
+            };
+
+            const candidates = [];
+            for (const el of document.querySelectorAll('button, [role="button"], [class*="btn"], [class*="button"], div, span')) {
+                if (!isVisible(el)) continue;
+                const rect = el.getBoundingClientRect();
+                const text = normalizeText(el.innerText || el.textContent || '');
+                if (!text || rect.top < window.innerHeight * 0.45 || rect.width > 260 || rect.height > 90) continue;
+
+                const label = modelLabels.find(item => text === item || text.startsWith(item));
+                if (label) {
+                    candidates.push({
+                        label,
+                        bottom: rect.bottom,
+                        area: rect.width * rect.height
+                    });
+                }
+            }
+
+            candidates.sort((a, b) => {
+                const bottomDiff = b.bottom - a.bottom;
+                if (Math.abs(bottomDiff) > 4) return bottomDiff;
+                return a.area - b.area;
+            });
+
+            return candidates[0]?.label || '';
+        }, labels).catch(() => '');
+    }
+
+    async findChatModelTrigger(page) {
+        const labels = this.getChatModelOptions().map(option => option.label);
+        const handle = await page.evaluateHandle((modelLabels) => {
+            const normalizeText = (value) => String(value || '').replace(/\s+/g, '').trim();
+            const isVisible = (el) => {
+                const rect = el.getBoundingClientRect();
+                const style = window.getComputedStyle(el);
+                return rect.width > 0 &&
+                    rect.height > 0 &&
+                    style.visibility !== 'hidden' &&
+                    style.display !== 'none' &&
+                    style.opacity !== '0';
+            };
+
+            const resolveClickable = (el) => {
+                return el.closest('button, [role="button"], [class*="btn"], [class*="button"]') || el;
+            };
+
+            const candidates = [];
+            for (const el of document.querySelectorAll('button, [role="button"], [class*="btn"], [class*="button"], div, span')) {
+                if (!isVisible(el)) continue;
+                const rect = el.getBoundingClientRect();
+                const text = normalizeText(el.innerText || el.textContent || '');
+                if (!text || rect.top < window.innerHeight * 0.45 || rect.width > 260 || rect.height > 90) continue;
+                if (!modelLabels.some(label => text === label || text.startsWith(label))) continue;
+
+                const clickable = resolveClickable(el);
+                const clickableRect = clickable.getBoundingClientRect();
+                if (!isVisible(clickable) || clickableRect.width > 280 || clickableRect.height > 100) continue;
+
+                candidates.push({
+                    el: clickable,
+                    bottom: clickableRect.bottom,
+                    area: clickableRect.width * clickableRect.height
+                });
+            }
+
+            candidates.sort((a, b) => {
+                const bottomDiff = b.bottom - a.bottom;
+                if (Math.abs(bottomDiff) > 4) return bottomDiff;
+                return a.area - b.area;
+            });
+
+            return candidates[0]?.el || null;
+        }, labels).catch(() => null);
+
+        return handle ? handle.asElement() : null;
+    }
+
+    async clickChatModelOption(page, targetLabel) {
+        const handle = await page.evaluateHandle((label) => {
+            const normalizeText = (value) => String(value || '').replace(/\s+/g, '').trim();
+            const isVisible = (el) => {
+                const rect = el.getBoundingClientRect();
+                const style = window.getComputedStyle(el);
+                return rect.width > 0 &&
+                    rect.height > 0 &&
+                    style.visibility !== 'hidden' &&
+                    style.display !== 'none' &&
+                    style.opacity !== '0';
+            };
+
+            const resolveClickable = (el) => {
+                return el.closest('button, [role="option"], [role="menuitem"], [role="button"], [class*="option"], [class*="item"], [class*="btn"], [class*="button"]') || el;
+            };
+
+            const candidates = [];
+            for (const el of document.querySelectorAll('button, [role="option"], [role="menuitem"], [role="button"], [class*="option"], [class*="item"], div, span')) {
+                if (!isVisible(el)) continue;
+                const text = normalizeText(el.innerText || el.textContent || '');
+                if (!(text === label || text.startsWith(label))) continue;
+
+                const clickable = resolveClickable(el);
+                const rect = clickable.getBoundingClientRect();
+                if (!isVisible(clickable) || rect.width > 360 || rect.height > 140) continue;
+                if (rect.top < window.innerHeight * 0.25) continue;
+
+                candidates.push({
+                    el: clickable,
+                    top: rect.top,
+                    area: rect.width * rect.height
+                });
+            }
+
+            candidates.sort((a, b) => {
+                const topDiff = b.top - a.top;
+                if (Math.abs(topDiff) > 4) return topDiff;
+                return a.area - b.area;
+            });
+
+            return candidates[0]?.el || null;
+        }, targetLabel).catch(() => null);
+
+        return handle ? handle.asElement() : null;
+    }
+
+    async ensureChatModel(page, options = {}) {
+        const targetModel = DOUBAO_MODEL_OPTIONS[this.chatModel] ? this.chatModel : 'quick';
+        const targetLabel = this.getChatModelLabel(targetModel);
+
+        try {
+            this.throwIfAborted(options);
+            logger.info(`准备设置豆包对话模型: ${targetLabel}`);
+
+            const currentLabel = await this.detectCurrentChatModel(page);
+            if (currentLabel === targetLabel) {
+                logger.info(`豆包当前已是"${targetLabel}"模型`);
+                return true;
+            }
+
+            const visibleOption = await this.clickChatModelOption(page, targetLabel);
+            if (visibleOption) {
+                const visibleOptionClicked = await this.clickElementFast(visibleOption, page, `豆包"${targetLabel}"模型选项`, options);
+                if (visibleOptionClicked) {
+                    await this.randomDelay(800, 1200, options);
+                    const verifiedVisibleLabel = await this.detectCurrentChatModel(page);
+                    if (!verifiedVisibleLabel || verifiedVisibleLabel === targetLabel) {
+                        logger.info(`✅ 已选择豆包"${targetLabel}"模型`);
+                        return true;
+                    }
+                }
+            }
+
+            const trigger = await this.findChatModelTrigger(page);
+            if (!trigger) {
+                logger.warn('未找到豆包模型切换入口，继续使用页面当前模型');
+                return false;
+            }
+
+            const triggerClicked = await this.clickElementFast(trigger, page, '豆包模型入口', options);
+            if (!triggerClicked) {
+                logger.warn('豆包模型入口点击失败，继续使用页面当前模型');
+                return false;
+            }
+            await this.randomDelay(500, 900, options);
+
+            const option = await this.clickChatModelOption(page, targetLabel);
+            if (!option) {
+                logger.warn(`未找到豆包"${targetLabel}"模型选项，继续使用页面当前模型`);
+                await page.keyboard.press('Escape').catch(() => {});
+                return false;
+            }
+
+            const optionClicked = await this.clickElementFast(option, page, `豆包"${targetLabel}"模型选项`, options);
+            if (!optionClicked) {
+                logger.warn(`豆包"${targetLabel}"模型选项点击失败，继续使用页面当前模型`);
+                await page.keyboard.press('Escape').catch(() => {});
+                return false;
+            }
+            await this.randomDelay(800, 1200, options);
+
+            const verifiedLabel = await this.detectCurrentChatModel(page);
+            if (verifiedLabel && verifiedLabel !== targetLabel) {
+                logger.warn(`豆包模型可能未切换成功，当前检测为"${verifiedLabel}"`);
+                return false;
+            }
+
+            logger.info(`✅ 已选择豆包"${targetLabel}"模型`);
+            return true;
+        } catch (error) {
+            logger.warn(`切换豆包模型失败，将继续使用页面当前模型: ${error.message}`);
+            await page.keyboard.press('Escape').catch(() => {});
+            return false;
+        }
+    }
+
     /**
      * 发送提示词
      * --------
@@ -411,8 +741,9 @@ class DoubaoAutomation {
      * @param {Page} page - Playwright 页面对象
      * @returns {Promise<boolean>}
      */
-    async sendPrompt(page) {
+    async sendPrompt(page, options = {}) {
         try {
+            this.throwIfAborted(options);
             // 首先检查是否有验证弹窗
             const hasCaptcha = await this.checkForCaptcha(page);
             if (hasCaptcha) {
@@ -422,8 +753,10 @@ class DoubaoAutomation {
                 logger.warn('请在浏览器窗口中完成验证操作');
                 logger.warn('完成后系统会自动继续执行');
                 logger.warn('========================================');
-                await this.waitForCaptchaComplete(page);
+                await this.waitForCaptchaComplete(page, options);
             }
+
+            await this.ensureChatModel(page, options);
 
             logger.info('正在定位输入框...');
 
@@ -462,15 +795,15 @@ class DoubaoAutomation {
             }
 
             // 使用自然点击
-            await this.naturalClick(inputElement);
-            await this.randomDelay(800, 1500);
+            await this.naturalClick(inputElement, options);
+            await this.randomDelay(800, 1500, options);
 
             // 填入提示词 - 使用逐字输入模拟人工
             logger.info('正在逐字填入提示词（模拟人工）...');
-            await this.typeLikeHuman(inputElement, this.promptTemplate);
+            await this.typeLikeHuman(inputElement, this.promptTemplate, options);
 
             logger.info('提示词已填入');
-            await this.randomDelay(1000, 2000);
+            await this.randomDelay(1000, 2000, options);
 
             // 发送消息
             logger.info('正在发送消息...');
@@ -509,7 +842,7 @@ class DoubaoAutomation {
             if (!sent) {
                 logger.info('尝试按回车键发送...');
                 await inputElement.press('Enter');
-                await browserController.sleep(500);
+                await this.interruptibleSleep(500, options);
                 // 有时需要按两次回车
                 await inputElement.press('Enter');
                 sent = true;
@@ -557,9 +890,10 @@ class DoubaoAutomation {
                         // 取最后一个 AI 消息
                         const lastElement = elements[elements.length - 1];
                         const text = await lastElement.textContent();
-                        if (text && text.length > 50 && !text.includes('帮我参考这张图')) {
+                        const candidate = this.extractCompleteResponseCandidate(text);
+                        if (candidate) {
                             logger.info(`✅ 通过选择器 ${selector} 获取到豆包回复`);
-                            return text.trim();
+                            return candidate;
                         }
                     }
                 } catch (e) {
@@ -584,8 +918,7 @@ class DoubaoAutomation {
                         if (text && text.length > 100) {
                             // 检查是否是用户消息（包含发送的提示词关键词）
                             const isUserMessage =
-                                text.includes('帮我参考这张图') ||
-                                text.includes('生成五组不同画面提示词') ||
+                                this.isLikelyUserPromptText(text) ||
                                 (await msg.evaluate(el => {
                                     // 检查是否在右侧（用户消息通常在右侧）
                                     const rect = el.getBoundingClientRect();
@@ -599,9 +932,10 @@ class DoubaoAutomation {
                                            el.getAttribute('data-role') === 'user';
                                 }).catch(() => false));
 
-                            if (!isUserMessage && text.length > 100) {
+                            const candidate = this.extractCompleteResponseCandidate(text);
+                            if (!isUserMessage && candidate) {
                                 logger.info(`✅ 获取到豆包回复，长度: ${text.length}`);
-                                return text.trim();
+                                return candidate;
                             }
                         }
                     } catch (e) {
@@ -616,7 +950,12 @@ class DoubaoAutomation {
             logger.warn('使用文本过滤方法...');
             const body = await page.$('body');
             if (body) {
-                const fullText = await body.textContent();
+                const fullText = await body.evaluate(el => el.innerText || el.textContent || '');
+                const completeBodyCandidate = this.extractCompleteResponseCandidate(fullText);
+                if (completeBodyCandidate) {
+                    logger.info(`✅ 从页面完整文本中获取到豆包回复，长度: ${completeBodyCandidate.length}`);
+                    return completeBodyCandidate;
+                }
 
                 // 分割成段落
                 const paragraphs = fullText
@@ -628,11 +967,13 @@ class DoubaoAutomation {
                 for (let i = paragraphs.length - 1; i >= 0; i--) {
                     const p = paragraphs[i];
                     // 排除用户发送的提示词
-                    if (!p.includes('帮我参考这张图') &&
-                        !p.includes('生成五组不同画面提示词') &&
+                    if (!this.isLikelyUserPromptText(p) &&
                         p.length > 200) {
-                        logger.info(`✅ 获取到回复，长度: ${p.length}`);
-                        return p;
+                        const candidate = this.extractCompleteResponseCandidate(p);
+                        if (candidate) {
+                            logger.info(`✅ 获取到回复，长度: ${candidate.length}`);
+                            return candidate;
+                        }
                     }
                 }
             }
@@ -651,12 +992,12 @@ class DoubaoAutomation {
      * @param {string} imagePath - 本地图片路径
      * @returns {Promise<Object>} - 包含提取的提示词
      */
-    async fullAutomation(imagePath) {
+    async fullAutomation(imagePath, options = {}) {
         // 每个操作前增加随机延迟，避免触发风控
-        await this.randomDelay(2000, 4000);
+        await this.randomDelay(2000, 4000, options);
 
         // 步骤1：上传图片并发送提示词
-        const result = await this.uploadAndPrompt(imagePath);
+        const result = await this.uploadAndPrompt(imagePath, options);
 
         if (!result.success) {
             return result;
@@ -699,10 +1040,15 @@ class DoubaoAutomation {
      */
     extractPrompts(response) {
         logger.info('开始提取五组提示词...');
-        logger.info(`回复内容长度: ${response.length} 字符`);
 
         try {
-            if (!response || response.length < 50) {
+            const safeResponse = typeof response === 'string'
+                ? response
+                : (response == null ? '' : String(response));
+
+            logger.info(`回复内容长度: ${safeResponse.length} 字符`);
+
+            if (!safeResponse || safeResponse.length < 50) {
                 logger.error('❌ 回复内容太短，无法提取提示词');
                 return {
                     success: false,
@@ -712,7 +1058,7 @@ class DoubaoAutomation {
             }
 
             // 预处理：移除用户发送的提示词请求，找到AI回复的起始位置
-            let aiResponse = this.extractAIResponse(response);
+            let aiResponse = this.extractAIResponse(safeResponse);
             logger.info(`AI回复部分长度: ${aiResponse.length} 字符`);
 
             const prompts = [];
@@ -1004,22 +1350,52 @@ class DoubaoAutomation {
                 prompts.length = 0;
                 logger.info('尝试按"蓝色编号徽章"格式提取（如 1 「标题」）...');
 
-                // 匹配：1 「冰原青椒越野车」 或 1「标题」或 1.「标题」等
-                // 这种格式通常是：数字 + 可选空格 + 「标题」+ 换行 + 内容
-                const badgePattern = /(?:^|\n)\s*([12345])[\.．、\s]*[\s「【\[]*([^\n「【\]]+)[」\]】]?\s*(?:\n+([\s\S]*?))?(?=(?:^|\n)\s*[12345][\.．、\s]*[「【\[]|$)/gm;
-                const matches = [...aiResponse.matchAll(badgePattern)];
+                const lines = aiResponse.split('\n');
+                const matches = [];
+
+                for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+                    const currentLine = lines[lineIndex].trim();
+                    const headerMatch = currentLine.match(/^([12345])(?:[\.．、\s]+(.+))?$/);
+                    if (!headerMatch) continue;
+
+                    const num = headerMatch[1];
+                    let title = (headerMatch[2] || '').trim();
+                    let cursor = lineIndex + 1;
+
+                    if (!title) {
+                        while (cursor < lines.length && !lines[cursor].trim()) cursor++;
+                        title = (lines[cursor] || '').trim();
+                        cursor++;
+                    }
+
+                    title = title.replace(/[「」【】\[\]]/g, '').trim();
+                    if (!title || title.length > 80) continue;
+
+                    const contentLines = [];
+                    while (cursor < lines.length) {
+                        const nextLine = lines[cursor].trim();
+                        if (/^[12345](?:[\.．、\s]+.+)?$/.test(nextLine)) {
+                            break;
+                        }
+                        contentLines.push(lines[cursor]);
+                        cursor++;
+                    }
+
+                    const content = contentLines.join('\n').trim();
+                    if (content.length > 20) {
+                        matches.push({ num, title, content });
+                        lineIndex = cursor - 1;
+                    }
+                }
 
                 if (matches.length >= 5) {
                     logger.info(`✅ 找到 ${matches.length} 组"蓝色编号徽章"格式`);
 
                     for (let i = 0; i < 5 && i < matches.length; i++) {
                         const match = matches[i];
-                        const num = match[1];
-                        let title = match[2] ? match[2].trim() : '';
-                        let content = match[3] ? match[3].trim() : '';
-
-                        // 清理标题中的特殊字符
-                        title = title.replace(/[「」【】\[\]]/g, '').trim();
+                        const num = match.num;
+                        let title = match.title;
+                        let content = match.content;
 
                         // 提取代码块中的内容（如果有）
                         const codeBlockMatch = content.match(/```(?:plaintext|text)?\s*\n?([\s\S]*?)```/i);
@@ -1106,7 +1482,7 @@ class DoubaoAutomation {
                 const englishPromptKeywords = ['render', '3D', 'cinematic', 'game', 'poster', 'quality', 'detailed', 'lighting', 'shadow', 'texture', 'octane', 'unreal'];
                 const chinesePromptKeywords = ['3D', '渲染', '海报', '场景', '画面', '镜头', '光影', '风格', '视角', '构图', '卡通'];
 
-                const scored = segments.map(seg => {
+                const scored = segments.map((seg, index) => {
                     let score = 0;
 
                     // 英文关键词加分（豆包生成的提示词通常是英文）
@@ -1123,25 +1499,26 @@ class DoubaoAutomation {
                     score += Math.min(seg.length / 30, 40);
 
                     // 包含用户请求关键词扣分
-                    if (seg.includes('帮我参考') || seg.includes('生成五组') || seg.includes('帮我参考这张图')) score -= 1000;
+                    if (this.isLikelyUserPromptText(seg)) score -= 1000;
 
                     // 以数字或提示词开头的加分
                     if (/^(提示词\s*\d|【?\d[\.．、】]|\d[\.．、])/.test(seg)) score += 20;
 
-                    return { seg, score };
+                    return { seg, score, index };
                 });
 
-                // 按分数排序
-                scored.sort((a, b) => b.score - a.score);
+                const orderedCandidates = scored
+                    .filter(item => item.score > 0)
+                    .sort((a, b) => a.index - b.index);
 
-                logger.info(`找到 ${scored.length} 个候选段落，取前5个`);
+                logger.info(`找到 ${orderedCandidates.length} 个候选段落，按原文顺序取前5个`);
 
                 // 取前5个
-                for (let i = 0; i < 5 && i < scored.length; i++) {
-                    let content = this.cleanPromptContent(scored[i].seg);
-                    if (content.length > 100) {  // 提示词应该足够长
+                for (let i = 0; i < 5 && i < orderedCandidates.length; i++) {
+                    let content = this.cleanPromptContent(orderedCandidates[i].seg);
+                    if (content.length > 30) {  // 中文提示词可能更短，但仍然有效
                         prompts.push(content);
-                        logger.info(`  [${i+1}] 分数: ${scored[i].score}, 内容: ${content.substring(0, 60)}...`);
+                        logger.info(`  [${i+1}] 分数: ${orderedCandidates[i].score}, 内容: ${content.substring(0, 60)}...`);
                     }
                 }
             }
@@ -1158,23 +1535,32 @@ class DoubaoAutomation {
                 '推荐一些',
                 '进一步提高',
                 '帮你针对',
-                '随时告诉我'
+                '随时告诉我',
+                '需要我再帮你',
+                '需要我',
+                '我可以再帮你'
             ];
 
-            const validPrompts = prompts.filter(p => {
+            const validPrompts = prompts
+                .map(p => this.cleanPromptContent(p))
+                .filter(p => p.length > 30)
+                .filter(p => {
                 for (const pattern of invalidPatterns) {
                     if (p.includes(pattern)) {
-                        logger.warn(`过滤掉包含无效内容的段落: ${p.substring(0, 50)}...`);
+                        logger.warn(`过滤掉仍包含无效内容的段落: ${p.substring(0, 50)}...`);
                         return false;
                     }
                 }
-                // 确保包含英文提示词特征
-                const hasEnglishContent = /\b(render|3D|cinematic|shot|scene|lighting|texture|quality|detailed)\b/i.test(p);
-                if (!hasEnglishContent) {
-                    logger.warn(`过滤掉非英文提示词: ${p.substring(0, 50)}...`);
+
+                const hasEnglishPromptContent = /\b(render|3D|cinematic|shot|scene|lighting|texture|quality|detailed|poster|game|cartoon|commercial|camera|view|composition)\b/i.test(p);
+                const hasChinesePromptContent = /(3D|渲染|海报|场景|画面|镜头|光影|风格|视角|构图|卡通|游戏|宣传|电影|质感|细节|商业级|氛围|主体|色彩|高质量|写实|奇幻|科幻|末日|特写|俯视|仰拍|平视)/.test(p);
+                const hasPromptContent = hasEnglishPromptContent || hasChinesePromptContent;
+
+                if (!hasPromptContent) {
+                    logger.warn(`过滤掉缺少提示词特征的段落: ${p.substring(0, 50)}...`);
                 }
-                return hasEnglishContent;
-            });
+                    return hasPromptContent;
+                });
 
             if (validPrompts.length >= 5) {
                 logger.info(`✅ 已提取到 ${validPrompts.length} 组有效提示词`);
@@ -1206,7 +1592,7 @@ class DoubaoAutomation {
                         content: p,
                         preview: p.substring(0, 80) + '...'
                     })),
-                    message: `只提取到 ${prompts.length} 组提示词，需要5组`
+                    message: `只提取到 ${validPrompts.length} 组有效提示词，需要5组`
                 };
             }
 
@@ -1227,10 +1613,13 @@ class DoubaoAutomation {
     extractAIResponse(response) {
         // 找到AI回复的起始位置
         const userMarkers = [
+            String(this.promptTemplate || '').trim(),
+            String(this.promptTemplate || '').trim().slice(0, 40),
+            DEFAULT_PROMPT_TEMPLATE.slice(0, 40),
             '帮我参考这张图',
             '生成五组不同画面提示词',
             '画面直观、主题明确'
-        ];
+        ].filter(marker => marker && marker.length >= 8);
 
         let aiStartIndex = 0;
 
@@ -1277,6 +1666,7 @@ class DoubaoAutomation {
             .replace(/```(?:plaintext|text)?\s*\n?/gi, '')
             .replace(/```/g, '')
             .replace(/<plaintext>/gi, '')
+            .replace(/plaintext\s*/gi, '')
             .replace(/复制/g, '')
             .replace(/复制代码/g, '')
             .replace(/^\s*[\*\-•]\s*/gm, '')
@@ -1287,6 +1677,8 @@ class DoubaoAutomation {
         const invalidPatterns = [
             '要不要我再帮你',
             '要不要我',
+            '需要我再帮你',
+            '需要我',
             '做一份更精简',
             '短词版',
             '再生成一组',
@@ -1295,6 +1687,7 @@ class DoubaoAutomation {
             '随时告诉我',
             '随时找我',
             '需要我帮你',
+            '我可以再帮你',
             '如果你想',
             '我可以帮你'
         ];
@@ -1306,7 +1699,104 @@ class DoubaoAutomation {
             }
         }
 
+        cleaned = cleaned
+            .replace(/\n+\s*(?:需要我|要不要我|如果你想|我可以|还需要|是否需要|可以继续|你也可以告诉我)[\s\S]*$/g, '')
+            .replace(/\n{3,}/g, '\n\n')
+            .trim();
+
         return cleaned;
+    }
+
+    countDetectedPromptGroups(text) {
+        if (!text || typeof text !== 'string') {
+            return 0;
+        }
+
+        const patterns = [
+            /提示词\s*[一二三四五12345][：:\s]/gi,
+            /第\s*[一二三四五12345]\s*[组組]/g,
+            /(?:^|\n)\s*[12345][\.．、]\s*[^\n]{2,}/gm,
+            /(?:^|\n)\s*[12345]\s*\n+\s*[「【\[]?[^\n]{2,}[」】\]]?/gm,
+            /(?:^|\n)\s*[12345]\s+[「【\[]?[^\n]{2,}[」】\]]?/gm
+        ];
+
+        return Math.max(...patterns.map(pattern => (text.match(pattern) || []).length));
+    }
+
+    countPromptCodeBlocks(text) {
+        if (!text || typeof text !== 'string') {
+            return 0;
+        }
+
+        const codeBlocks = text.match(/```(?:plaintext|text)?\s*\n?[\s\S]*?(?:```|$)/gi) || [];
+        const plaintextBlocks = text.match(/(?:^|\n)\s*plaintext\s*\n+[\s\S]*?(?=(?:^|\n)\s*[12345]\s*(?:\n|[\.．、\s]+[「【\[])|$)/gmi) || [];
+        return Math.max(codeBlocks.length, plaintextBlocks.length);
+    }
+
+    isCompleteResponseText(text) {
+        if (!text || typeof text !== 'string') {
+            return false;
+        }
+
+        const trimmed = text.trim();
+        if (trimmed.length < 500) {
+            return false;
+        }
+
+        return this.countDetectedPromptGroups(trimmed) >= 5 ||
+            this.countPromptCodeBlocks(trimmed) >= 5;
+    }
+
+    extractCompleteResponseCandidate(text) {
+        if (!text || typeof text !== 'string') {
+            return null;
+        }
+
+        const normalized = text
+            .replace(/\r/g, '\n')
+            .replace(/\n{3,}/g, '\n\n')
+            .trim();
+
+        if (this.isCompleteResponseText(normalized)) {
+            const trimmed = this.trimToPromptStart(normalized);
+            return this.isCompleteResponseText(trimmed) ? trimmed : normalized;
+        }
+
+        const lines = normalized.split('\n');
+        const promptStartPattern = /^\s*(?:提示词\s*[一二三四五12345]|第\s*[一二三四五12345]\s*[组組]?|[12345](?:[\.．、\s]+.+)?$)/;
+
+        for (let i = 0; i < lines.length; i++) {
+            if (!promptStartPattern.test(lines[i])) continue;
+
+            const candidate = lines.slice(i).join('\n').trim();
+            if (this.isCompleteResponseText(candidate)) {
+                return candidate;
+            }
+        }
+
+        return null;
+    }
+
+    trimToPromptStart(text) {
+        const markers = [
+            /(?:^|\n)\s*提示词\s*[一1][：:\s]/,
+            /(?:^|\n)\s*第\s*[一1]\s*[组組]?[：:\s]/,
+            /(?:^|\n)\s*1[\.．、]\s*[^\n]{2,}/,
+            /(?:^|\n)\s*1\s*\n+\s*[「【\[]?[^\n]{2,}[」】\]]?/
+        ];
+
+        let bestIndex = -1;
+        for (const marker of markers) {
+            const match = text.match(marker);
+            if (match && typeof match.index === 'number') {
+                const index = text[match.index] === '\n' ? match.index + 1 : match.index;
+                if (bestIndex === -1 || index < bestIndex) {
+                    bestIndex = index;
+                }
+            }
+        }
+
+        return bestIndex >= 0 ? text.substring(bestIndex).trim() : text.trim();
     }
 
     /**
@@ -1317,20 +1807,74 @@ class DoubaoAutomation {
         return browserController.getPage('doubao');
     }
 
+    isLikelyUserPromptText(text) {
+        const value = String(text || '');
+        if (!value) {
+            return false;
+        }
+
+        const currentPrompt = String(this.promptTemplate || '').trim();
+        const currentPromptHead = currentPrompt.slice(0, Math.min(40, currentPrompt.length));
+        const defaultPromptHead = DEFAULT_PROMPT_TEMPLATE.slice(0, 40);
+
+        return [
+            currentPrompt,
+            currentPromptHead,
+            defaultPromptHead,
+            '帮我参考这张图',
+            '生成五组不同画面提示词'
+        ]
+            .filter(part => part && part.length >= 8)
+            .some(part => value.includes(part));
+    }
+
     /**
      * 设置自定义提示词
      * @param {string} prompt - 自定义提示词
      */
     setPrompt(prompt) {
-        this.promptTemplate = prompt;
+        const nextPrompt = typeof prompt === 'string' ? prompt.trim() : '';
+        if (!nextPrompt) {
+            throw new Error('豆包固定指令不能为空');
+        }
+        this.promptTemplate = nextPrompt;
         logger.info('已更新提示词模板');
+    }
+
+    setChatModel(modelKey) {
+        const nextModel = typeof modelKey === 'string' ? modelKey.trim() : '';
+        if (!DOUBAO_MODEL_OPTIONS[nextModel]) {
+            throw new Error('不支持的豆包模型');
+        }
+        this.chatModel = nextModel;
+        logger.info(`已设置豆包对话模型: ${this.getChatModelLabel(nextModel)}`);
+    }
+
+    setConfig(config = {}) {
+        if (Object.prototype.hasOwnProperty.call(config, 'promptTemplate')) {
+            this.setPrompt(config.promptTemplate);
+        }
+        if (Object.prototype.hasOwnProperty.call(config, 'chatModel')) {
+            this.setChatModel(config.chatModel);
+        }
+        return this.getConfig();
+    }
+
+    getConfig() {
+        return {
+            promptTemplate: this.promptTemplate,
+            defaultPromptTemplate: DEFAULT_PROMPT_TEMPLATE,
+            chatModel: this.chatModel,
+            chatModelLabel: this.getChatModelLabel(this.chatModel),
+            modelOptions: this.getChatModelOptions()
+        };
     }
 
     /**
      * 重置提示词为默认值
      */
     resetPrompt() {
-        this.promptTemplate = `帮我参考这张图，生成五组不同画面提示词，要求画面直观、主题明确、高质量3D卡通渲染、商业级游戏宣传海报风格、电影镜头感、内容尽可能详细。`;
+        this.promptTemplate = DEFAULT_PROMPT_TEMPLATE;
         logger.info('已重置提示词为默认值');
     }
 
@@ -1339,13 +1883,12 @@ class DoubaoAutomation {
      * 定期检查工作流是否已停止，如果停止则提前返回
      * @param {number} ms - 延迟毫秒数
      */
-    async interruptibleSleep(ms) {
+    async interruptibleSleep(ms, options = {}) {
         const checkInterval = 500; // 每500毫秒检查一次
         const startTime = Date.now();
         while (Date.now() - startTime < ms) {
-            const wfController = getWorkflowController();
-            if (wfController && !wfController.isRunning) {
-                return; // 工作流已停止，提前返回
+            if (this.isAbortRequested(options)) {
+                throw new Error('操作已取消');
             }
             await browserController.sleep(Math.min(checkInterval, ms - (Date.now() - startTime)));
         }
@@ -1357,9 +1900,9 @@ class DoubaoAutomation {
      * @param {number} min - 最小延迟（毫秒）
      * @param {number} max - 最大延迟（毫秒）
      */
-    async randomDelay(min, max) {
+    async randomDelay(min, max, options = {}) {
         const delay = Math.floor(Math.random() * (max - min + 1)) + min;
-        await browserController.sleep(delay);
+        await this.interruptibleSleep(delay, options);
     }
 
     /**
@@ -1367,10 +1910,11 @@ class DoubaoAutomation {
      * 模拟人工点击，带随机延迟
      * @param {Element} element - 要点击的元素
      */
-    async naturalClick(element) {
+    async naturalClick(element, options = {}) {
+        this.throwIfAborted(options);
         // 先移动到元素上
         await element.hover().catch(() => {});
-        await this.randomDelay(100, 300);
+        await this.randomDelay(100, 300, options);
         // 点击
         await element.click();
     }
@@ -1381,24 +1925,26 @@ class DoubaoAutomation {
      * @param {Element} element - 输入元素
      * @param {string} text - 要输入的文本
      */
-    async typeLikeHuman(element, text) {
+    async typeLikeHuman(element, text, options = {}) {
+        this.throwIfAborted(options);
         // 先清空现有内容
         await element.click();
         await element.press('Control+a');
-        await this.randomDelay(100, 200);
+        await this.randomDelay(100, 200, options);
         await element.press('Delete');
-        await this.randomDelay(200, 400);
+        await this.randomDelay(200, 400, options);
 
         // 逐字输入
         for (let i = 0; i < text.length; i++) {
+            this.throwIfAborted(options);
             const char = text[i];
             await element.type(char);
             // 随机延迟 50-150 毫秒
-            await this.randomDelay(50, 150);
+            await this.randomDelay(50, 150, options);
 
             // 每输入 20 个字符，停顿久一点（模拟思考）
             if (i > 0 && i % 20 === 0) {
-                await this.randomDelay(300, 600);
+                await this.randomDelay(300, 600, options);
             }
         }
     }
@@ -1410,46 +1956,49 @@ class DoubaoAutomation {
      */
     async checkForCaptcha(page) {
         try {
-            // 常见的验证弹窗特征
-            const captchaSelectors = [
-                '[class*="captcha"]',
-                '[class*="verify"]',
-                '[class*="validation"]',
-                'text=验证',
-                'text=请选择',
-                'text=拖拽',
-                'text=常见的',
-                'text=家养宠物',
-                'text=符合上文描述',
-                '[role="dialog"]:has(text=验证)',
-                'div[role="dialog"]',
-                'div[class*="modal"]',
-            ];
+            return await page.evaluate(() => {
+                const isVisible = (el) => {
+                    const rect = el.getBoundingClientRect();
+                    const style = window.getComputedStyle(el);
+                    return rect.width > 0 &&
+                        rect.height > 0 &&
+                        style.visibility !== 'hidden' &&
+                        style.display !== 'none' &&
+                        style.opacity !== '0';
+                };
 
-            for (const selector of captchaSelectors) {
-                try {
-                    const element = await page.$(selector);
-                    if (element) {
-                        const isVisible = await element.isVisible().catch(() => false);
-                        if (isVisible) {
-                            // 检查是否包含验证相关的文本
-                            const text = await element.textContent().catch(() => '');
-                            if (text.includes('验证') ||
-                                text.includes('请选择') ||
-                                text.includes('拖拽') ||
-                                text.includes('常见的') ||
-                                text.includes('家养宠物') ||
-                                text.includes('符合上文')) {
-                                return true;
-                            }
-                        }
+                const captchaTextPattern = /(人机验证|安全验证|验证码|完成验证|请完成验证|拖动滑块|拖拽滑块|按住滑块|滑块验证|点击验证|选择所有|依次点击|验证失败|重新验证|geetest|captcha)/i;
+                const captchaClassPattern = /(captcha|geetest|secsdk|verify[-_]?panel|verify[-_]?box|verify[-_]?captcha|captcha[-_]?verify)/i;
+
+                for (const frame of document.querySelectorAll('iframe')) {
+                    const src = `${frame.getAttribute('src') || ''} ${frame.getAttribute('name') || ''} ${frame.getAttribute('title') || ''}`;
+                    if (isVisible(frame) && /(captcha|geetest|verify|secsdk)/i.test(src)) {
+                        return true;
                     }
-                } catch (e) {
-                    // 忽略错误
                 }
-            }
 
-            return false;
+                const candidates = Array.from(document.querySelectorAll(
+                    '[role="dialog"], [aria-modal="true"], [class*="captcha"], [class*="geetest"], [class*="secsdk"], [class*="verify"]'
+                ));
+
+                for (const el of candidates) {
+                    if (!isVisible(el)) continue;
+                    const text = el.innerText || el.textContent || '';
+                    const className = String(el.className || '');
+                    const ariaLabel = el.getAttribute('aria-label') || '';
+                    const combined = `${text} ${className} ${ariaLabel}`;
+
+                    if (captchaTextPattern.test(combined)) {
+                        return true;
+                    }
+
+                    if (captchaClassPattern.test(className) && /(滑块|验证|captcha|geetest|secsdk)/i.test(combined)) {
+                        return true;
+                    }
+                }
+
+                return false;
+            }).catch(() => false);
         } catch (error) {
             return false;
         }
@@ -1460,7 +2009,7 @@ class DoubaoAutomation {
      * 检测到验证弹窗时暂停，让用户手动完成
      * @param {Page} page - Playwright 页面对象
      */
-    async waitForCaptchaComplete(page) {
+    async waitForCaptchaComplete(page, options = {}) {
         logger.warn('');
         logger.warn('========================================');
         logger.warn('⏸️  等待用户完成人机验证');
@@ -1476,7 +2025,7 @@ class DoubaoAutomation {
         let waited = 0;
 
         while (waited < maxWaitTime) {
-            await browserController.sleep(checkInterval);
+            await this.interruptibleSleep(checkInterval, options);
             waited += checkInterval;
 
             // 每10秒提醒一次
@@ -1553,10 +2102,9 @@ class DoubaoAutomation {
             const bodyText = await page.$eval('body', body => body.innerText);
 
             // 检查是否有5组提示词的标志（支持多种格式：提示词 X、X. 标题、第 X 组）
-            const hasMultiplePrompts =
-                (bodyText.match(/提示词\s*[12345]/gi) || []).length >= 5 ||
-                (bodyText.match(/[12345][\.．、]\s*[^\n]{3,}/g) || []).length >= 5 ||
-                (bodyText.match(/第\s*[12345]\s*[组組]/g) || []).length >= 5;
+            const promptGroupCount = this.countDetectedPromptGroups(bodyText);
+            const promptCodeBlockCount = this.countPromptCodeBlocks(bodyText);
+            const hasMultiplePrompts = promptGroupCount >= 5 || promptCodeBlockCount >= 5;
 
             // 检查是否有结束标志（如"如果你想针对某一组提示词调整"等）
             const hasEndingIndicator =
@@ -1571,6 +2119,13 @@ class DoubaoAutomation {
 
             // 如果检测到5组提示词且内容足够长，则认为已完成
             if (hasMultiplePrompts && contentLength > 500) {
+                logger.info(`✅ 检测到完整回复：提示词组=${promptGroupCount}，代码块=${promptCodeBlockCount}`);
+                return true;
+            }
+
+            // 某些豆包 UI 会把蓝色编号和标题拆成不同节点，但结束语很稳定。
+            if (contentLength > 500 && hasEndingIndicator && (promptGroupCount >= 4 || promptCodeBlockCount >= 4)) {
+                logger.info(`✅ 检测到回复结束语和足够多提示词组：提示词组=${promptGroupCount}，代码块=${promptCodeBlockCount}`);
                 return true;
             }
 
@@ -1587,7 +2142,9 @@ class DoubaoAutomation {
                     // 检查最后一个AI消息的长度
                     const lastElement = elements[elements.length - 1];
                     const text = await lastElement.textContent().catch(() => '');
-                    if (text.length > 300 && hasMultiplePrompts) {
+                    const assistantGroupCount = this.countDetectedPromptGroups(text);
+                    const assistantCodeBlockCount = this.countPromptCodeBlocks(text);
+                    if (text.length > 300 && (assistantGroupCount >= 5 || assistantCodeBlockCount >= 5)) {
                         return true;
                     }
                 }

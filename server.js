@@ -30,26 +30,95 @@ const legilAutomation = require('./legil-automation');
 // 引入工作流控制器（第九阶段新增）
 const workflowController = require('./workflow-controller');
 
+const { formatDateTimeForFile, sortNaturallyByName } = require('./file-utils');
+const { readConfig, updateConfig } = require('./config-store');
+
+const persistedConfig = readConfig();
+
 /**
  * ============================================
  * 全局配置存储
  * ============================================
  */
 const appConfig = {
-    legilReferenceFolder: 'D:\\工作\\自动化工作流1\\Legil参考图'
+    legilReferenceFolder: persistedConfig.legilReferenceFolder || 'D:\\工作\\自动化工作流1\\Legil参考图'
 };
+
+if (persistedConfig.doubao && typeof persistedConfig.doubao === 'object') {
+    try {
+        doubaoAutomation.setConfig(persistedConfig.doubao);
+    } catch (error) {
+        console.warn('加载豆包配置失败，已使用默认配置:', error.message);
+    }
+}
+
+if (persistedConfig.legil && typeof persistedConfig.legil === 'object') {
+    try {
+        legilAutomation.setGenerationSettings(persistedConfig.legil);
+    } catch (error) {
+        console.warn('加载 Legil 生成参数失败，已使用默认配置:', error.message);
+    }
+}
+
+const automationState = {
+    legilTaskRunning: false
+};
+
+function normalizeInputPath(value) {
+    if (typeof value !== 'string') {
+        return '';
+    }
+    return value.replace(/["']/g, '').trim().replace(/\\/g, '/');
+}
+
+function isLegilBusy() {
+    return automationState.legilTaskRunning || workflowController.isRunning;
+}
+
+function toPositiveIndex(value, fallback = 1) {
+    const numberValue = Number(value);
+    if (!Number.isFinite(numberValue) || numberValue < 1) {
+        return fallback;
+    }
+    return Math.floor(numberValue);
+}
+
+function persistRuntimeConfig(extra = {}) {
+    const doubaoConfig = doubaoAutomation.getConfig();
+    return updateConfig({
+        legilReferenceFolder: appConfig.legilReferenceFolder,
+        doubao: {
+            promptTemplate: doubaoConfig.promptTemplate,
+            chatModel: doubaoConfig.chatModel
+        },
+        legil: {
+            ...legilAutomation.getConfig().settings
+        },
+        ...extra
+    });
+}
 
 // 创建 express 应用实例
 const app = express();
 
 // 设置服务器端口
-const PORT = 3055;
+const PORT = Number(process.env.PORT) || 3055;
 
 /**
  * 配置中间件
  */
-app.use(express.json());
+app.use(express.json({ limit: '2mb' }));
 app.use(express.static('public'));
+
+app.use((err, req, res, next) => {
+    if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
+        return res.status(400).json({
+            success: false,
+            message: '请求 JSON 格式不正确'
+        });
+    }
+    next(err);
+});
 
 /**
  * 主页路由
@@ -73,7 +142,7 @@ app.post('/api/count-images', (req, res) => {
     console.log('\n📂 收到统计图片请求');
     console.log('   路径:', folderPath);
 
-    if (!folderPath) {
+    if (typeof folderPath !== 'string' || !folderPath.trim()) {
         console.log('   ❌ 错误：未提供路径');
         return res.json({
             success: false,
@@ -82,7 +151,8 @@ app.post('/api/count-images', (req, res) => {
         });
     }
 
-    let normalizedPath = folderPath.replace(/["']/g, '').trim();
+    // 规范化路径：去除引号、trim，并统一使用正斜杠（兼容Windows）
+    let normalizedPath = normalizeInputPath(folderPath);
 
     try {
         if (!fs.existsSync(normalizedPath)) {
@@ -109,7 +179,7 @@ app.post('/api/count-images', (req, res) => {
 
         const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'];
 
-        const imageFiles = files.filter(file => {
+        const imageFiles = sortNaturallyByName(files).filter(file => {
             const ext = path.extname(file).toLowerCase();
             return imageExtensions.includes(ext);
         });
@@ -156,6 +226,13 @@ app.post('/api/open-website', async (req, res) => {
         return res.json({
             success: false,
             message: '请提供网站名称和网址'
+        });
+    }
+
+    if (workflowController.isRunning || automationState.legilTaskRunning) {
+        return res.json({
+            success: false,
+            message: '自动化任务运行中，暂不能切换浏览器页面'
         });
     }
 
@@ -219,6 +296,23 @@ app.post('/api/open-both-websites', async (req, res) => {
         });
     }
 
+    if (workflowController.isRunning || automationState.legilTaskRunning) {
+        return res.json({
+            success: false,
+            message: '自动化任务运行中，暂不能重新打开浏览器页面'
+        });
+    }
+
+    try {
+        new URL(doubaoUrl);
+        new URL(legilUrl);
+    } catch {
+        return res.json({
+            success: false,
+            message: '网址格式不正确'
+        });
+    }
+
     try {
         // 调用浏览器控制器同时打开两个网站
         const results = await browserController.openBothWebsites(doubaoUrl, legilUrl);
@@ -259,6 +353,13 @@ app.post('/api/close-browser', async (req, res) => {
     console.log('\n🔒 收到关闭浏览器请求');
 
     try {
+        if (workflowController.isRunning || automationState.legilTaskRunning) {
+            return res.json({
+                success: false,
+                message: '自动化任务运行中，请先停止任务再关闭浏览器'
+            });
+        }
+
         await browserController.closeBrowser();
         res.json({
             success: true,
@@ -293,6 +394,108 @@ app.get('/api/browser-status', (req, res) => {
     });
 });
 
+app.get('/api/config/doubao', (req, res) => {
+    res.json({
+        success: true,
+        config: doubaoAutomation.getConfig()
+    });
+});
+
+app.post('/api/config/doubao', (req, res) => {
+    const { chatModel, promptTemplate, instruction } = req.body || {};
+    const nextPrompt = promptTemplate ?? instruction;
+
+    try {
+        const updates = {};
+
+        if (typeof nextPrompt !== 'undefined') {
+            if (typeof nextPrompt !== 'string' || !nextPrompt.trim()) {
+                return res.json({
+                    success: false,
+                    message: '豆包固定指令不能为空'
+                });
+            }
+
+            if (nextPrompt.length > 10000) {
+                return res.json({
+                    success: false,
+                    message: '豆包固定指令过长，请控制在10000字以内'
+                });
+            }
+
+            updates.promptTemplate = nextPrompt.trim();
+        }
+
+        if (typeof chatModel !== 'undefined') {
+            updates.chatModel = chatModel;
+        }
+
+        const config = doubaoAutomation.setConfig(updates);
+        persistRuntimeConfig();
+
+        res.json({
+            success: true,
+            config,
+            message: '豆包配置已保存'
+        });
+    } catch (error) {
+        res.json({
+            success: false,
+            message: error.message
+        });
+    }
+});
+
+app.post('/api/config/doubao/reset-prompt', (req, res) => {
+    try {
+        doubaoAutomation.resetPrompt();
+        const config = doubaoAutomation.getConfig();
+        persistRuntimeConfig();
+        res.json({
+            success: true,
+            config,
+            message: '豆包固定指令已恢复默认'
+        });
+    } catch (error) {
+        res.json({
+            success: false,
+            message: error.message
+        });
+    }
+});
+
+app.get('/api/config/legil-generation', (req, res) => {
+    res.json({
+        success: true,
+        config: legilAutomation.getConfig()
+    });
+});
+
+app.post('/api/config/legil-generation', (req, res) => {
+    const { imageModel, aspectRatio, resolution, outputQuantity } = req.body || {};
+
+    try {
+        const config = legilAutomation.setGenerationSettings({
+            imageModel,
+            aspectRatio,
+            resolution,
+            outputQuantity
+        });
+        persistRuntimeConfig();
+
+        res.json({
+            success: true,
+            config,
+            message: 'Legil 生成参数已保存'
+        });
+    } catch (error) {
+        res.json({
+            success: false,
+            message: error.message
+        });
+    }
+});
+
 /**
  * ============================================
  * 第六阶段：完整自动化流程 API 接口
@@ -310,7 +513,7 @@ app.post('/api/doubao/full-automation', async (req, res) => {
     console.log('   图片路径:', imagePath);
 
     // 验证参数
-    if (!imagePath) {
+    if (typeof imagePath !== 'string' || !imagePath.trim()) {
         return res.json({
             success: false,
             response: null,
@@ -319,20 +522,29 @@ app.post('/api/doubao/full-automation', async (req, res) => {
         });
     }
 
-    // 验证文件是否存在
-    const fs = require('fs');
-    if (!fs.existsSync(imagePath)) {
+    if (workflowController.isRunning) {
         return res.json({
             success: false,
             response: null,
             prompts: [],
-            message: '图片文件不存在'
+            message: '工作流正在运行中，请稍后再单独运行豆包自动化'
+        });
+    }
+
+    // 规范化路径并验证文件是否存在
+    const normalizedImagePath = normalizeInputPath(imagePath);
+    if (!fs.existsSync(normalizedImagePath)) {
+        return res.json({
+            success: false,
+            response: null,
+            prompts: [],
+            message: '图片文件不存在: ' + normalizedImagePath
         });
     }
 
     try {
         // 调用豆包完整自动化流程（上传+获取+提取）
-        const result = await doubaoAutomation.fullAutomation(imagePath);
+        const result = await doubaoAutomation.fullAutomation(normalizedImagePath);
         res.json(result);
 
     } catch (error) {
@@ -380,14 +592,15 @@ app.get('/api/doubao/extracted-prompts', (req, res) => {
  * 返回数据：{ success: true/false, savePath: "保存路径", message: "提示信息" }
  */
 app.post('/api/legil/generate', async (req, res) => {
-    const { prompt, promptIndex } = req.body;
+    const { prompt, promptIndex, index } = req.body;
+    const safePromptIndex = toPositiveIndex(promptIndex ?? index, 1);
 
     console.log('\n🎨 收到 Legil 生成图片请求（第七阶段）');
-    console.log('   提示词序号:', promptIndex);
-    console.log('   提示词预览:', prompt ? prompt.substring(0, 50) + '...' : '未提供');
+    console.log('   提示词序号:', safePromptIndex);
+    console.log('   提示词预览:', typeof prompt === 'string' ? prompt.substring(0, 50) + '...' : '未提供');
 
     // 验证参数
-    if (!prompt) {
+    if (typeof prompt !== 'string' || !prompt.trim()) {
         return res.json({
             success: false,
             savePath: null,
@@ -395,9 +608,18 @@ app.post('/api/legil/generate', async (req, res) => {
         });
     }
 
+    if (isLegilBusy()) {
+        return res.json({
+            success: false,
+            savePath: null,
+            message: '当前已有自动化任务正在运行，请稍后再试'
+        });
+    }
+
     try {
+        automationState.legilTaskRunning = true;
         // 调用 Legil 自动化模块
-        const result = await legilAutomation.generateImage(prompt, promptIndex || 1);
+        const result = await legilAutomation.generateImage(prompt.trim(), safePromptIndex);
         res.json(result);
 
     } catch (error) {
@@ -407,6 +629,8 @@ app.post('/api/legil/generate', async (req, res) => {
             savePath: null,
             message: '服务器错误：' + error.message
         });
+    } finally {
+        automationState.legilTaskRunning = false;
     }
 });
 
@@ -429,44 +653,82 @@ app.post('/api/legil/batch-generate', async (req, res) => {
         });
     }
 
+    if (isLegilBusy()) {
+        return res.json({
+            success: false,
+            results: [],
+            message: '当前已有自动化任务正在运行，请稍后再试'
+        });
+    }
+
+    const normalizedPrompts = prompts
+        .map(promptData => typeof promptData === 'string' ? promptData : promptData && promptData.content)
+        .filter(promptText => typeof promptText === 'string' && promptText.trim())
+        .map(promptText => promptText.trim());
+
+    if (normalizedPrompts.length === 0) {
+        return res.json({
+            success: false,
+            results: [],
+            message: '提示词数组中没有有效内容'
+        });
+    }
+
+    automationState.legilTaskRunning = true;
+    const batchRunId = formatDateTimeForFile();
+
     // 先返回接受请求的消息
     res.json({
         success: true,
-        message: `已接受批量生成请求，将生成 ${prompts.length} 张图片。请通过日志查看进度。`,
-        total: prompts.length
+        message: `已接受批量生成请求，将生成 ${normalizedPrompts.length} 张图片。请通过日志查看进度。`,
+        total: normalizedPrompts.length
     });
 
     // 在后台执行批量生成（不阻塞响应）
     (async () => {
         logger.system('开始批量生成图片...');
 
-        for (let i = 0; i < prompts.length; i++) {
-            const promptData = prompts[i];
-            const promptText = typeof promptData === 'string' ? promptData : promptData.content;
+        try {
+            let outputSequence = 1;
+            const legilOutputQuantity = legilAutomation.getConfig().settings.outputQuantity || 1;
+            const outputTotal = normalizedPrompts.length * legilOutputQuantity;
+            for (let i = 0; i < normalizedPrompts.length; i++) {
+                const promptText = normalizedPrompts[i];
 
-            logger.info(`正在生成第 ${i + 1}/${prompts.length} 张图片...`);
+                logger.info(`正在生成第 ${i + 1}/${normalizedPrompts.length} 张图片...`);
 
-            try {
-                const result = await legilAutomation.generateImage(promptText, i + 1);
+                try {
+                    const result = await legilAutomation.generateImage(promptText, i + 1, {
+                        outputSequence,
+                        outputTotal,
+                        runId: batchRunId,
+                        promptIndexWithinImage: i + 1,
+                        totalPromptsForImage: normalizedPrompts.length
+                    });
 
-                if (result.success) {
-                    logger.info(`✅ 第 ${i + 1} 张图片生成成功: ${path.basename(result.savePath)}`);
-                } else {
-                    logger.error(`❌ 第 ${i + 1} 张图片生成失败: ${result.message}`);
+                    if (result.success) {
+                        const savedCount = Number(result.savedCount) || 1;
+                        outputSequence += savedCount;
+                        logger.info(`✅ 第 ${i + 1} 组生成成功，保存 ${savedCount} 张图片: ${path.basename(result.savePath)}`);
+                    } else {
+                        logger.error(`❌ 第 ${i + 1} 张图片生成失败: ${result.message}`);
+                    }
+
+                    // 每张图片之间等待 5 秒，避免过于频繁
+                    if (i < normalizedPrompts.length - 1) {
+                        logger.info('等待 5 秒后继续下一张...');
+                        await new Promise(resolve => setTimeout(resolve, 5000));
+                    }
+
+                } catch (error) {
+                    logger.error(`❌ 第 ${i + 1} 张图片生成时出错: ${error.message}`);
                 }
-
-                // 每张图片之间等待 5 秒，避免过于频繁
-                if (i < prompts.length - 1) {
-                    logger.info('等待 5 秒后继续下一张...');
-                    await new Promise(resolve => setTimeout(resolve, 5000));
-                }
-
-            } catch (error) {
-                logger.error(`❌ 第 ${i + 1} 张图片生成时出错: ${error.message}`);
             }
-        }
 
-        logger.system('✅ 批量生成完成！');
+            logger.system('✅ 批量生成完成！');
+        } finally {
+            automationState.legilTaskRunning = false;
+        }
     })();
 });
 
@@ -482,7 +744,7 @@ app.post('/api/doubao/upload-and-prompt', async (req, res) => {
     console.log('   图片路径:', imagePath);
 
     // 验证参数
-    if (!imagePath) {
+    if (typeof imagePath !== 'string' || !imagePath.trim()) {
         return res.json({
             success: false,
             response: null,
@@ -490,9 +752,17 @@ app.post('/api/doubao/upload-and-prompt', async (req, res) => {
         });
     }
 
+    if (workflowController.isRunning) {
+        return res.json({
+            success: false,
+            response: null,
+            message: '工作流正在运行中，请稍后再单独运行豆包自动化'
+        });
+    }
+
     // 验证文件是否存在
-    const fs = require('fs');
-    if (!fs.existsSync(imagePath)) {
+    const normalizedImagePath = normalizeInputPath(imagePath);
+    if (!fs.existsSync(normalizedImagePath)) {
         return res.json({
             success: false,
             response: null,
@@ -502,7 +772,7 @@ app.post('/api/doubao/upload-and-prompt', async (req, res) => {
 
     try {
         // 调用豆包自动化模块
-        const result = await doubaoAutomation.uploadAndPrompt(imagePath);
+        const result = await doubaoAutomation.uploadAndPrompt(normalizedImagePath);
         res.json(result);
 
     } catch (error) {
@@ -533,19 +803,44 @@ app.post('/api/workflow/start', async (req, res) => {
     console.log('   输出文件夹:', outputFolder || '使用默认路径');
     console.log('   Legil参考图文件夹:', legilReferenceFolder || appConfig.legilReferenceFolder || '使用默认路径');
 
+    if (automationState.legilTaskRunning) {
+        return res.json({
+            success: false,
+            message: '当前已有 Legil 生成任务正在运行，请稍后再启动工作流'
+        });
+    }
+
+    const legilRefFolder = legilReferenceFolder || appConfig.legilReferenceFolder;
+    const validation = workflowController.validateStart(inputFolder, outputFolder, legilRefFolder);
+    if (!validation.success) {
+        return res.json({
+            success: false,
+            message: validation.message
+        });
+    }
+
     // 先返回接受请求的消息
     res.json({
         success: true,
-        message: '工作流已启动，请在日志中查看进度'
+        message: `工作流已启动，将处理 ${validation.totalImages} 张参考图，请在日志中查看进度`,
+        totalImages: validation.totalImages
     });
 
     // 在后台执行工作流（不阻塞响应）
     (async () => {
         try {
             // 使用配置的Legil参考图文件夹
-            const legilRefFolder = legilReferenceFolder || appConfig.legilReferenceFolder;
-            const result = await workflowController.startWorkflow(inputFolder, outputFolder, legilRefFolder);
-            console.log('\n✅ 工作流执行结果:', result.message);
+            const result = await workflowController.startWorkflow(
+                validation.inputFolder,
+                validation.outputFolder,
+                validation.legilReferenceFolder
+            );
+            if (result.success) {
+                console.log('\n✅ 工作流执行结果:', result.message);
+            } else {
+                console.log('\n⚠️ 工作流执行结果:', result.message);
+                logger.warn('工作流未完成: ' + result.message);
+            }
         } catch (error) {
             console.error('\n❌ 工作流执行出错:', error.message);
             logger.error('工作流执行出错: ' + error.message);
@@ -618,7 +913,7 @@ app.post('/api/config/legil-ref-folder', (req, res) => {
     console.log('\n📁 收到 Legil 参考图文件夹配置');
     console.log('   路径:', folderPath);
 
-    if (!folderPath) {
+    if (typeof folderPath !== 'string' || !folderPath.trim()) {
         return res.json({
             success: false,
             message: '请提供文件夹路径'
@@ -627,14 +922,16 @@ app.post('/api/config/legil-ref-folder', (req, res) => {
 
     // 验证路径是否存在
     try {
-        if (!fs.existsSync(folderPath)) {
+        const normalizedFolderPath = normalizeInputPath(folderPath);
+
+        if (!fs.existsSync(normalizedFolderPath)) {
             return res.json({
                 success: false,
                 message: '路径不存在，请检查路径是否正确'
             });
         }
 
-        const stats = fs.statSync(folderPath);
+        const stats = fs.statSync(normalizedFolderPath);
         if (!stats.isDirectory()) {
             return res.json({
                 success: false,
@@ -643,16 +940,17 @@ app.post('/api/config/legil-ref-folder', (req, res) => {
         }
 
         // 保存配置
-        appConfig.legilReferenceFolder = folderPath;
+        appConfig.legilReferenceFolder = normalizedFolderPath;
+        persistRuntimeConfig({ legilReferenceFolder: normalizedFolderPath });
         console.log('   ✅ 配置已保存');
 
         // 同时更新 legil 自动化模块的配置
-        legilAutomation.setReferenceFolder(folderPath);
+        legilAutomation.setReferenceFolder(normalizedFolderPath);
 
         res.json({
             success: true,
             message: '配置已保存',
-            folderPath: folderPath
+            folderPath: normalizedFolderPath
         });
 
     } catch (error) {
@@ -701,7 +999,7 @@ app.get('/api/logs', (req, res) => {
 /**
  * 启动服务器
  */
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
     console.log('========================================');
     console.log('🚀 服务器启动成功！');
     console.log('========================================');
@@ -729,4 +1027,15 @@ app.listen(PORT, () => {
     console.log('      - 循环处理所有参考图');
     console.log('      - 自动新开豆包对话');
     console.log('========================================');
+});
+
+server.on('error', (error) => {
+    if (error.code === 'EADDRINUSE') {
+        console.error(`❌ 端口 ${PORT} 已被占用，请关闭旧服务或使用 PORT 环境变量指定其他端口`);
+        process.exitCode = 1;
+        return;
+    }
+
+    console.error('❌ 服务器启动失败:', error.message);
+    process.exitCode = 1;
 });
