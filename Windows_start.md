@@ -34,10 +34,11 @@ npx playwright install chromium
 npm start
 ```
 
-10. 几秒后自动打开自动化生图平台：
+10. 几秒后自动打开两个浏览器窗口：Legil 网站和自动化生图平台。
 
 ```text
-http://localhost:3055/
+https://lumos.diandian.info/legil/image-ai/image-to-image
+http://localhost:3066/
 ```
 
 ## 停止服务器
@@ -54,10 +55,11 @@ Ctrl+C
 
 ## 端口已被占用
 
-如果 `3055` 端口已经有服务在运行，脚本不会重复启动服务器，会直接打开平台页面：
+如果 `3066` 端口已经有服务在运行，脚本不会重复启动服务器，会直接打开 Legil 网站和平台页面：
 
 ```text
-http://localhost:3055/
+https://lumos.diandian.info/legil/image-ai/image-to-image
+http://localhost:3066/
 ```
 
 这种情况下，新打开的窗口没有启动服务器，所以不能通过这个窗口的 `Ctrl+C` 关闭旧服务器。如果你想让这个窗口控制服务器，请先关闭旧的服务器窗口，再重新双击 `Windows_start.cmd`。

@@ -834,6 +834,174 @@ class LegilAutomation {
         return true;
     }
 
+    async hasOpenImagePreviewModal(page) {
+        if (!page || page.isClosed()) {
+            return false;
+        }
+
+        return page.evaluate(() => {
+            const isVisible = (el) => {
+                const rect = el.getBoundingClientRect();
+                const style = window.getComputedStyle(el);
+                return rect.width > 0 &&
+                    rect.height > 0 &&
+                    style.visibility !== 'hidden' &&
+                    style.display !== 'none' &&
+                    style.opacity !== '0';
+            };
+
+            const dialogs = Array.from(document.querySelectorAll(
+                '[role="dialog"], [aria-modal="true"], [class*="Modal_modalContent"], [class*="Modal_modalFullscreen"], [class*="modal"][data-state="open"], [class*="lightbox"], [class*="fullscreen"]'
+            ));
+
+            return dialogs.some(dialog => {
+                if (!isVisible(dialog)) return false;
+                const rect = dialog.getBoundingClientRect();
+                if (rect.width < 260 || rect.height < 220) return false;
+                return !!dialog.querySelector('img');
+            });
+        }).catch(() => false);
+    }
+
+    async closeOpenPreviewModal(page, options = {}) {
+        if (!page || page.isClosed()) {
+            return false;
+        }
+
+        const hadModal = await this.hasOpenImagePreviewModal(page);
+        if (!hadModal) {
+            return false;
+        }
+
+        logger.info('检测到未关闭的大图弹窗，正在关闭...');
+
+        for (let attempt = 0; attempt < 4; attempt++) {
+            const clickedClose = await page.evaluate(() => {
+                const isVisible = (el) => {
+                    const rect = el.getBoundingClientRect();
+                    const style = window.getComputedStyle(el);
+                    return rect.width > 0 &&
+                        rect.height > 0 &&
+                        style.visibility !== 'hidden' &&
+                        style.display !== 'none' &&
+                        style.opacity !== '0';
+                };
+
+                const normalizeText = (value) => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
+                const dialogs = Array.from(document.querySelectorAll(
+                    '[role="dialog"], [aria-modal="true"], [class*="Modal_modalContent"], [class*="Modal_modalFullscreen"], [class*="modal"][data-state="open"], [class*="lightbox"], [class*="fullscreen"]'
+                ))
+                    .filter(dialog => {
+                        if (!isVisible(dialog) || !dialog.querySelector('img')) return false;
+                        const rect = dialog.getBoundingClientRect();
+                        return rect.width >= 260 && rect.height >= 220;
+                    })
+                    .sort((a, b) => {
+                        const aRect = a.getBoundingClientRect();
+                        const bRect = b.getBoundingClientRect();
+                        return (bRect.width * bRect.height) - (aRect.width * aRect.height);
+                    });
+
+                const dialog = dialogs[0];
+                if (!dialog) return { clicked: false, box: null };
+
+                const dialogRect = dialog.getBoundingClientRect();
+                const controls = Array.from(dialog.querySelectorAll(
+                    'button, [role="button"], [aria-label], [title], [class*="close"], [class*="Close"], svg'
+                ));
+
+                const candidates = [];
+                for (const el of controls) {
+                    if (!isVisible(el)) continue;
+
+                    const rect = el.getBoundingClientRect();
+                    const text = normalizeText(el.innerText || el.textContent || '');
+                    const aria = normalizeText(el.getAttribute('aria-label'));
+                    const title = normalizeText(el.getAttribute('title'));
+                    const className = normalizeText(el.className);
+                    const closeLike = text === 'x' ||
+                        text === '×' ||
+                        text.includes('关闭') ||
+                        text.includes('close') ||
+                        aria.includes('关闭') ||
+                        aria.includes('close') ||
+                        title.includes('关闭') ||
+                        title.includes('close') ||
+                        className.includes('close');
+                    const nearTopRight = rect.left >= dialogRect.right - 90 && rect.top <= dialogRect.top + 90;
+
+                    if (closeLike || nearTopRight) {
+                        const clickable = el.closest('button, [role="button"], [aria-label], [title], [class*="close"], [class*="Close"]') || el;
+                        candidates.push({
+                            el: clickable,
+                            top: rect.top,
+                            left: rect.left,
+                            score: (closeLike ? 0 : 10) + (nearTopRight ? 0 : 5)
+                        });
+                    }
+                }
+
+                candidates.sort((a, b) => {
+                    if (a.score !== b.score) return a.score - b.score;
+                    if (Math.abs(a.top - b.top) > 4) return a.top - b.top;
+                    return b.left - a.left;
+                });
+
+                if (candidates[0]?.el) {
+                    if (typeof candidates[0].el.click === 'function') {
+                        candidates[0].el.click();
+                    } else {
+                        candidates[0].el.dispatchEvent(new MouseEvent('click', {
+                            bubbles: true,
+                            cancelable: true,
+                            view: window
+                        }));
+                    }
+                    return {
+                        clicked: true,
+                        box: {
+                            x: Math.max(0, dialogRect.right - 28),
+                            y: Math.max(0, dialogRect.top + 28)
+                        }
+                    };
+                }
+
+                return {
+                    clicked: false,
+                    box: {
+                        x: Math.max(0, dialogRect.right - 28),
+                        y: Math.max(0, dialogRect.top + 28)
+                    }
+                };
+            }).catch(() => ({ clicked: false, box: null }));
+
+            await browserController.sleep(500).catch(() => {});
+            if (!(await this.hasOpenImagePreviewModal(page))) {
+                logger.info('✅ 大图弹窗已关闭');
+                return true;
+            }
+
+            await page.keyboard.press('Escape').catch(() => {});
+            await browserController.sleep(500).catch(() => {});
+            if (!(await this.hasOpenImagePreviewModal(page))) {
+                logger.info('✅ 大图弹窗已关闭');
+                return true;
+            }
+
+            if (clickedClose?.box) {
+                await page.mouse.click(clickedClose.box.x, clickedClose.box.y).catch(() => {});
+                await browserController.sleep(500).catch(() => {});
+                if (!(await this.hasOpenImagePreviewModal(page))) {
+                    logger.info('✅ 大图弹窗已关闭');
+                    return true;
+                }
+            }
+        }
+
+        logger.warn('大图弹窗仍未关闭，后续点击可能被页面弹窗拦截');
+        return false;
+    }
+
     async ensureImageModel(page, imageModel, options = {}) {
         const targetModel = LEGIL_IMAGE_MODEL_OPTIONS.some(item => item.value === imageModel)
             ? imageModel
@@ -952,6 +1120,7 @@ class LegilAutomation {
 
         await page.waitForLoadState('domcontentloaded', { timeout: 5000 }).catch(() => {});
         await interruptibleSleep(500, options);
+        await this.closeOpenPreviewModal(page, options);
 
         await this.ensureImageModel(page, normalized.imageModel, options);
 
@@ -963,6 +1132,7 @@ class LegilAutomation {
 
         for (const task of tasks) {
             throwIfAborted(options);
+            await this.closeOpenPreviewModal(page, options);
             const clicked = await this.clickLegilSettingOption(page, task.value, options);
             if (clicked) {
                 logger.info(`✅ 已应用 ${task.label}: ${task.value}`);
@@ -1722,6 +1892,32 @@ class LegilAutomation {
         return this.validateSavedImageFile(savePath);
     }
 
+    async downloadImageToFileWithRetries(page, imageUrl, savePath, options = {}) {
+        const maxAttempts = 3;
+        const retryDelayMs = 3000;
+        let lastError = null;
+
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+            throwIfAborted(options);
+
+            try {
+                if (attempt > 1) {
+                    logger.info(`正在第 ${attempt}/${maxAttempts} 次重试大图直链下载...`);
+                }
+                return await this.downloadImageToFile(page, imageUrl, savePath, options);
+            } catch (error) {
+                lastError = error;
+
+                if (attempt < maxAttempts) {
+                    logger.warn(`大图直链下载第 ${attempt}/${maxAttempts} 次失败：${error.message}，等待3秒后重试`);
+                    await interruptibleSleep(retryDelayMs, options);
+                }
+            }
+        }
+
+        throw lastError || new Error('大图直链下载失败');
+    }
+
     validateSavedImageFile(savePath) {
         if (!fs.existsSync(savePath)) {
             throw new Error('文件未写入');
@@ -2172,7 +2368,7 @@ class LegilAutomation {
             const downloadUrl = this.resolveDownloadUrl(sourceSrc, page.url());
 
             try {
-                savedSize = await this.downloadImageToFile(page, downloadUrl, savePath, options);
+                savedSize = await this.downloadImageToFileWithRetries(page, downloadUrl, savePath, options);
             } catch (downloadError) {
                 logger.warn(`大图直链下载失败，尝试页面内下载: ${downloadError.message}`);
             }
@@ -2231,8 +2427,7 @@ class LegilAutomation {
             return savedSize;
         } finally {
             if (previewOpen) {
-                await page.keyboard.press('Escape').catch(() => {});
-                await interruptibleSleep(500, options).catch(() => {});
+                await this.closeOpenPreviewModal(page, options).catch(() => {});
             }
         }
     }
@@ -2266,6 +2461,7 @@ class LegilAutomation {
 
             for (let i = 0; i < imageInfos.length; i++) {
                 throwIfAborted(options);
+                await this.closeOpenPreviewModal(page, options).catch(() => {});
                 const info = imageInfos[i];
                 const outputUrl = info.outputSrc || info.src || '';
 
@@ -2551,7 +2747,7 @@ class LegilAutomation {
             const fullDownloadUrl = this.resolveDownloadUrl(fullImageSrc, page.url());
 
             try {
-                savedSize = await this.downloadImageToFile(page, fullDownloadUrl, savePath, options);
+                savedSize = await this.downloadImageToFileWithRetries(page, fullDownloadUrl, savePath, options);
             } catch (downloadError) {
                 logger.warn(`直链下载失败，尝试页面内下载: ${downloadError.message}`);
             }

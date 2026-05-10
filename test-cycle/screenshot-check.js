@@ -7,7 +7,7 @@ const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');
 
-const BASE_URL = 'http://localhost:3055';
+const BASE_URL = 'http://localhost:3066';
 const SCREENSHOT_DIR = path.join(__dirname, 'status-checks');
 
 if (!fs.existsSync(SCREENSHOT_DIR)) {

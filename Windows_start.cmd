@@ -6,10 +6,17 @@ rem Double-click this file to install missing project dependencies,
 rem start the local server, and open the web UI.
 
 set "PROJECT_DIR=%~dp0"
-set "PORT=3055"
+set "PORT=3066"
 set "URL=http://localhost:%PORT%/"
 
 cd /d "%PROJECT_DIR%"
+
+if /I "%~1"=="--open-platform" (
+    ping 127.0.0.1 -n 6 >nul
+    call :open_platform
+    exit /b 0
+)
+
 title AI Image Automation Platform Server
 
 echo ========================================
@@ -123,10 +130,10 @@ echo.
 echo [5/5] Starting platform...
 netstat -ano | findstr /r /c:":%PORT% .*LISTENING" >nul 2>nul
 if not errorlevel 1 (
-    echo Port %PORT% already has a running service.
-    echo This window did not start that service, so Ctrl+C here cannot stop it.
+echo Port %PORT% already has a running service.
+echo This window did not start that service, so Ctrl+C here cannot stop it.
     echo Opening the platform page directly.
-    start "" "%URL%"
+    call :open_platform
     echo.
     echo If you want this window to control the server, close the old server first,
     echo then double-click Windows_start.cmd again.
@@ -141,7 +148,7 @@ echo Press Ctrl+C in this window to stop the server.
 echo The platform page will open automatically in a few seconds.
 echo.
 
-start "" /b cmd /c "ping 127.0.0.1 -n 6 >nul && explorer.exe %URL%"
+start "" /min "%~f0" --open-platform
 
 call npm start
 set "SERVER_EXIT_CODE=%ERRORLEVEL%"
@@ -151,3 +158,7 @@ echo Server stopped.
 echo.
 pause
 exit /b %SERVER_EXIT_CODE%
+
+:open_platform
+start "" "%URL%"
+exit /b 0

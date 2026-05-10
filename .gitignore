@@ -10,6 +10,10 @@ storage_state.json
 *.log
 failed_images.log
 automation-config.json
+automation-secrets.json
+.env
+.env.local
+.env.*
 
 # Generated QA/test artifacts
 qa-screenshots/
@@ -17,6 +21,8 @@ test-cycle/screenshots/
 test-cycle/reports/
 test-cycle/status-checks/
 test-reports/
+test-api-workflow-input/
+test-api-workflow-output/
 
 # Local scratch files created during automation experiments
 .doubao-part*.js

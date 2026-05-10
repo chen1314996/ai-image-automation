@@ -4,14 +4,13 @@
  * ============================================
  * 核心功能：
  * 1. 循环处理输入文件夹中的所有参考图
- * 2. 每张参考图：上传豆包 → 获取5组提示词 → Legil生成5张图片
- * 3. 完成后新开豆包对话，处理下一张
+ * 2. 每张参考图：调用豆包大模型 API → 获取5组提示词 → Legil生成图片
+ * 3. 单张图5组提示词处理完后，自动处理下一张
  * 4. 直到所有参考图处理完毕
  */
 
 const fs = require('fs');
 const path = require('path');
-const browserController = require('./playwright-controller');
 const doubaoAutomation = require('./doubao-automation');
 const legilAutomation = require('./legil-automation');
 const logger = require('./logger');
@@ -256,19 +255,17 @@ class WorkflowController {
                     await this.processSingleImage(imagePath, i + 1, this.totalImages);
                     this.stats.processed++;
 
-                    // 如果不是最后一张，新开豆包对话
+                    // 如果不是最后一张，短暂等待后继续下一张参考图。
+                    // 豆包已改为 API 调用，不再需要打开网页或新建对话。
                     if (i < this.totalImages - 1 && this.isRunning) {
                         this.updateStatus({
                             currentAction: `等待冷却时间，准备处理下一张参考图...`
                         });
                         logger.info('');
                         logger.info('⏳ 准备处理下一张参考图...');
-                        logger.info('⏸️ 等待30秒冷却时间（避免触发风控）...');
-                        await this.sleep(30000); // 30秒冷却（可中断）
-                        if (!this.isRunning) break;
-                        await this.startNewDoubaoChat();
-                        // 等待页面加载
+                        logger.info('⏸️ 等待5秒后继续下一张...');
                         await this.sleep(5000);
+                        if (!this.isRunning) break;
                     }
 
                 } catch (error) {
@@ -297,14 +294,11 @@ class WorkflowController {
                     });
                     this.stats.failed++;
 
-                    // 尝试恢复：新开对话继续下一张
+                    // 尝试恢复：API 模式下无需新开豆包对话，短暂等待后继续下一张。
                     if (i < this.totalImages - 1 && this.isRunning) {
-                        logger.info('⏸️ 等待10秒后开启新对话...');
+                        logger.info('⏸️ 等待10秒后继续下一张参考图...');
                         await this.sleep(10000);
                         if (!this.isRunning) break;
-                        await this.startNewDoubaoChat();
-                        // 等待页面加载
-                        await this.sleep(5000);
                     }
                 }
             }
@@ -374,73 +368,47 @@ class WorkflowController {
      * 处理单张参考图
      * =====================================================
      * 流程：
-     * 1. 上传到豆包获取5组提示词
-     * 2. 每组提示词在Legil生成1张图片（共5张）
+     * 1. 调用豆包大模型 API 获取5组提示词
+     * 2. 每组提示词在Legil生成图片
      * 3. 本轮结束
      */
     async processSingleImage(imagePath, imageIndex, totalImages) {
         const imageName = path.basename(imagePath);
 
-        // 步骤0：确保豆包页面已准备好
         logger.info('');
         logger.info('╔════════════════════════════════════════════════════════════╗');
         logger.info(`║ 📷 参考图 ${imageIndex}/${totalImages}: ${imageName}`);
         logger.info('╠════════════════════════════════════════════════════════════╣');
-        logger.info('║ [步骤0] 检查豆包页面状态...');
+        logger.info('║ [步骤1] 豆包 API：读取参考图并获取5组提示词...');
         logger.info('╚════════════════════════════════════════════════════════════╝');
 
-        // 确保豆包页面已打开且有效
-        let doubaoPage = browserController.getPage('doubao');
-        if (!doubaoPage && this.isRunning) {
-            logger.warn('豆包页面未打开，正在重新打开...');
-            await browserController.openWebsite('doubao', 'https://www.doubao.com/chat/');
-            await this.sleep(5000);
-            doubaoPage = browserController.getPage('doubao');
-        }
-
-        // 检查页面URL是否有效
-        if (doubaoPage && this.isRunning) {
-            const url = doubaoPage.url();
-            if (url.startsWith('chrome-error://') || url === 'about:blank') {
-                logger.warn('豆包页面是错误页面，正在刷新...');
-                await doubaoPage.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
-                await this.sleep(5000);
-            }
-        }
-
-        // 步骤1：豆包自动化 - 上传图片并获取5组提示词
-        logger.info('');
-        logger.info('╔════════════════════════════════════════════════════════════╗');
-        logger.info('║ [步骤1] 豆包：上传图片并获取5组提示词...');
-        logger.info('╚════════════════════════════════════════════════════════════╝');
-
-        // 更新状态 - 正在上传参考图到豆包
+        // 更新状态 - 正在通过豆包 API 生成提示词。
         this.updateStatus({
-            phase: 'processing_image',
-            currentAction: `正在上传参考图到豆包: ${imageName}`
+            phase: 'extracting_prompts',
+            currentAction: `正在调用豆包 API 生成提示词: ${imageName}`
         });
 
-        const doubaoResult = await doubaoAutomation.uploadAndPrompt(imagePath, {
+        const doubaoResult = await doubaoAutomation.fullAutomation(imagePath, {
             imageIndex,
             totalImages,
-            useNewChat: imageIndex > 1,
             ...this.getCancellationOptions()
         });
 
-        if (!doubaoResult.success || !doubaoResult.response) {
+        if (!doubaoResult.success || !Array.isArray(doubaoResult.prompts) || doubaoResult.prompts.length === 0) {
             throw new Error('豆包生成提示词失败');
         }
 
-        // 从响应中提取提示词
-        logger.info('正在从回复中提取提示词...');
-        const extractResult = doubaoAutomation.extractPrompts(doubaoResult.response);
+        const prompts = doubaoResult.prompts
+            .map(promptData => typeof promptData === 'string' ? promptData : promptData && promptData.content)
+            .filter(promptText => typeof promptText === 'string' && promptText.trim())
+            .map(promptText => promptText.trim())
+            .slice(0, 5);
 
-        if (!extractResult.success || !extractResult.prompts || extractResult.prompts.length === 0) {
-            logger.error(`提取提示词失败: ${extractResult.message}`);
+        if (prompts.length < 5) {
+            logger.error(`提取提示词失败: 豆包 API 只返回 ${prompts.length} 组有效提示词`);
             throw new Error('豆包生成提示词失败');
         }
 
-        const prompts = extractResult.prompts.slice(0, 5);
         logger.info(`✅ 成功获取 ${prompts.length} 组提示词`);
 
         // 保存提示词到内存，供前端查看
@@ -452,10 +420,6 @@ class WorkflowController {
             phase: 'extracting_prompts',
             currentAction: `已提取 ${prompts.length} 组提示词`
         });
-
-        // 不再关闭豆包页面，下一轮直接点击"新对话"即可
-        // logger.info(`正在关闭第 ${imageIndex} 张参考图的豆包对话窗口...`);
-        // await doubaoAutomation.closeChat(doubaoAutomation.getCurrentPage(), imageIndex);
 
         // 步骤2：Legil生成 - 每组提示词生成1张图片
         logger.info('');
@@ -534,83 +498,6 @@ class WorkflowController {
         logger.info(`║ ✅ 参考图 ${imageIndex}/${totalImages} 处理完毕！`);
         logger.info(`║    已生成5张图片，准备下一张...`);
         logger.info('╚════════════════════════════════════════════════════════════╝');
-    }
-
-    /**
-     * =====================================================
-     * 新开豆包对话
-     * =====================================================
-     * 点击豆包的"新建对话"按钮，清除上下文
-     */
-    async startNewDoubaoChat() {
-        logger.info('正在新开豆包对话...');
-
-        try {
-            let page = browserController.getPage('doubao');
-            if (!page || page.isClosed()) {
-                logger.warn('豆包页面未打开，正在重新打开...');
-                await browserController.openWebsite('doubao', 'https://www.doubao.com/chat/');
-                await this.sleep(5000);
-                return;
-            }
-
-            // 尝试点击"新建对话"按钮（精确选择侧边栏内的按钮，避免点到资讯卡片）
-            // 注意："新对话"在侧边栏最上方，带蓝色加号图标，"AI创作"在它下面
-            const newChatSelectors = [
-                // 最可靠：通过精确文本+层级定位
-                // 侧边栏直接子元素中包含"新对话"的
-                'aside > div a:has-text("新对话")',
-                'aside > div button:has-text("新对话")',
-                'aside > nav a:has-text("新对话")',
-                'aside > nav button:has-text("新对话")',
-                // 侧边栏第一层级的第一个交互元素（通常是"新对话"）
-                'aside > *:first-child a',
-                'aside > *:first-child button',
-                'aside > a:first-of-type',
-                // 带加号/新建图标的按钮
-                'aside a:has(svg):has-text("新对话")',
-                'aside button:has(svg):has-text("新对话")',
-                // 类名匹配
-                '[class*="new-chat"]',
-                '[class*="new-conversation"]',
-                // 备选：任何包含"新对话"的元素
-                'button:has-text("新对话")',
-                'a:has-text("新对话")'
-            ];
-
-            let clicked = false;
-            for (const selector of newChatSelectors) {
-                try {
-                    const button = await page.$(selector);
-                    if (button) {
-                        const isVisible = await button.isVisible().catch(() => false);
-                        if (isVisible) {
-                            await button.click();
-                            logger.info('✅ 已点击"新建对话"按钮');
-                            clicked = true;
-                            break;
-                        }
-                    }
-                } catch (e) {}
-            }
-
-            // 如果没找到按钮，直接导航到新对话URL（最可靠的方式）
-            if (!clicked) {
-                logger.info('未找到新建对话按钮，直接导航到新对话...');
-                await page.goto('https://www.doubao.com/chat/');
-                logger.info('✅ 已导航到新对话页面');
-            }
-
-            // 等待页面稳定
-            await this.sleep(3000);
-
-        } catch (error) {
-            logger.error(`新开对话失败: ${error.message}`);
-            // 尝试打开新页面
-            try {
-                await browserController.openWebsite('doubao', 'https://www.doubao.com/chat/');
-            } catch (e) {}
-        }
     }
 
     /**

@@ -182,7 +182,7 @@ class BrowserController {
                 timeout: 30000  // 超时时间 30 秒
             });
 
-            // 等待页面稳定 - 对于豆包等复杂页面需要更长时间
+            // 等待页面稳定 - 对于复杂页面需要更长时间
             console.log('   等待页面渲染完成...');
             await this.sleep(5000);
 
@@ -218,20 +218,21 @@ class BrowserController {
     }
 
     /**
-     * 同时打开两个网站
+     * 同时打开自动化所需网站
      * ---------------
-     * 同时打开 豆包 和 Legil 两个网站
-     * @param {string} doubaoUrl - 豆包网址
+     * 豆包提示词阶段已改为 API 调用，因此这里只打开 Legil。
+     * 第一个参数保留为兼容旧后端调用，不再使用。
+     * @param {string} _doubaoUrl - 旧版豆包网址，API 版不再使用
      * @param {string} legilUrl - Legil 平台网址
      * @returns {Promise<Object>} - 返回各网站的打开结果
      */
-    async openBothWebsites(doubaoUrl, legilUrl) {
+    async openBothWebsites(_doubaoUrl, legilUrl) {
         const results = {
-            doubao: false,
+            doubao: true,
             legil: false
         };
 
-        console.log('\n🔄 开始同时打开两个网站...\n');
+        console.log('\n🔄 开始打开 Legil 网站（豆包 API 无需网页）...\n');
 
         // 先启动浏览器
         if (!this.browser) {
@@ -244,12 +245,6 @@ class BrowserController {
         // 使用 Promise.all 同时打开两个网站（并行执行提高效率）
         // 虽然 playwright 操作是异步的，但我们按顺序打开更稳定
         try {
-            // 打开 豆包
-            results.doubao = await this.openWebsite('doubao', doubaoUrl);
-
-            // 等待 1 秒，让第一个页面稳定
-            await this.sleep(1000);
-
             // 打开 Legil
             results.legil = await this.openWebsite('legil', legilUrl);
 
@@ -259,7 +254,7 @@ class BrowserController {
 
         // 输出结果总结
         console.log('\n📊 打开结果：');
-        console.log(`   豆包: ${results.doubao ? '✅ 成功' : '❌ 失败'}`);
+        console.log('   豆包: ✅ API 模式，无需网页');
         console.log(`   Legil: ${results.legil ? '✅ 成功' : '❌ 失败'}`);
 
         return results;

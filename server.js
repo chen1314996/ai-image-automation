@@ -14,6 +14,7 @@ const path = require('path');
 
 // 引入 fs 模块，文件系统模块
 const fs = require('fs');
+const { execFile } = require('child_process');
 
 // 引入 Playwright 浏览器控制器
 const browserController = require('./playwright-controller');
@@ -71,6 +72,55 @@ function normalizeInputPath(value) {
     return value.replace(/["']/g, '').trim().replace(/\\/g, '/');
 }
 
+function chooseFolderWithNativeDialog(initialPath = '') {
+    return new Promise((resolve, reject) => {
+        const script = `
+Add-Type -AssemblyName System.Windows.Forms
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$dialog = New-Object System.Windows.Forms.FolderBrowserDialog
+$dialog.Description = "请选择文件夹"
+$dialog.ShowNewFolderButton = $true
+if ($env:INITIAL_FOLDER_PATH -and (Test-Path -LiteralPath $env:INITIAL_FOLDER_PATH)) {
+    $dialog.SelectedPath = $env:INITIAL_FOLDER_PATH
+}
+$result = $dialog.ShowDialog()
+if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
+    Write-Output $dialog.SelectedPath
+    exit 0
+}
+exit 2
+`;
+
+        execFile(
+            'powershell.exe',
+            ['-NoProfile', '-STA', '-Command', script],
+            {
+                windowsHide: false,
+                timeout: 10 * 60 * 1000,
+                env: {
+                    ...process.env,
+                    INITIAL_FOLDER_PATH: typeof initialPath === 'string' ? initialPath.trim() : ''
+                }
+            },
+            (error, stdout, stderr) => {
+                if (error) {
+                    if (error.code === 2) {
+                        resolve({ cancelled: true, folderPath: '' });
+                        return;
+                    }
+                    reject(new Error((stderr || error.message || '打开文件夹选择器失败').trim()));
+                    return;
+                }
+
+                resolve({
+                    cancelled: false,
+                    folderPath: String(stdout || '').trim().split(/\r?\n/).filter(Boolean).pop() || ''
+                });
+            }
+        );
+    });
+}
+
 function isLegilBusy() {
     return automationState.legilTaskRunning || workflowController.isRunning;
 }
@@ -89,7 +139,8 @@ function persistRuntimeConfig(extra = {}) {
         legilReferenceFolder: appConfig.legilReferenceFolder,
         doubao: {
             promptTemplate: doubaoConfig.promptTemplate,
-            chatModel: doubaoConfig.chatModel
+            modelId: doubaoConfig.modelId,
+            baseUrl: doubaoConfig.baseUrl
         },
         legil: {
             ...legilAutomation.getConfig().settings
@@ -102,7 +153,7 @@ function persistRuntimeConfig(extra = {}) {
 const app = express();
 
 // 设置服务器端口
-const PORT = Number(process.env.PORT) || 3055;
+const PORT = Number(process.env.PORT) || 3066;
 
 /**
  * 配置中间件
@@ -214,6 +265,47 @@ app.post('/api/count-images', (req, res) => {
  * 请求参数：{ name: "网站标识", url: "网站地址" }
  * 返回数据：{ success: true/false, message: "提示信息" }
  */
+app.post('/api/select-folder', async (req, res) => {
+    const { currentPath } = req.body || {};
+
+    try {
+        const result = await chooseFolderWithNativeDialog(typeof currentPath === 'string' ? currentPath : '');
+        if (result.cancelled) {
+            return res.json({
+                success: false,
+                cancelled: true,
+                message: '已取消选择文件夹'
+            });
+        }
+
+        if (!result.folderPath) {
+            return res.json({
+                success: false,
+                message: '未选择文件夹'
+            });
+        }
+
+        const validationPath = normalizeInputPath(result.folderPath);
+        if (!fs.existsSync(validationPath) || !fs.statSync(validationPath).isDirectory()) {
+            return res.json({
+                success: false,
+                message: '选择的路径不是有效文件夹'
+            });
+        }
+
+        res.json({
+            success: true,
+            folderPath: result.folderPath,
+            message: '文件夹已选择'
+        });
+    } catch (error) {
+        res.json({
+            success: false,
+            message: '打开文件夹选择器失败: ' + error.message
+        });
+    }
+});
+
 app.post('/api/open-website', async (req, res) => {
     const { name, url } = req.body;
 
@@ -222,10 +314,24 @@ app.post('/api/open-website', async (req, res) => {
     console.log('   网址:', url);
 
     // 验证参数
-    if (!name || !url) {
+    if (!name) {
         return res.json({
             success: false,
-            message: '请提供网站名称和网址'
+            message: '请提供网站名称'
+        });
+    }
+
+    if (name === 'doubao') {
+        return res.json({
+            success: true,
+            message: '豆包已改为 API 调用，无需打开豆包网页'
+        });
+    }
+
+    if (!url) {
+        return res.json({
+            success: false,
+            message: '请提供网站网址'
         });
     }
 
@@ -278,21 +384,21 @@ app.post('/api/open-website', async (req, res) => {
  *
  * 请求方法：POST
  * 请求路径：/api/open-both-websites
- * 请求参数：{ doubaoUrl: "豆包网址", legilUrl: "Legil网址" }
+ * 请求参数：{ legilUrl: "Legil网址" }
  * 返回数据：{ success: true/false, results: {doubao, legil}, message: "提示信息" }
  */
 app.post('/api/open-both-websites', async (req, res) => {
-    const { doubaoUrl, legilUrl } = req.body;
+    const { legilUrl } = req.body;
 
-    console.log('\n🌐 收到同时打开两个网站的请求');
-    console.log('   豆包:', doubaoUrl);
+    console.log('\n🌐 收到打开自动化网站的请求');
+    console.log('   豆包: 已改为 API 调用，无需网页');
     console.log('   Legil:', legilUrl);
 
     // 验证参数
-    if (!doubaoUrl || !legilUrl) {
+    if (!legilUrl) {
         return res.json({
             success: false,
-            message: '请提供两个网站的网址'
+            message: '请提供 Legil 网站网址'
         });
     }
 
@@ -304,33 +410,34 @@ app.post('/api/open-both-websites', async (req, res) => {
     }
 
     try {
-        new URL(doubaoUrl);
         new URL(legilUrl);
     } catch {
         return res.json({
             success: false,
-            message: '网址格式不正确'
+            message: 'Legil 网址格式不正确'
         });
     }
 
     try {
-        // 调用浏览器控制器同时打开两个网站
-        const results = await browserController.openBothWebsites(doubaoUrl, legilUrl);
+        const results = {
+            doubao: true,
+            legil: false
+        };
 
-        // 检查是否都成功打开
-        const allSuccess = results.doubao && results.legil;
+        // 豆包提示词阶段已改为 API 调用，这里只需要打开 Legil 网页。
+        results.legil = await browserController.openWebsite('legil', legilUrl);
 
-        if (allSuccess) {
+        if (results.legil) {
             res.json({
                 success: true,
                 results: results,
-                message: '两个网站都已成功打开'
+                message: '豆包 API 无需网页，Legil 网站已成功打开'
             });
         } else {
             res.json({
                 success: false,
                 results: results,
-                message: `部分网站打开失败 - 豆包: ${results.doubao ? '成功' : '失败'}, Legil: ${results.legil ? '成功' : '失败'}`
+                message: 'Legil 网站打开失败，豆包 API 无需网页'
             });
         }
 
@@ -383,9 +490,10 @@ app.get('/api/browser-status', (req, res) => {
     const status = {
         browserRunning: !!browserController.browser,
         pages: {
-            doubao: browserController.isPageOpen('doubao'),
+            doubao: false,
             legil: browserController.isPageOpen('legil')
-        }
+        },
+        doubaoApiConfigured: doubaoAutomation.getConfig().apiKeyConfigured
     };
 
     res.json({
@@ -402,7 +510,7 @@ app.get('/api/config/doubao', (req, res) => {
 });
 
 app.post('/api/config/doubao', (req, res) => {
-    const { chatModel, promptTemplate, instruction } = req.body || {};
+    const { apiKey, modelId, baseUrl, promptTemplate, instruction, clearApiKey } = req.body || {};
     const nextPrompt = promptTemplate ?? instruction;
 
     try {
@@ -426,8 +534,26 @@ app.post('/api/config/doubao', (req, res) => {
             updates.promptTemplate = nextPrompt.trim();
         }
 
-        if (typeof chatModel !== 'undefined') {
-            updates.chatModel = chatModel;
+        if (typeof modelId !== 'undefined') {
+            if (typeof modelId !== 'string' || !modelId.trim()) {
+                return res.json({
+                    success: false,
+                    message: '模型 ID / Endpoint ID 不能为空'
+                });
+            }
+            updates.modelId = modelId.trim();
+        }
+
+        if (typeof baseUrl !== 'undefined' && String(baseUrl || '').trim()) {
+            updates.baseUrl = String(baseUrl).trim();
+        }
+
+        if (typeof apiKey !== 'undefined' && String(apiKey || '').trim()) {
+            updates.apiKey = String(apiKey).trim();
+        }
+
+        if (clearApiKey === true) {
+            updates.clearApiKey = true;
         }
 
         const config = doubaoAutomation.setConfig(updates);
@@ -819,6 +945,14 @@ app.post('/api/workflow/start', async (req, res) => {
         });
     }
 
+    const doubaoConfig = doubaoAutomation.getConfig();
+    if (!doubaoConfig.apiKeyConfigured || !doubaoConfig.modelId) {
+        return res.json({
+            success: false,
+            message: '请先在豆包API配置中填写火山方舟 API Key 和模型 ID / Endpoint ID'
+        });
+    }
+
     // 先返回接受请求的消息
     res.json({
         success: true,
@@ -1012,11 +1146,11 @@ const server = app.listen(PORT, () => {
     console.log('      - 登录状态自动保存（只需登录一次）');
     console.log('   ✅ 实时日志系统（第四阶段）');
     console.log('      - 服务器主动推送日志');
-    console.log('   ✅ 豆包自动化（第五阶段）');
-    console.log('      - 自动上传参考图片');
-    console.log('      - 自动发送提示词');
-    console.log('   ✅ 回复提取（第六阶段）');
-    console.log('      - 从回复中提取五组提示词');
+    console.log('   ✅ 豆包大模型 API（第五阶段）');
+    console.log('      - 读取本地参考图并调用火山方舟 API');
+    console.log('      - 直接返回五组规整提示词');
+    console.log('   ✅ API 提示词解析（第六阶段）');
+    console.log('      - 不再打开豆包网页，不再等待网页回复');
     console.log('   ✅ Legil 平台自动化（第七阶段）');
     console.log('      - 自动输入提示词生成图片');
     console.log('      - 自动保存生成结果');
@@ -1025,7 +1159,7 @@ const server = app.listen(PORT, () => {
     console.log('      - 支持循环使用多张参考图');
     console.log('   ✅ 完整工作流自动化（第九阶段）');
     console.log('      - 循环处理所有参考图');
-    console.log('      - 自动新开豆包对话');
+    console.log('      - 豆包 API 生成提示词后自动进入 Legil');
     console.log('========================================');
 });
 

@@ -51,7 +51,7 @@ async function runQATests() {
     try {
         // 测试1: 页面加载
         console.log('\n--- 测试1: 页面加载 ---');
-        await page.goto('http://localhost:3055', { waitUntil: 'domcontentloaded', timeout: 30000 });
+        await page.goto('http://localhost:3066', { waitUntil: 'domcontentloaded', timeout: 30000 });
         await page.waitForTimeout(3000);
         await takeScreenshot(page, '01_page_loaded');
 

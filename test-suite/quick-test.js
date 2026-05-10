@@ -6,7 +6,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 
-const BASE_URL = 'http://localhost:3055';
+const BASE_URL = 'http://localhost:3066';
 const results = [];
 
 function logTest(name, passed, message = '') {

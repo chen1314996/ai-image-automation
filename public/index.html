@@ -381,7 +381,7 @@
         /* Action Buttons Grid */
         .action-grid {
             display: grid;
-            grid-template-columns: repeat(2, 1fr);
+            grid-template-columns: repeat(3, 1fr);
             gap: 12px;
             margin-top: 20px;
         }
@@ -2628,7 +2628,7 @@
         }
 
         .action-grid {
-            grid-template-columns: repeat(4, minmax(0, 1fr));
+            grid-template-columns: repeat(3, minmax(0, 1fr));
             gap: 8px;
         }
 
@@ -4457,6 +4457,165 @@
             white-space: nowrap;
         }
 
+        .folder-field {
+            padding-bottom: 2px;
+        }
+
+        .folder-field-heading {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 14px;
+            margin-bottom: 8px;
+        }
+
+        .folder-field-heading label {
+            margin: 0;
+        }
+
+        .folder-desc {
+            max-width: 260px;
+            color: var(--flat-muted);
+            font-size: 12px;
+            line-height: 1.45;
+            text-align: right;
+        }
+
+        .folder-path-row {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) 82px;
+            gap: 8px;
+            align-items: stretch;
+        }
+
+        .folder-path-row input {
+            min-width: 0;
+            padding-right: 118px;
+        }
+
+        .folder-input-combo {
+            position: relative;
+            min-width: 0;
+        }
+
+        .folder-history-button {
+            position: absolute;
+            top: 7px;
+            right: 7px;
+            z-index: 2;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            height: calc(100% - 14px);
+            min-width: 92px;
+            padding: 0 14px;
+            border: 1px solid rgba(160, 180, 190, 0.22);
+            border-radius: var(--flat-radius);
+            background: #313a40;
+            color: var(--flat-text);
+            font: inherit;
+            font-size: 14px;
+            font-weight: 800;
+            cursor: pointer;
+            box-shadow: none;
+        }
+
+        .folder-history-button:hover,
+        .folder-history-button.active {
+            background: #3a444a;
+            border-color: rgba(40, 168, 238, 0.58);
+        }
+
+        .history-caret {
+            color: #9fb1bb;
+            font-size: 12px;
+            line-height: 1;
+        }
+
+        .folder-history-menu {
+            position: absolute;
+            top: calc(100% + 8px);
+            left: 0;
+            right: 0;
+            z-index: 50;
+            display: none;
+            max-height: 260px;
+            overflow: auto;
+            padding: 6px;
+            border: 1px solid rgba(40, 168, 238, 0.24);
+            border-radius: 12px;
+            background: rgba(20, 25, 29, 0.98);
+            box-shadow: 0 18px 46px rgba(0, 0, 0, 0.38);
+        }
+
+        .folder-history-menu.active {
+            display: block;
+        }
+
+        .folder-history-empty,
+        .folder-history-item {
+            display: flex;
+            align-items: center;
+            min-height: 44px;
+            padding: 0 10px;
+            color: var(--flat-muted);
+            font-size: 13px;
+        }
+
+        .folder-history-item {
+            width: 100%;
+            justify-content: space-between;
+            gap: 10px;
+            border: 0;
+            border-radius: 10px;
+            background: transparent;
+            color: var(--flat-text);
+            cursor: pointer;
+            text-align: left;
+        }
+
+        .folder-history-item:hover {
+            background: rgba(255, 255, 255, 0.055);
+        }
+
+        .folder-history-path {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .folder-history-delete {
+            flex: 0 0 auto;
+            min-width: 46px;
+            height: 30px;
+            padding: 0 9px;
+            border: 1px solid rgba(238, 91, 91, 0.34);
+            border-radius: 9px;
+            background: rgba(238, 91, 91, 0.14);
+            color: #ff6f72;
+            font: inherit;
+            font-size: 12px;
+            font-weight: 800;
+            cursor: pointer;
+        }
+
+        .folder-history-delete:hover {
+            background: rgba(238, 91, 91, 0.22);
+        }
+
+        .btn-folder-browse {
+            min-width: 0;
+            width: 100%;
+            padding-left: 0;
+            padding-right: 0;
+        }
+
+        .action-grid-compact {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
         @media (max-width: 760px) {
             .brand-icon {
                 width: 34px;
@@ -4497,6 +4656,35 @@
             .workflow-actions .btn {
                 min-height: 46px;
             }
+
+            .folder-field-heading {
+                display: block;
+            }
+
+            .folder-desc {
+                display: block;
+                max-width: none;
+                margin-top: 4px;
+                text-align: left;
+            }
+
+            .folder-path-row {
+                grid-template-columns: minmax(0, 1fr) 72px;
+                gap: 6px;
+            }
+
+            .folder-path-row input {
+                padding-right: 92px;
+            }
+
+            .folder-history-button {
+                top: 6px;
+                right: 6px;
+                height: calc(100% - 12px);
+                min-width: 76px;
+                padding: 0 9px;
+                font-size: 13px;
+            }
         }
 
         @media (max-width: 420px) {
@@ -4522,7 +4710,7 @@
         <!-- Header -->
         <header class="header">
             <h1><span class="brand-icon" aria-hidden="true"></span><span>AI生图自动化平台</span></h1>
-            <p>豆包生成提示词 → Legil生成图片 → 全自动循环处理</p>
+            <p>豆包API生成提示词 → Legil生成图片 → 全自动循环处理</p>
         </header>
 
         <!-- Status Bar -->
@@ -4533,7 +4721,7 @@
             </div>
             <div class="status-item" id="doubaoStatusItem">
                 <span class="status-dot"></span>
-                <span id="doubaoStatusText">豆包未连接</span>
+                <span id="doubaoStatusText">豆包API未配置</span>
             </div>
             <div class="status-item" id="legilStatusItem">
                 <span class="status-dot"></span>
@@ -4550,40 +4738,56 @@
                     文件夹配置
                 </div>
 
-                <div class="form-group">
-                    <label>豆包参考图文件夹</label>
-                    <div class="input-wrapper">
-                        <input type="text" id="referenceFolder" placeholder="选择包含参考图片的文件夹" value="D:\工作\自动化工作流1\输入">
-                        <div class="input-actions">
-                            <button class="btn btn-primary" onclick="checkReferenceFolder()">确认</button>
-                            <button class="btn btn-secondary" onclick="openBothWebsites()">打开网站</button>
+                <div class="form-group folder-field">
+                    <div class="folder-field-heading">
+                        <label for="referenceFolder">参考图文件夹</label>
+                        <span class="folder-desc">豆包 API 会按文件名顺序读取这里的参考图</span>
+                    </div>
+                    <div class="folder-path-row">
+                        <div class="folder-input-combo">
+                            <input type="text" id="referenceFolder" placeholder="默认：D:\工作\自动化工作流1\输入" value="D:\工作\自动化工作流1\输入">
+                            <button type="button" class="folder-history-button" id="referenceFolderHistoryButton" onclick="toggleFolderHistory('referenceFolder')"><span class="history-caret">▼</span>历史</button>
+                            <div class="folder-history-menu" id="referenceFolderHistoryMenu"></div>
                         </div>
+                        <button class="btn btn-secondary btn-folder-browse" onclick="browseFolder('referenceFolder')">浏览</button>
                     </div>
                     <div class="info-box" id="refCountInfo"></div>
                 </div>
 
-                <div class="form-group">
-                    <label>Legil参考图文件夹</label>
-                    <div class="input-wrapper">
-                        <input type="text" id="legilReferenceFolder" placeholder="选择Legil参考图文件夹" value="D:\工作\自动化工作流1\Legil参考图">
-                        <div class="input-actions">
-                            <button class="btn btn-primary" onclick="checkLegilReferenceFolder()">确认</button>
-                            <button class="btn btn-secondary" onclick="saveLegilRefFolder()">保存配置</button>
+                <div class="form-group folder-field">
+                    <div class="folder-field-heading">
+                        <label for="legilReferenceFolder">Legil参考图文件夹</label>
+                        <span class="folder-desc">Legil 图生图时循环上传这里的参考图</span>
+                    </div>
+                    <div class="folder-path-row">
+                        <div class="folder-input-combo">
+                            <input type="text" id="legilReferenceFolder" placeholder="默认：D:\工作\自动化工作流1\Legil参考图" value="D:\工作\自动化工作流1\Legil参考图">
+                            <button type="button" class="folder-history-button" id="legilReferenceFolderHistoryButton" onclick="toggleFolderHistory('legilReferenceFolder')"><span class="history-caret">▼</span>历史</button>
+                            <div class="folder-history-menu" id="legilReferenceFolderHistoryMenu"></div>
                         </div>
+                        <button class="btn btn-secondary btn-folder-browse" onclick="browseFolder('legilReferenceFolder')">浏览</button>
                     </div>
                     <div class="info-box" id="legilRefCountInfo"></div>
                 </div>
 
-                <div class="form-group">
-                    <label>输出文件夹</label>
-                    <input type="text" id="saveFolder" placeholder="选择图片保存位置" value="D:\工作\自动化工作流1\输出">
+                <div class="form-group folder-field">
+                    <div class="folder-field-heading">
+                        <label for="saveFolder">输出文件夹</label>
+                        <span class="folder-desc">生成结果会按顺序保存到这个本地目录</span>
+                    </div>
+                    <div class="folder-path-row">
+                        <div class="folder-input-combo">
+                            <input type="text" id="saveFolder" placeholder="默认：D:\工作\自动化工作流1\输出" value="D:\工作\自动化工作流1\输出">
+                            <button type="button" class="folder-history-button" id="saveFolderHistoryButton" onclick="toggleFolderHistory('saveFolder')"><span class="history-caret">▼</span>历史</button>
+                            <div class="folder-history-menu" id="saveFolderHistoryMenu"></div>
+                        </div>
+                        <button class="btn btn-secondary btn-folder-browse" onclick="browseFolder('saveFolder')">浏览</button>
+                    </div>
                 </div>
 
-                <div class="action-grid">
-                    <button class="btn btn-secondary" onclick="openSingleWebsite('doubao')">打开豆包</button>
+                <div class="action-grid action-grid-compact">
                     <button class="btn btn-secondary" onclick="openSingleWebsite('legil')">打开Legil</button>
                     <button class="btn btn-secondary" onclick="closeBrowser()">关闭浏览器</button>
-                    <button class="btn btn-secondary" onclick="checkWorkflowStatus()">刷新状态</button>
                 </div>
             </div>
 
@@ -4591,52 +4795,44 @@
             <div class="card">
                 <div class="card-title">
                     <span class="icon icon-pink icon-link" aria-hidden="true"></span>
-                    网址配置
-                </div>
-
-                <div class="form-group">
-                    <label>豆包网址</label>
-                    <input type="text" id="doubaoUrl" value="https://www.doubao.com/chat/">
+                    Legil网址
                 </div>
 
                 <div class="form-group">
                     <label>Legil网址</label>
                     <input type="text" id="legilUrl" value="https://lumos.diandian.info/legil/image-ai/image-to-image">
                 </div>
-
-                <div class="notice-panel">
-                    <div class="notice-title">⚠️ 使用前请先完成以下步骤：</div>
-                    <ol class="notice-list">
-                        <li>确保豆包和Legil网址正确</li>
-                        <li>点击"打开网站"按钮打开浏览器</li>
-                        <li>在浏览器中登录豆包和Legil账号</li>
-                        <li>配置参考图文件夹并确认</li>
-                        <li>点击"一键启动"开始自动化</li>
-                    </ol>
-                </div>
             </div>
 
             <details class="card card-wide collapsible-card compact-config-card">
                 <summary class="card-title">
                     <span class="icon icon-green icon-chat" aria-hidden="true"></span>
-                    豆包配置
+                    豆包API配置
                 </summary>
 
                 <div class="form-group">
-                    <label>豆包对话模型</label>
-                    <div class="model-options" id="doubaoModelOptions"></div>
+                    <label>火山方舟 API Key</label>
+                    <input type="password" id="doubaoApiKey" placeholder="填写后仅保存在本机，不会在页面回显">
+                    <div class="field-meta">
+                        <span id="doubaoApiKeyStatus">未配置</span>
+                    </div>
                 </div>
 
                 <div class="form-group">
-                    <label>发送给豆包的固定文字指令</label>
-                    <textarea id="doubaoPromptTemplate" placeholder="请输入每次上传图片后发送给豆包的固定指令"></textarea>
+                    <label>模型 ID / Endpoint ID</label>
+                    <input type="text" id="doubaoModelId" placeholder="填写 Doubao-Seed-2.0-pro 对应的模型ID或Endpoint ID">
+                </div>
+
+                <div class="form-group">
+                    <label>发送给豆包API的固定文字指令</label>
+                    <textarea id="doubaoPromptTemplate" placeholder="请输入每次调用豆包API时使用的固定指令"></textarea>
                     <div class="field-meta">
                         <span id="doubaoPromptCount">0 字</span>
                     </div>
                 </div>
 
                 <div class="input-actions">
-                    <button class="btn btn-primary" onclick="saveDoubaoConfig()">保存豆包配置</button>
+                    <button class="btn btn-primary" onclick="saveDoubaoConfig()">保存豆包API配置</button>
                     <button class="btn btn-secondary" onclick="resetDoubaoPrompt()">恢复默认指令</button>
                     <button class="btn btn-secondary" onclick="loadDoubaoConfig()">刷新配置</button>
                 </div>
@@ -4681,13 +4877,13 @@
         <div class="workflow-section">
             <div class="workflow-header">
                 <h2><span class="section-icon icon-run" aria-hidden="true"></span><span>一键启动完整工作流</span></h2>
-                <p>自动处理所有参考图：上传豆包 → 获取提示词 → Legil生成 → 循环处理</p>
+                <p>自动处理所有参考图：豆包API获取提示词 → Legil生成 → 循环处理</p>
             </div>
 
             <div class="workflow-steps">
                 <div class="step">
                     <span class="step-number">1</span>
-                    <span>上传豆包</span>
+                    <span>豆包API</span>
                 </div>
                 <div class="step">
                     <span class="step-number">2</span>
@@ -4812,11 +5008,10 @@
         const config = {
             referenceFolder: 'D:\\工作\\自动化工作流1\\输入',
             saveFolder: 'D:\\工作\\自动化工作流1\\输出',
-            doubaoUrl: 'https://www.doubao.com/chat/',
             legilUrl: 'https://lumos.diandian.info/legil/image-ai/image-to-image',
             legilReferenceFolder: 'D:\\工作\\自动化工作流1\\Legil参考图',
             doubaoPromptTemplate: '',
-            doubaoChatModel: 'quick',
+            doubaoModelId: '',
             legilGeneration: {
                 imageModel: 'nano-banana-2',
                 aspectRatio: '1:1',
@@ -4824,6 +5019,14 @@
                 outputQuantity: 1
             }
         };
+
+        const folderDefaults = {
+            referenceFolder: 'D:\\工作\\自动化工作流1\\输入',
+            legilReferenceFolder: 'D:\\工作\\自动化工作流1\\Legil参考图',
+            saveFolder: 'D:\\工作\\自动化工作流1\\输出'
+        };
+        const folderHistoryKey = 'ai-image-automation-folder-history-v1';
+        const folderHistoryLimit = 8;
 
         // SSE connection
         let eventSource = null;
@@ -4833,6 +5036,7 @@
         // Initialize
         document.addEventListener('DOMContentLoaded', () => {
             addLog('系统初始化完成', 'system');
+            initFolderControls();
             connectLogStream();
             checkBrowserStatus();
             loadLegilRefFolderConfig();
@@ -4910,8 +5114,238 @@
             document.getElementById('completionModal').classList.remove('active');
         }
 
+        function loadFolderHistory() {
+            try {
+                const parsed = JSON.parse(localStorage.getItem(folderHistoryKey) || '{}');
+                return parsed && typeof parsed === 'object' ? parsed : {};
+            } catch (e) {
+                return {};
+            }
+        }
+
+        function saveFolderHistory(store) {
+            try {
+                localStorage.setItem(folderHistoryKey, JSON.stringify(store || {}));
+            } catch (e) {}
+        }
+
+        function normalizeFolderValue(value) {
+            return String(value || '').trim();
+        }
+
+        function addFolderHistory(inputId, value) {
+            const folderPath = normalizeFolderValue(value);
+            if (!folderPath) return;
+
+            const store = loadFolderHistory();
+            const current = Array.isArray(store[inputId]) ? store[inputId] : [];
+            const next = [
+                folderPath,
+                ...current.filter(item => String(item || '').toLowerCase() !== folderPath.toLowerCase())
+            ].slice(0, folderHistoryLimit);
+
+            store[inputId] = next;
+            saveFolderHistory(store);
+            renderFolderHistory(inputId);
+        }
+
+        function shortFolderLabel(folderPath) {
+            const text = String(folderPath || '');
+            if (text.length <= 28) return text;
+            return '...' + text.slice(-25);
+        }
+
+        function renderFolderHistory(inputId) {
+            const menu = document.getElementById(inputId + 'HistoryMenu');
+            if (!menu) return;
+
+            const store = loadFolderHistory();
+            const values = [];
+            const defaultValue = folderDefaults[inputId];
+            const inputValue = normalizeFolderValue(document.getElementById(inputId)?.value);
+
+            [inputValue, defaultValue, ...(Array.isArray(store[inputId]) ? store[inputId] : [])].forEach(value => {
+                const folderPath = normalizeFolderValue(value);
+                if (!folderPath) return;
+                if (!values.some(item => item.toLowerCase() === folderPath.toLowerCase())) {
+                    values.push(folderPath);
+                }
+            });
+
+            menu.innerHTML = '';
+            const visibleValues = values.slice(0, folderHistoryLimit);
+            if (visibleValues.length === 0) {
+                const empty = document.createElement('div');
+                empty.className = 'folder-history-empty';
+                empty.textContent = '暂无历史记录';
+                menu.appendChild(empty);
+                return;
+            }
+
+            visibleValues.forEach((folderPath) => {
+                const item = document.createElement('div');
+                item.setAttribute('role', 'button');
+                item.tabIndex = 0;
+                item.className = 'folder-history-item';
+                item.title = folderPath;
+                item.addEventListener('mousedown', event => event.preventDefault());
+                item.addEventListener('click', () => selectFolderHistory(inputId, folderPath));
+                item.addEventListener('keydown', (event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        selectFolderHistory(inputId, folderPath);
+                    }
+                });
+
+                const label = document.createElement('span');
+                label.className = 'folder-history-path';
+                label.textContent = shortFolderLabel(folderPath);
+
+                const canDelete = folderPath !== defaultValue;
+                item.appendChild(label);
+
+                if (canDelete) {
+                    const deleteButton = document.createElement('button');
+                    deleteButton.type = 'button';
+                    deleteButton.className = 'folder-history-delete';
+                    deleteButton.textContent = '删除';
+                    deleteButton.addEventListener('mousedown', event => event.preventDefault());
+                    deleteButton.addEventListener('click', (event) => {
+                        event.stopPropagation();
+                        deleteFolderHistory(inputId, folderPath);
+                    });
+                    item.appendChild(deleteButton);
+                }
+
+                menu.appendChild(item);
+            });
+        }
+
+        function closeFolderHistoryMenus(exceptInputId = '') {
+            document.querySelectorAll('.folder-history-menu.active').forEach(menu => {
+                if (!exceptInputId || menu.id !== exceptInputId + 'HistoryMenu') {
+                    menu.classList.remove('active');
+                }
+            });
+            document.querySelectorAll('.folder-history-button.active').forEach(button => {
+                if (!exceptInputId || button.id !== exceptInputId + 'HistoryButton') {
+                    button.classList.remove('active');
+                }
+            });
+        }
+
+        function toggleFolderHistory(inputId) {
+            const menu = document.getElementById(inputId + 'HistoryMenu');
+            const button = document.getElementById(inputId + 'HistoryButton');
+            if (!menu || !button) return;
+
+            renderFolderHistory(inputId);
+            const willOpen = !menu.classList.contains('active');
+            closeFolderHistoryMenus(inputId);
+            menu.classList.toggle('active', willOpen);
+            button.classList.toggle('active', willOpen);
+        }
+
+        function deleteFolderHistory(inputId, folderPath) {
+            const store = loadFolderHistory();
+            const target = normalizeFolderValue(folderPath).toLowerCase();
+            const current = Array.isArray(store[inputId]) ? store[inputId] : [];
+            store[inputId] = current.filter(item => normalizeFolderValue(item).toLowerCase() !== target);
+            saveFolderHistory(store);
+            renderFolderHistory(inputId);
+        }
+
+        function initFolderControls() {
+            Object.keys(folderDefaults).forEach(inputId => {
+                const input = document.getElementById(inputId);
+                if (!input) return;
+
+                renderFolderHistory(inputId);
+                input.addEventListener('blur', () => handleFolderInputBlur(inputId));
+                input.addEventListener('keydown', (event) => {
+                    if (event.key === 'Enter') {
+                        event.preventDefault();
+                        input.blur();
+                    }
+                });
+            });
+
+            document.addEventListener('click', (event) => {
+                if (!event.target.closest('.folder-input-combo')) {
+                    closeFolderHistoryMenus();
+                }
+            });
+        }
+
+        async function handleFolderInputBlur(inputId) {
+            const input = document.getElementById(inputId);
+            const folderPath = normalizeFolderValue(input?.value);
+            if (!folderPath) {
+                renderFolderHistory(inputId);
+                return;
+            }
+
+            addFolderHistory(inputId, folderPath);
+
+            if (inputId === 'referenceFolder') {
+                await checkReferenceFolder({ silent: true });
+            } else if (inputId === 'legilReferenceFolder') {
+                await checkLegilReferenceFolder({ silent: true });
+            }
+        }
+
+        async function selectFolderHistory(inputId, folderPath) {
+            if (!folderPath) return;
+
+            const input = document.getElementById(inputId);
+            if (!input) return;
+
+            input.value = folderPath;
+            addFolderHistory(inputId, folderPath);
+            await handleFolderInputBlur(inputId);
+
+            closeFolderHistoryMenus();
+        }
+
+        async function browseFolder(inputId) {
+            const input = document.getElementById(inputId);
+            if (!input) return;
+
+            const currentPath = normalizeFolderValue(input.value) || folderDefaults[inputId] || '';
+            const browseButton = input.closest('.folder-path-row')?.querySelector('.btn-folder-browse');
+            if (browseButton) {
+                browseButton.disabled = true;
+                browseButton.textContent = '选择中';
+            }
+
+            try {
+                const res = await fetch('/api/select-folder', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ currentPath })
+                });
+                const data = await res.json();
+
+                if (data.success && data.folderPath) {
+                    input.value = data.folderPath;
+                    addFolderHistory(inputId, data.folderPath);
+                    await handleFolderInputBlur(inputId);
+                    showToast('文件夹已选择');
+                } else if (!data.cancelled) {
+                    showToast(data.message || '选择文件夹失败', 'error');
+                }
+            } catch (e) {
+                showToast('选择文件夹失败', 'error');
+            } finally {
+                if (browseButton) {
+                    browseButton.disabled = false;
+                    browseButton.textContent = '浏览';
+                }
+            }
+        }
+
         // Check reference folder
-        async function checkReferenceFolder() {
+        async function checkReferenceFolder(options = {}) {
             const path = document.getElementById('referenceFolder').value.trim();
             const infoBox = document.getElementById('refCountInfo');
             if (!path) return showToast('请输入文件夹路径', 'error');
@@ -4929,7 +5363,8 @@
                 if (data.success) {
                     infoBox.className = 'info-box success';
                     infoBox.textContent = `✅ 找到 ${data.count} 张参考图`;
-                    showToast(`成功找到 ${data.count} 张图片`);
+                    addFolderHistory('referenceFolder', path);
+                    if (!options.silent) showToast(`成功找到 ${data.count} 张图片`);
                 } else {
                     infoBox.className = 'info-box error';
                     infoBox.textContent = '❌ ' + data.message;
@@ -4941,7 +5376,7 @@
         }
 
         // Check Legil reference folder
-        async function checkLegilReferenceFolder() {
+        async function checkLegilReferenceFolder(options = {}) {
             const path = document.getElementById('legilReferenceFolder').value.trim();
             const infoBox = document.getElementById('legilRefCountInfo');
             if (!path) return showToast('请输入文件夹路径', 'error');
@@ -4959,7 +5394,8 @@
                 if (data.success) {
                     infoBox.className = 'info-box success';
                     infoBox.textContent = `✅ 找到 ${data.count} 张参考图`;
-                    await saveLegilRefFolder();
+                    addFolderHistory('legilReferenceFolder', path);
+                    await saveLegilRefFolder({ silent: options.silent });
                 } else {
                     infoBox.className = 'info-box error';
                     infoBox.textContent = '❌ ' + data.message;
@@ -4971,7 +5407,7 @@
         }
 
         // Save Legil ref folder
-        async function saveLegilRefFolder() {
+        async function saveLegilRefFolder(options = {}) {
             const path = document.getElementById('legilReferenceFolder').value.trim();
             if (!path) return;
 
@@ -4981,7 +5417,8 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ folderPath: path })
                 });
-                showToast('配置已保存');
+                addFolderHistory('legilReferenceFolder', path);
+                if (!options.silent) showToast('配置已保存');
             } catch (e) {}
         }
 
@@ -4992,6 +5429,7 @@
                 const data = await res.json();
                 if (data.success && data.folderPath) {
                     document.getElementById('legilReferenceFolder').value = data.folderPath;
+                    addFolderHistory('legilReferenceFolder', data.folderPath);
                 }
             } catch (e) {}
         }
@@ -5004,51 +5442,9 @@
             }
         }
 
-        function setDoubaoModel(modelValue) {
-            config.doubaoChatModel = modelValue || 'quick';
-            document.querySelectorAll('[data-doubao-model]').forEach(button => {
-                button.classList.toggle('active', button.dataset.doubaoModel === config.doubaoChatModel);
-            });
-        }
-
-        function renderDoubaoModelOptions(options) {
-            const container = document.getElementById('doubaoModelOptions');
-            if (!container) return;
-
-            container.textContent = '';
-            const safeOptions = Array.isArray(options) && options.length
-                ? options
-                : [
-                    { value: 'quick', label: '快速', description: '适用于大部分情况' },
-                    { value: 'thinking', label: '思考', description: '擅长解决更难的问题' },
-                    { value: 'expert', label: '专家', description: '研究级智能模型' }
-                ];
-
-            safeOptions.forEach(option => {
-                const button = document.createElement('button');
-                button.type = 'button';
-                button.className = 'model-option';
-                button.dataset.doubaoModel = option.value;
-                button.onclick = () => setDoubaoModel(option.value);
-
-                const title = document.createElement('span');
-                title.className = 'model-option-title';
-                title.textContent = option.label || option.value;
-
-                const desc = document.createElement('span');
-                desc.className = 'model-option-desc';
-                desc.textContent = option.description || '';
-
-                button.appendChild(title);
-                button.appendChild(desc);
-                container.appendChild(button);
-            });
-
-            setDoubaoModel(config.doubaoChatModel);
-        }
-
         async function loadDoubaoConfig() {
             const infoBox = document.getElementById('doubaoConfigInfo');
+            const keyStatus = document.getElementById('doubaoApiKeyStatus');
             try {
                 const res = await fetch('/api/config/doubao');
                 const data = await res.json();
@@ -5057,8 +5453,7 @@
                 }
 
                 config.doubaoPromptTemplate = data.config.promptTemplate || '';
-                config.doubaoChatModel = data.config.chatModel || 'quick';
-                renderDoubaoModelOptions(data.config.modelOptions || []);
+                config.doubaoModelId = data.config.modelId || '';
 
                 const textarea = document.getElementById('doubaoPromptTemplate');
                 if (textarea) {
@@ -5066,9 +5461,31 @@
                     updateDoubaoPromptCount();
                 }
 
+                const modelInput = document.getElementById('doubaoModelId');
+                if (modelInput) {
+                    modelInput.value = config.doubaoModelId;
+                }
+
+                const apiKeyInput = document.getElementById('doubaoApiKey');
+                if (apiKeyInput) {
+                    apiKeyInput.value = '';
+                    apiKeyInput.placeholder = data.config.apiKeyConfigured
+                        ? '已配置，重新填写可覆盖'
+                        : '填写后仅保存在本机，不会在页面回显';
+                }
+
+                if (keyStatus) {
+                    keyStatus.textContent = data.config.apiKeyConfigured
+                        ? `已配置（${data.config.apiKeySource || '本机'}）`
+                        : '未配置';
+                }
+
+                const doubaoReady = !!data.config.apiKeyConfigured && !!config.doubaoModelId;
+                updateStatus('doubao', doubaoReady, doubaoReady ? '豆包API已配置' : '豆包API待配置');
+
                 if (infoBox) {
                     infoBox.className = 'info-box success';
-                    infoBox.textContent = `✅ 豆包配置已加载，当前模型：${data.config.chatModelLabel || '快速'}`;
+                    infoBox.textContent = `✅ 豆包API配置已加载，模型ID：${data.config.modelLabel || '未填写'}`;
                 }
             } catch (e) {
                 if (infoBox) {
@@ -5081,11 +5498,20 @@
         async function saveDoubaoConfig(options = {}) {
             const silent = options.silent === true;
             const textarea = document.getElementById('doubaoPromptTemplate');
+            const modelInput = document.getElementById('doubaoModelId');
+            const apiKeyInput = document.getElementById('doubaoApiKey');
             const infoBox = document.getElementById('doubaoConfigInfo');
             const promptTemplate = textarea ? textarea.value.trim() : '';
+            const modelId = modelInput ? modelInput.value.trim() : '';
+            const apiKey = apiKeyInput ? apiKeyInput.value.trim() : '';
 
             if (!promptTemplate) {
                 if (!silent) showToast('豆包固定指令不能为空', 'error');
+                return false;
+            }
+
+            if (!modelId) {
+                if (!silent) showToast('请填写豆包模型 ID / Endpoint ID', 'error');
                 return false;
             }
 
@@ -5104,8 +5530,9 @@
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        chatModel: config.doubaoChatModel,
-                        promptTemplate
+                        modelId,
+                        promptTemplate,
+                        apiKey
                     })
                 });
                 const data = await res.json();
@@ -5114,21 +5541,42 @@
                     throw new Error(data.message || '保存失败');
                 }
 
+                if (!data.config || !data.config.apiKeyConfigured) {
+                    throw new Error('请填写火山方舟 API Key');
+                }
+
                 config.doubaoPromptTemplate = data.config.promptTemplate;
-                config.doubaoChatModel = data.config.chatModel || 'quick';
-                renderDoubaoModelOptions(data.config.modelOptions || []);
+                config.doubaoModelId = data.config.modelId || '';
                 if (textarea) {
                     textarea.value = config.doubaoPromptTemplate;
                     updateDoubaoPromptCount();
                 }
+                if (modelInput) {
+                    modelInput.value = config.doubaoModelId;
+                }
+                if (apiKeyInput) {
+                    apiKeyInput.value = '';
+                    apiKeyInput.placeholder = data.config.apiKeyConfigured
+                        ? '已配置，重新填写可覆盖'
+                        : '填写后仅保存在本机，不会在页面回显';
+                }
+
+                const keyStatus = document.getElementById('doubaoApiKeyStatus');
+                if (keyStatus) {
+                    keyStatus.textContent = data.config.apiKeyConfigured
+                        ? `已配置（${data.config.apiKeySource || '本机'}）`
+                        : '未配置';
+                }
+                const doubaoReady = !!data.config.apiKeyConfigured && !!config.doubaoModelId;
+                updateStatus('doubao', doubaoReady, doubaoReady ? '豆包API已配置' : '豆包API待配置');
 
                 if (infoBox) {
                     infoBox.className = 'info-box success';
-                    infoBox.textContent = `✅ 豆包配置已保存，当前模型：${data.config.chatModelLabel || '快速'}`;
+                    infoBox.textContent = `✅ 豆包API配置已保存，模型ID：${data.config.modelLabel || '未填写'}`;
                 }
                 if (!silent) {
                     showToast('豆包配置已保存');
-                    addLog(`✅ 豆包配置已保存，当前模型：${data.config.chatModelLabel || '快速'}`, 'success');
+                    addLog(`✅ 豆包API配置已保存，模型ID：${data.config.modelLabel || '未填写'}`, 'success');
                 }
                 return true;
             } catch (e) {
@@ -5151,8 +5599,6 @@
                 }
 
                 config.doubaoPromptTemplate = data.config.promptTemplate;
-                config.doubaoChatModel = data.config.chatModel || 'quick';
-                renderDoubaoModelOptions(data.config.modelOptions || []);
                 const textarea = document.getElementById('doubaoPromptTemplate');
                 if (textarea) {
                     textarea.value = config.doubaoPromptTemplate;
@@ -5335,7 +5781,13 @@
 
         // Open websites
         async function openSingleWebsite(name) {
-            const url = document.getElementById(name + 'Url').value.trim();
+            if (name === 'doubao') {
+                showToast('豆包已改为API调用，无需打开网页');
+                return;
+            }
+
+            const input = document.getElementById(name + 'Url');
+            const url = input ? input.value.trim() : '';
             if (!url) return showToast('请输入网址', 'error');
 
             addLog(`正在打开 ${name}...`, 'browser');
@@ -5348,7 +5800,7 @@
                 const data = await res.json();
                 if (data.success) {
                     addLog(`${name} 已打开`, 'browser');
-                    updateStatus(name, true, name === 'doubao' ? '豆包已连接' : 'Legil已连接');
+                    updateStatus(name, true, 'Legil已连接');
                     updateStatus('browser', true, '浏览器运行中');
                 }
             } catch (e) {
@@ -5357,22 +5809,23 @@
         }
 
         async function openBothWebsites() {
-            const doubaoUrl = document.getElementById('doubaoUrl').value.trim();
             const legilUrl = document.getElementById('legilUrl').value.trim();
 
-            addLog('正在打开两个网站...', 'browser');
+            addLog('正在打开Legil网站，豆包已改为API调用...', 'browser');
             try {
                 const res = await fetch('/api/open-both-websites', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ doubaoUrl, legilUrl })
+                    body: JSON.stringify({ legilUrl })
                 });
                 const data = await res.json();
                 if (data.success) {
-                    addLog('两个网站已打开', 'browser');
-                    updateStatus('doubao', true, '豆包已连接');
+                    addLog('Legil网站已打开，豆包API无需网页', 'browser');
+                    loadDoubaoConfig();
                     updateStatus('legil', true, 'Legil已连接');
                     updateStatus('browser', true, '浏览器运行中');
+                } else {
+                    showToast(data.message || '打开失败', 'error');
                 }
             } catch (e) {
                 showToast('打开失败', 'error');
@@ -5385,8 +5838,8 @@
                 await fetch('/api/close-browser', { method: 'POST' });
                 addLog('浏览器已关闭', 'browser');
                 updateStatus('browser', false, '浏览器未启动');
-                updateStatus('doubao', false, '豆包未连接');
                 updateStatus('legil', false, 'Legil未连接');
+                loadDoubaoConfig();
             } catch (e) {}
         }
 
@@ -5397,7 +5850,8 @@
                 if (data.success && data.status) {
                     const s = data.status;
                     if (s.browserRunning) updateStatus('browser', true, '浏览器运行中');
-                    if (s.pages.doubao) updateStatus('doubao', true, '豆包已连接');
+                    if (s.doubaoApiConfigured) updateStatus('doubao', true, '豆包API已配置');
+                    if (!s.doubaoApiConfigured) updateStatus('doubao', false, '豆包API未配置');
                     if (s.pages.legil) updateStatus('legil', true, 'Legil已连接');
                 }
             } catch (e) {}
@@ -5407,7 +5861,7 @@
         async function startWorkflowWithConfirm() {
             const confirmed = confirm(
                 '请确认以下事项：\n\n' +
-                '✅ 已在浏览器中登录豆包账号\n' +
+                '✅ 已配置火山方舟 API Key 和模型 ID\n' +
                 '✅ 已在浏览器中登录Legil账号\n' +
                 '✅ 参考图文件夹路径正确\n' +
                 '✅ 输出文件夹路径正确\n\n' +
@@ -5424,6 +5878,9 @@
             const legilRefFolder = document.getElementById('legilReferenceFolder').value.trim();
 
             if (!inputFolder) return showToast('请输入参考图文件夹路径', 'error');
+            addFolderHistory('referenceFolder', inputFolder);
+            if (outputFolder) addFolderHistory('saveFolder', outputFolder);
+            if (legilRefFolder) addFolderHistory('legilReferenceFolder', legilRefFolder);
 
             document.getElementById('oneClickStartBtn').disabled = true;
             document.getElementById('oneClickStartBtn').textContent = '⏳ 运行中...';
