@@ -22,10 +22,10 @@ class WorkflowController {
         this.currentIndex = 0;
         this.totalImages = 0;
         this.imageFiles = [];
-        this.inputFolder = 'D:\\工作\\自动化工作流1\\输入';
-        this.outputFolder = 'D:\\工作\\自动化工作流1\\输出';
+        this.inputFolder = 'D:\\工作\\自动化工作流1\\批量产图\\输入';
+        this.outputFolder = 'D:\\工作\\自动化工作流1\\批量产图\\输出';
         // Legil参考图文件夹
-        this.legilReferenceFolder = 'D:\\工作\\自动化工作流1\\Legil参考图';
+        this.legilReferenceFolder = 'D:\\工作\\自动化工作流1\\批量产图\\参考图';
         this.stats = {
             processed: 0,
             failed: 0,
@@ -46,6 +46,11 @@ class WorkflowController {
         this.abortController = null;
         this.pendingPromises = [];
         this.currentRunId = '';
+        this.resumeSnapshot = null;
+        this.currentImagePrompts = [];
+        this.currentImagePath = '';
+        this.nextResumeImageIndex = 0;
+        this.nextResumePromptIndex = 0;
     }
 
     /**
@@ -152,6 +157,78 @@ class WorkflowController {
         };
     }
 
+    buildResumeSnapshot() {
+        if (!this.totalImages || !Array.isArray(this.imageFiles) || this.imageFiles.length === 0) {
+            return null;
+        }
+
+        let imageIndex = Number.isFinite(Number(this.nextResumeImageIndex))
+            ? Math.floor(Number(this.nextResumeImageIndex))
+            : this.currentIndex;
+        let promptIndex = Number.isFinite(Number(this.nextResumePromptIndex))
+            ? Math.floor(Number(this.nextResumePromptIndex))
+            : 0;
+
+        imageIndex = Math.max(0, Math.min(imageIndex, this.imageFiles.length));
+        promptIndex = Math.max(0, Math.min(promptIndex, 5));
+
+        if (promptIndex >= 5) {
+            imageIndex += 1;
+            promptIndex = 0;
+        }
+
+        if (imageIndex >= this.imageFiles.length) {
+            return null;
+        }
+
+        const imagePath = this.imageFiles[imageIndex];
+        const canReusePrompts = this.currentImagePath === imagePath &&
+            Array.isArray(this.currentImagePrompts) &&
+            this.currentImagePrompts.length >= 5;
+
+        return {
+            inputFolder: this.inputFolder,
+            outputFolder: this.outputFolder,
+            legilReferenceFolder: this.legilReferenceFolder,
+            imageFiles: [...this.imageFiles],
+            totalImages: this.totalImages,
+            imageIndex,
+            promptIndex,
+            prompts: canReusePrompts ? [...this.currentImagePrompts] : [],
+            stats: { ...this.stats },
+            runId: this.currentRunId || formatDateTimeForFile(),
+            savedAt: new Date().toISOString()
+        };
+    }
+
+    getResumeInfo() {
+        const snapshot = this.resumeSnapshot;
+        if (!snapshot || !Array.isArray(snapshot.imageFiles) || snapshot.imageIndex >= snapshot.imageFiles.length) {
+            return {
+                hasResume: false
+            };
+        }
+
+        const imagePath = snapshot.imageFiles[snapshot.imageIndex];
+        return {
+            hasResume: true,
+            inputFolder: snapshot.inputFolder,
+            outputFolder: snapshot.outputFolder,
+            legilReferenceFolder: snapshot.legilReferenceFolder,
+            imageIndex: snapshot.imageIndex + 1,
+            totalImages: snapshot.totalImages || snapshot.imageFiles.length,
+            imageName: imagePath ? path.basename(imagePath) : '',
+            promptIndex: (Number(snapshot.promptIndex) || 0) + 1,
+            totalPrompts: 5,
+            stats: snapshot.stats || {},
+            savedAt: snapshot.savedAt || ''
+        };
+    }
+
+    clearResume() {
+        this.resumeSnapshot = null;
+    }
+
     /**
      * =====================================================
      * 主流程：启动完整工作流
@@ -160,8 +237,18 @@ class WorkflowController {
      * @param {string} outputFolder - 输出文件夹路径
      * @param {string} legilRefFolder - Legil参考图文件夹路径（可选）
      */
-    async startWorkflow(inputFolder, outputFolder, legilRefFolder) {
-        const validation = this.validateStart(inputFolder, outputFolder, legilRefFolder);
+    async startWorkflow(inputFolder, outputFolder, legilRefFolder, options = {}) {
+        const resumeSnapshot = options && options.resumeSnapshot ? options.resumeSnapshot : null;
+        const validation = resumeSnapshot
+            ? {
+                success: true,
+                inputFolder: resumeSnapshot.inputFolder,
+                outputFolder: resumeSnapshot.outputFolder,
+                legilReferenceFolder: resumeSnapshot.legilReferenceFolder,
+                totalImages: Array.isArray(resumeSnapshot.imageFiles) ? resumeSnapshot.imageFiles.length : 0
+            }
+            : this.validateStart(inputFolder, outputFolder, legilRefFolder);
+
         if (!validation.success) {
             this.updateStatus({
                 phase: 'error',
@@ -176,8 +263,11 @@ class WorkflowController {
         this.inputFolder = validation.inputFolder;
         this.outputFolder = validation.outputFolder;
         this.legilReferenceFolder = validation.legilReferenceFolder;
-        this.stats = { processed: 0, failed: 0, totalGenerated: 0 };
-        this.currentRunId = formatDateTimeForFile();
+        this.stats = resumeSnapshot && resumeSnapshot.stats
+            ? { processed: 0, failed: 0, totalGenerated: 0, ...resumeSnapshot.stats }
+            : { processed: 0, failed: 0, totalGenerated: 0 };
+        this.currentRunId = resumeSnapshot && resumeSnapshot.runId ? resumeSnapshot.runId : formatDateTimeForFile();
+        this.clearResume();
 
         // 确保前端传入的输出目录真正用于 Legil 图片保存
         legilAutomation.setSaveFolder(this.outputFolder);
@@ -208,9 +298,14 @@ class WorkflowController {
 
         try {
             // 第1步：获取所有参考图
-            this.imageFiles = this.getImageFiles(this.inputFolder);
+            this.imageFiles = resumeSnapshot && Array.isArray(resumeSnapshot.imageFiles)
+                ? [...resumeSnapshot.imageFiles]
+                : this.getImageFiles(this.inputFolder);
             this.totalImages = this.imageFiles.length;
-            this.currentIndex = 0;
+            const startImageIndex = resumeSnapshot
+                ? Math.max(0, Math.min(Number(resumeSnapshot.imageIndex) || 0, this.totalImages - 1))
+                : 0;
+            this.currentIndex = startImageIndex;
 
             if (this.totalImages === 0) {
                 this.isRunning = false;
@@ -220,10 +315,14 @@ class WorkflowController {
                 };
             }
 
-            logger.info(`找到 ${this.totalImages} 张参考图，开始处理...`);
+            if (resumeSnapshot) {
+                logger.info(`找到 ${this.totalImages} 张参考图，将从第 ${startImageIndex + 1} 张继续处理...`);
+            } else {
+                logger.info(`找到 ${this.totalImages} 张参考图，开始处理...`);
+            }
 
             // 第2步：循环处理每张参考图
-            for (let i = 0; i < this.totalImages; i++) {
+            for (let i = startImageIndex; i < this.totalImages; i++) {
                 // 每次循环开始时检查是否已停止
                 if (!this.isRunning) {
                     logger.info('⏹️ 工作流已停止，退出循环');
@@ -252,7 +351,13 @@ class WorkflowController {
 
                 try {
                     // 处理单张参考图（传入当前索引和总数，用于显示进度）
-                    await this.processSingleImage(imagePath, i + 1, this.totalImages);
+                    const processOptions = resumeSnapshot && i === startImageIndex
+                        ? {
+                            startPromptIndex: Number(resumeSnapshot.promptIndex) || 0,
+                            prompts: Array.isArray(resumeSnapshot.prompts) ? resumeSnapshot.prompts : []
+                        }
+                        : {};
+                    await this.processSingleImage(imagePath, i + 1, this.totalImages, processOptions);
                     this.stats.processed++;
 
                     // 如果不是最后一张，短暂等待后继续下一张参考图。
@@ -321,6 +426,7 @@ class WorkflowController {
 
             // 第3步：完成总结
             this.isRunning = false;
+            this.clearResume();
             this.updateStatus({
                 phase: 'completed',
                 currentAction: '工作流已完成',
@@ -372,37 +478,53 @@ class WorkflowController {
      * 2. 每组提示词在Legil生成图片
      * 3. 本轮结束
      */
-    async processSingleImage(imagePath, imageIndex, totalImages) {
+    async processSingleImage(imagePath, imageIndex, totalImages, options = {}) {
         const imageName = path.basename(imagePath);
+        const startPromptIndex = Math.max(0, Math.min(4, Number(options.startPromptIndex) || 0));
+        const cachedPrompts = Array.isArray(options.prompts)
+            ? options.prompts
+                .map(promptData => typeof promptData === 'string' ? promptData : promptData && promptData.content)
+                .filter(promptText => typeof promptText === 'string' && promptText.trim())
+                .map(promptText => promptText.trim())
+                .slice(0, 5)
+            : [];
 
         logger.info('');
         logger.info('╔════════════════════════════════════════════════════════════╗');
         logger.info(`║ 📷 参考图 ${imageIndex}/${totalImages}: ${imageName}`);
         logger.info('╠════════════════════════════════════════════════════════════╣');
-        logger.info('║ [步骤1] 豆包 API：读取参考图并获取5组提示词...');
+        logger.info(cachedPrompts.length >= 5
+            ? '║ [步骤1] 使用停止前缓存的5组提示词继续...'
+            : '║ [步骤1] 豆包 API：读取参考图并获取5组提示词...');
         logger.info('╚════════════════════════════════════════════════════════════╝');
 
-        // 更新状态 - 正在通过豆包 API 生成提示词。
-        this.updateStatus({
-            phase: 'extracting_prompts',
-            currentAction: `正在调用豆包 API 生成提示词: ${imageName}`
-        });
+        let prompts = cachedPrompts;
 
-        const doubaoResult = await doubaoAutomation.fullAutomation(imagePath, {
-            imageIndex,
-            totalImages,
-            ...this.getCancellationOptions()
-        });
+        if (prompts.length < 5) {
+            // 更新状态 - 正在通过豆包 API 生成提示词。
+            this.updateStatus({
+                phase: 'extracting_prompts',
+                currentAction: `正在调用豆包 API 生成提示词: ${imageName}`
+            });
 
-        if (!doubaoResult.success || !Array.isArray(doubaoResult.prompts) || doubaoResult.prompts.length === 0) {
-            throw new Error('豆包生成提示词失败');
+            const doubaoResult = await doubaoAutomation.fullAutomation(imagePath, {
+                imageIndex,
+                totalImages,
+                ...this.getCancellationOptions()
+            });
+
+            if (!doubaoResult.success || !Array.isArray(doubaoResult.prompts) || doubaoResult.prompts.length === 0) {
+                throw new Error('豆包生成提示词失败');
+            }
+
+            prompts = doubaoResult.prompts
+                .map(promptData => typeof promptData === 'string' ? promptData : promptData && promptData.content)
+                .filter(promptText => typeof promptText === 'string' && promptText.trim())
+                .map(promptText => promptText.trim())
+                .slice(0, 5);
+        } else {
+            logger.info(`✅ 已加载停止前缓存的 ${prompts.length} 组提示词`);
         }
-
-        const prompts = doubaoResult.prompts
-            .map(promptData => typeof promptData === 'string' ? promptData : promptData && promptData.content)
-            .filter(promptText => typeof promptText === 'string' && promptText.trim())
-            .map(promptText => promptText.trim())
-            .slice(0, 5);
 
         if (prompts.length < 5) {
             logger.error(`提取提示词失败: 豆包 API 只返回 ${prompts.length} 组有效提示词`);
@@ -413,6 +535,10 @@ class WorkflowController {
 
         // 保存提示词到内存，供前端查看
         this.lastExtractedPrompts = prompts;
+        this.currentImagePath = imagePath;
+        this.currentImagePrompts = [...prompts];
+        this.nextResumeImageIndex = imageIndex - 1;
+        this.nextResumePromptIndex = startPromptIndex;
         logger.info('💾 提示词已缓存，可通过API获取');
 
         // 更新状态 - 正在提取提示词
@@ -427,7 +553,11 @@ class WorkflowController {
         logger.info('║ [步骤2] Legil：每组提示词生成1张图片（共5张）');
         logger.info('╚════════════════════════════════════════════════════════════╝');
 
-        for (let i = 0; i < prompts.length; i++) {
+        if (startPromptIndex > 0) {
+            logger.info(`↩️ 继续上次任务：从第 ${startPromptIndex + 1}/5 组提示词开始`);
+        }
+
+        for (let i = startPromptIndex; i < prompts.length; i++) {
             const promptData = prompts[i];
             const promptText = typeof promptData === 'string' ? promptData : promptData.content;
 
@@ -435,6 +565,9 @@ class WorkflowController {
                 logger.warn(`提示词 ${i + 1}/5 为空，跳过`);
                 continue;
             }
+
+            this.nextResumeImageIndex = imageIndex - 1;
+            this.nextResumePromptIndex = i;
 
             // 更新状态 - 正在Legil生成图片
             this.updateStatus({
@@ -469,6 +602,11 @@ class WorkflowController {
             if (legilResult.success) {
                 const savedCount = Number(legilResult.savedCount) || 1;
                 this.stats.totalGenerated += savedCount;
+                this.nextResumePromptIndex = i + 1;
+                if (this.nextResumePromptIndex >= prompts.length) {
+                    this.nextResumeImageIndex = imageIndex;
+                    this.nextResumePromptIndex = 0;
+                }
                 logger.info(`✅ 提示词 ${i + 1}/5 生成成功，保存 ${savedCount} 张图片`);
                 // 更新状态 - 图片已保存
                 this.updateStatus({
@@ -561,6 +699,7 @@ class WorkflowController {
      */
     async stopWorkflow() {
         if (this.isRunning) {
+            this.resumeSnapshot = this.buildResumeSnapshot();
             this.isRunning = false;
             // 触发 abort 信号以中断正在进行的操作
             if (this.abortController) {
@@ -572,9 +711,38 @@ class WorkflowController {
                 currentAction: '工作流已停止'
             });
             logger.info('⏹️ 工作流已停止');
+            if (this.resumeSnapshot) {
+                const info = this.getResumeInfo();
+                logger.info(`已保存可继续任务：第 ${info.imageIndex}/${info.totalImages} 张参考图，提示词 ${info.promptIndex}/${info.totalPrompts}`);
+            }
             return { success: true, message: '工作流已停止' };
         }
         return { success: false, message: '工作流未运行' };
+    }
+
+    async resumeWorkflow() {
+        if (this.isRunning) {
+            return {
+                success: false,
+                message: '工作流正在运行中，请勿重复启动'
+            };
+        }
+
+        const snapshot = this.resumeSnapshot;
+        if (!snapshot || !Array.isArray(snapshot.imageFiles) || snapshot.imageIndex >= snapshot.imageFiles.length) {
+            return {
+                success: false,
+                message: '没有可继续的上次任务'
+            };
+        }
+
+        logger.info('↩️ 准备继续上次停止的工作流...');
+        return this.startWorkflow(
+            snapshot.inputFolder,
+            snapshot.outputFolder,
+            snapshot.legilReferenceFolder,
+            { resumeSnapshot: snapshot }
+        );
     }
 
     /**

@@ -22,9 +22,6 @@ const fs = require('fs');
 // 目录位于项目文件夹下，方便管理
 const USER_DATA_DIR = path.join(__dirname, 'browser_data');
 
-// 存储状态文件路径
-const STORAGE_STATE_FILE = path.join(__dirname, 'storage_state.json');
-
 /**
  * BrowserController 类
  * 封装所有浏览器相关的操作
@@ -46,7 +43,7 @@ class BrowserController {
      * 启动浏览器
      * -----------
      * 打开一个 Chromium 浏览器窗口
-     * 使用 storage state 保存登录状态和 cookie
+     * 使用 browser_data 持久化用户目录保存登录状态和 cookie
      * @param {boolean} headless - 是否无头模式（true=后台运行不显示窗口，false=显示窗口）
      * @returns {Promise<boolean>} - 启动成功返回 true，失败返回 false
      */
@@ -54,7 +51,7 @@ class BrowserController {
         try {
             console.log('🚀 正在启动浏览器...');
             logger.browser('正在启动浏览器...');
-            console.log(`   存储状态文件: ${STORAGE_STATE_FILE}`);
+            console.log(`   用户数据目录: ${USER_DATA_DIR}`);
 
             // 检查是否有残留的浏览器进程
             if (this.browser || this.context) {
@@ -68,10 +65,13 @@ class BrowserController {
 
             console.log('   正在启动浏览器...');
 
-            // 使用普通 launch 启动浏览器（更稳定）
-            this.browser = await chromium.launch({
+            // 使用持久化用户目录启动浏览器。这样 Legil 的 cookie、localStorage、
+            // IndexedDB 等登录信息会像普通浏览器一样自动保存到 browser_data。
+            const contextOptions = {
                 headless: headless,              // 是否无头模式
                 slowMo: 100,                     // 增加操作延迟，更自然
+                viewport: { width: 1280, height: 800 },
+                acceptDownloads: true,
                 args: [
                     '--window-size=1280,800',
                     '--no-sandbox',                  // 禁用沙箱（Windows 更稳定）
@@ -82,20 +82,26 @@ class BrowserController {
                     '--disable-features=IsolateOrigins,site-per-process',
                     '--remote-debugging-port=9223'   // 开启远程调试端口，支持外部连接
                 ]
-            });
-
-            // 创建新的浏览器上下文
-            // 如果存在存储状态文件，则加载它
-            const contextOptions = {
-                viewport: { width: 1280, height: 800 }  // 视口大小
             };
 
-            if (fs.existsSync(STORAGE_STATE_FILE)) {
-                console.log('   加载已保存的登录状态...');
-                contextOptions.storageState = STORAGE_STATE_FILE;
+            if (!fs.existsSync(USER_DATA_DIR)) {
+                fs.mkdirSync(USER_DATA_DIR, { recursive: true });
             }
 
-            this.context = await this.browser.newContext(contextOptions);
+            try {
+                this.context = await chromium.launchPersistentContext(USER_DATA_DIR, contextOptions);
+            } catch (launchError) {
+                if (/lock|singleton|profile|user data directory|正在使用|in use/i.test(launchError.message)) {
+                    console.log('   检测到浏览器用户目录锁定，正在清理残留锁文件后重试...');
+                    this.clearStaleProfileLocks();
+                    this.context = await chromium.launchPersistentContext(USER_DATA_DIR, contextOptions);
+                } else {
+                    throw launchError;
+                }
+            }
+
+            this.browser = this.context.browser();
+            this.attachLifecycleHandlers();
 
             console.log('✅ 浏览器启动成功');
             logger.browser('✅ 浏览器启动成功');
@@ -113,19 +119,63 @@ class BrowserController {
         }
     }
 
-    /**
-     * 保存浏览器状态
-     * 保存 cookies 和 localStorage 到文件
-     */
-    async saveStorageState() {
+    attachLifecycleHandlers() {
         if (this.context) {
+            this.context.once('close', () => {
+                this.context = null;
+                this.browser = null;
+                this.pages = {};
+                console.log('   浏览器上下文已关闭，登录状态已由 browser_data 自动保留');
+            });
+        }
+
+        if (this.browser) {
+            this.browser.once('disconnected', () => {
+                this.context = null;
+                this.browser = null;
+                this.pages = {};
+                console.log('   浏览器已断开连接');
+            });
+        }
+    }
+
+    isBrowserActive() {
+        if (!this.context || !this.browser) {
+            return false;
+        }
+
+        try {
+            if (typeof this.browser.isConnected === 'function' && !this.browser.isConnected()) {
+                return false;
+            }
+            this.context.pages();
+            return true;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    clearStaleProfileLocks() {
+        const lockFiles = ['SingletonLock', 'SingletonCookie', 'SingletonSocket'];
+        for (const fileName of lockFiles) {
+            const targetPath = path.join(USER_DATA_DIR, fileName);
             try {
-                await this.context.storageState({ path: STORAGE_STATE_FILE });
-                console.log('   登录状态已保存');
-            } catch (e) {
-                console.error('   保存登录状态失败:', e.message);
+                if (fs.existsSync(targetPath)) {
+                    fs.rmSync(targetPath, { force: true, recursive: true });
+                    console.log(`   已清理残留锁文件: ${fileName}`);
+                }
+            } catch (error) {
+                console.log(`   清理锁文件 ${fileName} 失败: ${error.message}`);
             }
         }
+    }
+
+    /**
+     * 保存浏览器状态
+     * 持久化上下文会自动把登录信息写入 browser_data。
+     */
+    async saveStorageState() {
+        console.log('   登录状态由 browser_data 自动保存');
     }
 
     /**
@@ -142,7 +192,7 @@ class BrowserController {
             logger.browser(`准备打开 ${name}`);
 
             // 如果浏览器未启动，先启动浏览器
-            if (!this.browser || !this.context) {
+            if (!this.isBrowserActive()) {
                 console.log('   浏览器未启动，正在启动...');
                 const launched = await this.launchBrowser(false);
                 if (!launched) {
@@ -151,7 +201,7 @@ class BrowserController {
             }
 
             // 检查浏览器实例是否有效
-            if (!this.browser) {
+            if (!this.isBrowserActive()) {
                 throw new Error('浏览器实例无效');
             }
 
@@ -235,7 +285,7 @@ class BrowserController {
         console.log('\n🔄 开始打开 Legil 网站（豆包 API 无需网页）...\n');
 
         // 先启动浏览器
-        if (!this.browser) {
+        if (!this.isBrowserActive()) {
             const launched = await this.launchBrowser(false);
             if (!launched) {
                 return results;
@@ -312,7 +362,7 @@ class BrowserController {
     /**
      * 关闭浏览器
      * 关闭所有页面和浏览器实例
-     * 注意：登录状态会自动保存到 storage_state.json
+     * 注意：登录状态会自动保存到 browser_data
      */
     async closeBrowser() {
         if (this.context) {
@@ -329,6 +379,7 @@ class BrowserController {
             } finally {
                 this.context = null;
                 this.pages = {};
+                this.browser = null;
             }
         }
 

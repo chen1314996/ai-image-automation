@@ -15,6 +15,7 @@ const path = require('path');
 // 引入 fs 模块，文件系统模块
 const fs = require('fs');
 const { execFile } = require('child_process');
+const XLSX = require('xlsx');
 
 // 引入 Playwright 浏览器控制器
 const browserController = require('./playwright-controller');
@@ -36,13 +37,44 @@ const { readConfig, updateConfig } = require('./config-store');
 
 const persistedConfig = readConfig();
 
+const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'];
+const DEFAULT_RESIZE_CONFIG = {
+    inputFolder: 'D:\\工作\\自动化工作流1\\Legil批量改尺寸\\输入',
+    outputFolder: 'D:\\工作\\自动化工作流1\\Legil批量改尺寸\\输出',
+    promptTemplate: '',
+    generationSettings: {
+        imageModel: 'nano-banana-2',
+        aspectRatio: '16:9',
+        resolution: '1K',
+        outputQuantity: 1
+    }
+};
+const DEFAULT_CREATIVE_CONFIG = {
+    outputFolder: 'D:\\工作\\自动化工作流1\\创意拓展\\输出',
+    referenceFolder: '',
+    generationSettings: {
+        imageModel: 'nano-banana-2',
+        aspectRatio: '1:1',
+        resolution: '1K',
+        outputQuantity: 1
+    }
+};
+
 /**
  * ============================================
  * 全局配置存储
  * ============================================
  */
 const appConfig = {
-    legilReferenceFolder: persistedConfig.legilReferenceFolder || 'D:\\工作\\自动化工作流1\\Legil参考图'
+    legilReferenceFolder: persistedConfig.legilReferenceFolder || 'D:\\工作\\自动化工作流1\\批量产图\\参考图',
+    resize: {
+        ...DEFAULT_RESIZE_CONFIG,
+        ...(persistedConfig.resize && typeof persistedConfig.resize === 'object' ? persistedConfig.resize : {})
+    },
+    creative: {
+        ...DEFAULT_CREATIVE_CONFIG,
+        ...(persistedConfig.creative && typeof persistedConfig.creative === 'object' ? persistedConfig.creative : {})
+    }
 };
 
 if (persistedConfig.doubao && typeof persistedConfig.doubao === 'object') {
@@ -62,7 +94,10 @@ if (persistedConfig.legil && typeof persistedConfig.legil === 'object') {
 }
 
 const automationState = {
-    legilTaskRunning: false
+    legilTaskRunning: false,
+    legilStopRequested: false,
+    legilTaskType: null,
+    legilTaskProgress: null
 };
 
 function normalizeInputPath(value) {
@@ -70,6 +105,94 @@ function normalizeInputPath(value) {
         return '';
     }
     return value.replace(/["']/g, '').trim().replace(/\\/g, '/');
+}
+
+function listImageFilesInFolder(folderPath) {
+    const normalizedFolderPath = normalizeInputPath(folderPath);
+    if (!normalizedFolderPath || !fs.existsSync(normalizedFolderPath)) {
+        return [];
+    }
+
+    const stats = fs.statSync(normalizedFolderPath);
+    if (!stats.isDirectory()) {
+        return [];
+    }
+
+    return sortNaturallyByName(fs.readdirSync(normalizedFolderPath))
+        .filter(file => IMAGE_EXTENSIONS.includes(path.extname(file).toLowerCase()))
+        .map(file => path.join(normalizedFolderPath, file));
+}
+
+function normalizeResizeConfigPayload(payload = {}) {
+    const inputFolder = normalizeInputPath(payload.inputFolder) || appConfig.resize.inputFolder || DEFAULT_RESIZE_CONFIG.inputFolder;
+    const outputFolder = normalizeInputPath(payload.outputFolder) || appConfig.resize.outputFolder || DEFAULT_RESIZE_CONFIG.outputFolder;
+    const promptTemplate = typeof payload.promptTemplate === 'string'
+        ? payload.promptTemplate
+        : (typeof payload.prompt === 'string' ? payload.prompt : appConfig.resize.promptTemplate || '');
+    const generationSettings = normalizeLegilGenerationSettings(
+        payload.generationSettings,
+        appConfig.resize.generationSettings || DEFAULT_RESIZE_CONFIG.generationSettings
+    );
+
+    return {
+        inputFolder,
+        outputFolder,
+        promptTemplate,
+        generationSettings
+    };
+}
+
+function normalizeCreativeConfigPayload(payload = {}) {
+    const outputFolder = normalizeInputPath(payload.outputFolder) || appConfig.creative.outputFolder || DEFAULT_CREATIVE_CONFIG.outputFolder;
+    const referenceFolder = normalizeInputPath(payload.referenceFolder);
+    const generationSettings = normalizeLegilGenerationSettings(
+        payload.generationSettings,
+        appConfig.creative.generationSettings || DEFAULT_CREATIVE_CONFIG.generationSettings
+    );
+
+    return {
+        outputFolder,
+        referenceFolder,
+        generationSettings
+    };
+}
+
+function normalizeLegilGenerationSettings(settings = {}, fallback = {}) {
+    const legilConfig = legilAutomation.getConfig();
+    const options = legilConfig.options || {};
+    const defaultSettings = legilConfig.defaultSettings || DEFAULT_RESIZE_CONFIG.generationSettings;
+    const source = settings && typeof settings === 'object' ? settings : {};
+    const fallbackSettings = fallback && typeof fallback === 'object' ? fallback : {};
+
+    const imageModel = (options.imageModels || []).some(option => option.value === String(source.imageModel))
+        ? String(source.imageModel)
+        : ((options.imageModels || []).some(option => option.value === String(fallbackSettings.imageModel))
+            ? String(fallbackSettings.imageModel)
+            : defaultSettings.imageModel);
+    const aspectRatio = (options.aspectRatios || []).includes(String(source.aspectRatio))
+        ? String(source.aspectRatio)
+        : ((options.aspectRatios || []).includes(String(fallbackSettings.aspectRatio))
+            ? String(fallbackSettings.aspectRatio)
+            : defaultSettings.aspectRatio);
+    const resolution = (options.resolutions || []).includes(String(source.resolution))
+        ? String(source.resolution)
+        : ((options.resolutions || []).includes(String(fallbackSettings.resolution))
+            ? String(fallbackSettings.resolution)
+            : defaultSettings.resolution);
+    const outputQuantityValue = Number(source.outputQuantity);
+    const fallbackQuantityValue = Number(fallbackSettings.outputQuantity);
+    const outputQuantity = (options.outputQuantities || []).includes(outputQuantityValue)
+        ? outputQuantityValue
+        : ((options.outputQuantities || []).includes(fallbackQuantityValue)
+            ? fallbackQuantityValue
+            : defaultSettings.outputQuantity);
+
+    return {
+        imageModel,
+        aspectRatio,
+        resolution,
+        outputQuantity
+    };
 }
 
 function chooseFolderWithNativeDialog(initialPath = '') {
@@ -125,6 +248,20 @@ function isLegilBusy() {
     return automationState.legilTaskRunning || workflowController.isRunning;
 }
 
+function isLegilStopRequested() {
+    return automationState.legilStopRequested === true;
+}
+
+async function sleepWithLegilStop(ms) {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < ms) {
+        if (isLegilStopRequested()) {
+            throw new Error('操作已取消');
+        }
+        await new Promise(resolve => setTimeout(resolve, Math.min(500, ms - (Date.now() - startedAt))));
+    }
+}
+
 function toPositiveIndex(value, fallback = 1) {
     const numberValue = Number(value);
     if (!Number.isFinite(numberValue) || numberValue < 1) {
@@ -133,10 +270,254 @@ function toPositiveIndex(value, fallback = 1) {
     return Math.floor(numberValue);
 }
 
+function normalizeCellText(value) {
+    if (value === null || value === undefined) {
+        return '';
+    }
+    return String(value).replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
+}
+
+function isPromptHeader(header) {
+    const text = String(header || '').toLowerCase().replace(/\s+/g, '');
+    if (/原方向|新方向|方向描述|方向简析|简析|解析|名称|标签|路径|序号|编号/.test(text)) {
+        return false;
+    }
+    return /^(提示词\d*|画面提示词\d*|生图提示词\d*|图片提示词\d*|prompt\d*|imageprompt\d*)$/.test(text) ||
+        /提示词\d+$|prompt\d+$|画面提示词/.test(text);
+}
+
+function isDirectionHeader(header) {
+    const text = String(header || '').toLowerCase().replace(/\s+/g, '');
+    return /方向|方向描述|主题|标题|名称|分类|类型|subject|title|category/.test(text);
+}
+
+function directionHeaderScore(header) {
+    const text = String(header || '').toLowerCase().replace(/\s+/g, '');
+    if (/新方向名称|新标题|新主题/.test(text)) return 0;
+    if (/方向名称|标题|主题|title|subject/.test(text)) return 10;
+    if (/原方向名称/.test(text)) return 20;
+    if (/方向描述|描述/.test(text)) return 40;
+    return 50;
+}
+
+function rowHasHeaderKeywords(row) {
+    const joined = row.map(normalizeCellText).join(' ').toLowerCase();
+    return /提示词|prompt|方向|主题|标题|画面/.test(joined);
+}
+
+function findHeaderRow(rows) {
+    const maxRows = Math.min(rows.length, 8);
+    for (let i = 0; i < maxRows; i++) {
+        const cells = rows[i].map(normalizeCellText).filter(Boolean);
+        if (cells.length >= 2 && rowHasHeaderKeywords(cells)) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+function chooseLongestText(cells, minLength = 12) {
+    return cells
+        .map((text, index) => ({ text: normalizeCellText(text), index }))
+        .filter(item => item.text.length >= minLength)
+        .sort((a, b) => b.text.length - a.text.length)[0] || null;
+}
+
+function extractCreativePromptsFromRows(rows, sheetName = '') {
+    const cleanRows = rows
+        .map(row => (Array.isArray(row) ? row : []).map(normalizeCellText))
+        .filter(row => row.some(Boolean));
+
+    if (cleanRows.length === 0) {
+        return [];
+    }
+
+    const headerRowIndex = findHeaderRow(cleanRows);
+    const hasHeader = headerRowIndex >= 0;
+    const headers = hasHeader ? cleanRows[headerRowIndex] : [];
+    const dataRows = hasHeader ? cleanRows.slice(headerRowIndex + 1) : cleanRows;
+    const promptColumnIndexes = [];
+    const directionColumnIndexes = [];
+
+    if (hasHeader) {
+        headers.forEach((header, index) => {
+            if (isPromptHeader(header)) {
+                promptColumnIndexes.push(index);
+            } else if (isDirectionHeader(header)) {
+                directionColumnIndexes.push(index);
+            }
+        });
+    }
+
+    const prompts = [];
+    const seen = new Set();
+
+    dataRows.forEach((row, rowOffset) => {
+        const sourceRow = (hasHeader ? headerRowIndex + rowOffset + 2 : rowOffset + 1);
+        const cells = row.map(normalizeCellText);
+        const direction = directionColumnIndexes
+            .map(index => ({
+                text: cells[index] || '',
+                score: directionHeaderScore(headers[index] || '')
+            }))
+            .filter(item => item.text)
+            .sort((a, b) => a.score - b.score)[0]?.text || '';
+
+        const promptSources = promptColumnIndexes.length > 0
+            ? promptColumnIndexes.map(index => ({
+                prompt: cells[index] || '',
+                columnIndex: index,
+                title: headers[index] || `提示词${index + 1}`
+            }))
+            : (() => {
+                const chosen = chooseLongestText(cells, 12);
+                return chosen ? [{
+                    prompt: chosen.text,
+                    columnIndex: chosen.index,
+                    title: hasHeader ? (headers[chosen.index] || '提示词') : '提示词'
+                }] : [];
+            })();
+
+        promptSources.forEach((source, promptOffset) => {
+            const prompt = normalizeCellText(source.prompt);
+            if (!prompt || prompt.length < 8) {
+                return;
+            }
+
+            const key = prompt.replace(/\s+/g, ' ').trim().toLowerCase();
+            if (seen.has(key)) {
+                return;
+            }
+            seen.add(key);
+
+            const promptTitle = normalizeCellText(source.title) || `提示词${promptOffset + 1}`;
+            const directionTitle = direction || `表格第${sourceRow}行`;
+
+            prompts.push({
+                index: prompts.length + 1,
+                sourceRow,
+                sheetName,
+                direction: directionTitle.slice(0, 200),
+                promptTitle: promptTitle.slice(0, 80),
+                promptColumn: Number.isFinite(Number(source.columnIndex)) ? Number(source.columnIndex) + 1 : null,
+                prompt: prompt.slice(0, 10000),
+                selected: true
+            });
+        });
+    });
+
+    return prompts;
+}
+
+function countPromptColumnsInRows(rows) {
+    const cleanRows = (Array.isArray(rows) ? rows : [])
+        .map(row => (Array.isArray(row) ? row : []).map(normalizeCellText))
+        .filter(row => row.some(Boolean));
+
+    const headerRowIndex = findHeaderRow(cleanRows);
+    if (headerRowIndex < 0) {
+        return 0;
+    }
+
+    return cleanRows[headerRowIndex].filter(isPromptHeader).length;
+}
+
+function chooseCreativePromptSheet(workbook) {
+    const sheetNames = Array.isArray(workbook.SheetNames) ? workbook.SheetNames : [];
+    if (sheetNames.length === 0) {
+        return '';
+    }
+
+    const normalizeSheetName = (name) => String(name || '').replace(/\s+/g, '').toLowerCase();
+    const exactTarget = sheetNames.find(name => normalizeSheetName(name) === '新方向拓展表');
+    if (exactTarget) {
+        return exactTarget;
+    }
+
+    const fuzzyTarget = sheetNames.find(name => normalizeSheetName(name).includes('新方向拓展'));
+    if (fuzzyTarget) {
+        return fuzzyTarget;
+    }
+
+    let best = {
+        name: sheetNames[0],
+        score: -1
+    };
+
+    for (const name of sheetNames) {
+        const rows = XLSX.utils.sheet_to_json(workbook.Sheets[name], {
+            header: 1,
+            raw: false,
+            defval: ''
+        });
+        const promptColumnCount = countPromptColumnsInRows(rows);
+        const rowCount = Array.isArray(rows) ? rows.filter(row => Array.isArray(row) && row.some(Boolean)).length : 0;
+        const score = promptColumnCount * 100000 + rowCount;
+        if (score > best.score) {
+            best = { name, score };
+        }
+    }
+
+    return best.name;
+}
+
+function parseCreativePromptWorkbook(fileName, base64Content) {
+    if (typeof base64Content !== 'string' || !base64Content.trim()) {
+        throw new Error('请先上传表格文件');
+    }
+
+    const buffer = Buffer.from(base64Content.replace(/^data:.*?;base64,/, ''), 'base64');
+    if (!buffer.length) {
+        throw new Error('表格文件为空');
+    }
+
+    const ext = path.extname(String(fileName || '')).toLowerCase();
+    const workbook = ext === '.csv' || ext === '.txt'
+        ? XLSX.read(buffer.toString('utf8').replace(/^\uFEFF/, ''), {
+            type: 'string',
+            cellDates: false,
+            raw: false
+        })
+        : XLSX.read(buffer, {
+            type: 'buffer',
+            cellDates: false,
+            raw: false
+        });
+
+    const sheetName = chooseCreativePromptSheet(workbook);
+    if (!sheetName) {
+        throw new Error('表格中没有可读取的工作表');
+    }
+
+    const sheet = workbook.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json(sheet, {
+        header: 1,
+        raw: false,
+        defval: ''
+    });
+
+    const prompts = extractCreativePromptsFromRows(rows, sheetName);
+    if (prompts.length === 0) {
+        throw new Error('没有从表格中提取到有效画面提示词，请确认存在“画面提示词/提示词/prompt”等列');
+    }
+
+    return {
+        fileName: path.basename(String(fileName || '表格文件')),
+        sheetName,
+        prompts
+    };
+}
+
 function persistRuntimeConfig(extra = {}) {
     const doubaoConfig = doubaoAutomation.getConfig();
     return updateConfig({
         legilReferenceFolder: appConfig.legilReferenceFolder,
+        resize: {
+            ...appConfig.resize
+        },
+        creative: {
+            ...appConfig.creative
+        },
         doubao: {
             promptTemplate: doubaoConfig.promptTemplate,
             modelId: doubaoConfig.modelId,
@@ -158,7 +539,7 @@ const PORT = Number(process.env.PORT) || 3066;
 /**
  * 配置中间件
  */
-app.use(express.json({ limit: '2mb' }));
+app.use(express.json({ limit: '50mb' }));
 app.use(express.static('public'));
 
 app.use((err, req, res, next) => {
@@ -228,11 +609,9 @@ app.post('/api/count-images', (req, res) => {
         const files = fs.readdirSync(normalizedPath);
         console.log('   📋 文件夹内容:', files);
 
-        const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'];
-
         const imageFiles = sortNaturallyByName(files).filter(file => {
             const ext = path.extname(file).toLowerCase();
-            return imageExtensions.includes(ext);
+            return IMAGE_EXTENSIONS.includes(ext);
         });
 
         console.log('   🖼️  图片文件:', imageFiles);
@@ -622,6 +1001,117 @@ app.post('/api/config/legil-generation', (req, res) => {
     }
 });
 
+app.get('/api/config/resize', (req, res) => {
+    const legilConfig = legilAutomation.getConfig();
+    appConfig.resize = normalizeResizeConfigPayload(appConfig.resize);
+
+    res.json({
+        success: true,
+        config: {
+            ...appConfig.resize,
+            generationSettings: {
+                ...appConfig.resize.generationSettings
+            },
+            defaultGenerationSettings: {
+                ...DEFAULT_RESIZE_CONFIG.generationSettings
+            },
+            generationOptions: {
+                ...(legilConfig.options || {})
+            }
+        },
+        message: '获取改尺寸配置成功'
+    });
+});
+
+app.post('/api/config/resize', (req, res) => {
+    try {
+        appConfig.resize = normalizeResizeConfigPayload(req.body || {});
+        persistRuntimeConfig({ resize: appConfig.resize });
+
+        res.json({
+            success: true,
+            config: {
+                ...appConfig.resize,
+                generationSettings: {
+                    ...appConfig.resize.generationSettings
+                }
+            },
+            message: '改尺寸配置已保存'
+        });
+    } catch (error) {
+        res.json({
+            success: false,
+            message: '保存改尺寸配置失败: ' + error.message
+        });
+    }
+});
+
+app.get('/api/config/creative', (req, res) => {
+    const legilConfig = legilAutomation.getConfig();
+    appConfig.creative = normalizeCreativeConfigPayload(appConfig.creative);
+
+    res.json({
+        success: true,
+        config: {
+            ...appConfig.creative,
+            generationSettings: {
+                ...appConfig.creative.generationSettings
+            },
+            defaultGenerationSettings: {
+                ...DEFAULT_CREATIVE_CONFIG.generationSettings
+            },
+            generationOptions: {
+                ...(legilConfig.options || {})
+            }
+        },
+        message: '获取创意拓展配置成功'
+    });
+});
+
+app.post('/api/config/creative', (req, res) => {
+    try {
+        appConfig.creative = normalizeCreativeConfigPayload(req.body || {});
+        persistRuntimeConfig({ creative: appConfig.creative });
+
+        res.json({
+            success: true,
+            config: {
+                ...appConfig.creative,
+                generationSettings: {
+                    ...appConfig.creative.generationSettings
+                }
+            },
+            message: '创意拓展配置已保存'
+        });
+    } catch (error) {
+        res.json({
+            success: false,
+            message: '保存创意拓展配置失败: ' + error.message
+        });
+    }
+});
+
+app.post('/api/creative/parse-table', (req, res) => {
+    const { fileName, fileContentBase64 } = req.body || {};
+
+    try {
+        const parsed = parseCreativePromptWorkbook(fileName, fileContentBase64);
+        res.json({
+            success: true,
+            ...parsed,
+            count: parsed.prompts.length,
+            message: `成功提取 ${parsed.prompts.length} 组画面提示词`
+        });
+    } catch (error) {
+        res.json({
+            success: false,
+            prompts: [],
+            count: 0,
+            message: error.message
+        });
+    }
+});
+
 /**
  * ============================================
  * 第六阶段：完整自动化流程 API 接口
@@ -744,6 +1234,8 @@ app.post('/api/legil/generate', async (req, res) => {
 
     try {
         automationState.legilTaskRunning = true;
+        automationState.legilStopRequested = false;
+        automationState.legilTaskType = 'single-generate';
         // 调用 Legil 自动化模块
         const result = await legilAutomation.generateImage(prompt.trim(), safePromptIndex);
         res.json(result);
@@ -757,6 +1249,8 @@ app.post('/api/legil/generate', async (req, res) => {
         });
     } finally {
         automationState.legilTaskRunning = false;
+        automationState.legilStopRequested = false;
+        automationState.legilTaskType = null;
     }
 });
 
@@ -801,6 +1295,8 @@ app.post('/api/legil/batch-generate', async (req, res) => {
     }
 
     automationState.legilTaskRunning = true;
+    automationState.legilStopRequested = false;
+    automationState.legilTaskType = 'batch-generate';
     const batchRunId = formatDateTimeForFile();
 
     // 先返回接受请求的消息
@@ -854,8 +1350,563 @@ app.post('/api/legil/batch-generate', async (req, res) => {
             logger.system('✅ 批量生成完成！');
         } finally {
             automationState.legilTaskRunning = false;
+            automationState.legilStopRequested = false;
+            automationState.legilTaskType = null;
         }
     })();
+});
+
+app.get('/api/legil/task-status', (req, res) => {
+    res.json({
+        success: true,
+        running: automationState.legilTaskRunning,
+        stopRequested: automationState.legilStopRequested,
+        taskType: automationState.legilTaskType,
+        progress: automationState.legilTaskProgress,
+        workflowRunning: workflowController.isRunning
+    });
+});
+
+app.post('/api/legil/stop', (req, res) => {
+    if (!automationState.legilTaskRunning) {
+        return res.json({
+            success: true,
+            message: '当前没有正在运行的 Legil 任务'
+        });
+    }
+
+    if (!['resize-batch', 'creative-batch'].includes(automationState.legilTaskType)) {
+        return res.json({
+            success: false,
+            message: '当前运行的任务不能从这里停止，请在对应功能区停止'
+        });
+    }
+
+    automationState.legilStopRequested = true;
+    const taskLabel = automationState.legilTaskType === 'creative-batch' ? '创意拓展' : '改尺寸';
+    if (automationState.legilTaskProgress) {
+        automationState.legilTaskProgress = {
+            ...automationState.legilTaskProgress,
+            phase: 'stopping',
+            currentAction: `正在停止${taskLabel}任务...`,
+            updatedAt: new Date().toISOString()
+        };
+    }
+    logger.system(`⏹️ 已收到停止${taskLabel}任务指令，正在安全停止...`);
+
+    res.json({
+        success: true,
+        message: '已发送停止指令，当前步骤结束后会停止'
+    });
+});
+
+/**
+ * ============================================
+ * Legil 批量改尺寸：只使用 Legil，不调用豆包 API
+ * ============================================
+ */
+app.post('/api/legil/resize-batch', async (req, res) => {
+    const resizeConfig = normalizeResizeConfigPayload(req.body || {});
+    const resizeGenerationSettings = normalizeLegilGenerationSettings(
+        req.body && typeof req.body.generationSettings === 'object' ? req.body.generationSettings : resizeConfig.generationSettings,
+        resizeConfig.generationSettings || DEFAULT_RESIZE_CONFIG.generationSettings
+    );
+    const promptText = String(resizeConfig.promptTemplate || '').trim();
+
+    console.log('\n🖼️ 收到 Legil 批量改尺寸请求');
+    console.log('   输入文件夹:', resizeConfig.inputFolder);
+    console.log('   输出文件夹:', resizeConfig.outputFolder);
+
+    if (isLegilBusy()) {
+        return res.json({
+            success: false,
+            message: '当前已有自动化任务正在运行，请稍后再试'
+        });
+    }
+
+    if (!promptText) {
+        return res.json({
+            success: false,
+            message: '请填写发送给 Legil 的固定文字提示词'
+        });
+    }
+
+    try {
+        if (!fs.existsSync(resizeConfig.inputFolder)) {
+            return res.json({
+                success: false,
+                message: '输入文件夹不存在，请检查路径是否正确'
+            });
+        }
+
+        if (!fs.statSync(resizeConfig.inputFolder).isDirectory()) {
+            return res.json({
+                success: false,
+                message: '输入路径不是文件夹'
+            });
+        }
+
+        const imageFiles = listImageFilesInFolder(resizeConfig.inputFolder);
+        if (imageFiles.length === 0) {
+            return res.json({
+                success: false,
+                message: '输入文件夹中没有找到图片'
+            });
+        }
+
+        fs.mkdirSync(resizeConfig.outputFolder, { recursive: true });
+        if (!fs.statSync(resizeConfig.outputFolder).isDirectory()) {
+            return res.json({
+                success: false,
+                message: '输出路径不是文件夹'
+            });
+        }
+
+        appConfig.resize = {
+            ...resizeConfig,
+            generationSettings: resizeGenerationSettings
+        };
+        persistRuntimeConfig({
+            resize: appConfig.resize
+        });
+
+        automationState.legilTaskRunning = true;
+        automationState.legilStopRequested = false;
+        automationState.legilTaskType = 'resize-batch';
+        const batchRunId = formatDateTimeForFile();
+        const outputTotal = imageFiles.length * (Number(resizeGenerationSettings.outputQuantity) || 1);
+
+        res.json({
+            success: true,
+            message: `已启动 Legil 批量改尺寸任务，共 ${imageFiles.length} 张输入图。请通过实时日志查看进度。`,
+            totalImages: imageFiles.length,
+            outputTotal
+        });
+
+        (async () => {
+            const previousSaveFolder = legilAutomation.saveFolder;
+            const previousReferenceFolder = legilAutomation.referenceFolder;
+            const previousReferenceImages = Array.isArray(legilAutomation.referenceImages)
+                ? [...legilAutomation.referenceImages]
+                : [];
+            const previousRefIndex = legilAutomation.currentRefIndex;
+            const previousGenerationSettings = {
+                ...legilAutomation.getConfig().settings
+            };
+
+            logger.system('========================================');
+            logger.system('开始 Legil 批量改尺寸任务');
+            logger.info(`输入文件夹: ${resizeConfig.inputFolder}`);
+            logger.info(`输出文件夹: ${resizeConfig.outputFolder}`);
+            logger.info(`输入图片数量: ${imageFiles.length}`);
+            logger.info(`改尺寸 Legil 参数: 模型 ${legilAutomation.getImageModelLabel(resizeGenerationSettings.imageModel)}，宽高比 ${resizeGenerationSettings.aspectRatio}，分辨率 ${resizeGenerationSettings.resolution}，输出数量 ${resizeGenerationSettings.outputQuantity}`);
+            logger.system('========================================');
+
+            let outputSequence = 1;
+            let successCount = 0;
+            let failedCount = 0;
+            let stopped = false;
+
+            try {
+                for (let i = 0; i < imageFiles.length; i++) {
+                    if (isLegilStopRequested()) {
+                        stopped = true;
+                        logger.warn('⏹️ 改尺寸任务已停止，退出剩余图片处理');
+                        break;
+                    }
+
+                    const imagePath = imageFiles[i];
+                    const imageName = path.basename(imagePath);
+
+                    logger.info('');
+                    logger.info(`🖼️ 正在处理改尺寸图片 ${i + 1}/${imageFiles.length}: ${imageName}`);
+
+                    try {
+                        const result = await legilAutomation.generateImage(promptText, i + 1, {
+                            referenceImagePath: imagePath,
+                            saveFolder: resizeConfig.outputFolder,
+                            generationSettings: resizeGenerationSettings,
+                            outputSequence,
+                            outputTotal,
+                            runId: batchRunId,
+                            referenceImageIndex: i + 1,
+                            totalReferenceImages: imageFiles.length,
+                            referenceImageName: imageName,
+                            promptIndexWithinImage: 1,
+                            totalPromptsForImage: 1,
+                            shouldAbort: isLegilStopRequested
+                        });
+
+                        if (result.success) {
+                            const savedCount = Number(result.savedCount) || 1;
+                            outputSequence += savedCount;
+                            successCount += 1;
+                            logger.info(`✅ 改尺寸图片 ${i + 1}/${imageFiles.length} 完成，保存 ${savedCount} 张`);
+                        } else if (isLegilStopRequested() || String(result.message || '').includes('操作已取消')) {
+                            stopped = true;
+                            logger.warn('⏹️ 改尺寸任务已停止');
+                            break;
+                        } else {
+                            failedCount += 1;
+                            logger.error(`❌ 改尺寸图片 ${i + 1}/${imageFiles.length} 失败: ${result.message}`);
+                        }
+                    } catch (error) {
+                        if (isLegilStopRequested() || error.message === '操作已取消') {
+                            stopped = true;
+                            logger.warn('⏹️ 改尺寸任务已停止');
+                            break;
+                        }
+                        failedCount += 1;
+                        logger.error(`❌ 改尺寸图片 ${i + 1}/${imageFiles.length} 出错: ${error.message}`);
+                    }
+
+                    if (i < imageFiles.length - 1) {
+                        logger.info('等待 5 秒后继续下一张...');
+                        try {
+                            await sleepWithLegilStop(5000);
+                        } catch (error) {
+                            stopped = true;
+                            logger.warn('⏹️ 改尺寸任务已停止');
+                            break;
+                        }
+                    }
+                }
+
+                logger.system('========================================');
+                if (stopped) {
+                    logger.system(`⏹️ Legil 批量改尺寸任务已停止：成功 ${successCount} 张，失败 ${failedCount} 张`);
+                } else {
+                    logger.system(`✅ Legil 批量改尺寸任务完成：成功 ${successCount} 张，失败 ${failedCount} 张`);
+                }
+                logger.system('========================================');
+            } finally {
+                legilAutomation.saveFolder = previousSaveFolder;
+                legilAutomation.referenceFolder = previousReferenceFolder;
+                legilAutomation.referenceImages = previousReferenceImages;
+                legilAutomation.currentRefIndex = previousRefIndex;
+                legilAutomation.generationSettings = previousGenerationSettings;
+                automationState.legilTaskRunning = false;
+                automationState.legilStopRequested = false;
+                automationState.legilTaskType = null;
+            }
+        })();
+    } catch (error) {
+        automationState.legilTaskRunning = false;
+        automationState.legilStopRequested = false;
+        automationState.legilTaskType = null;
+        console.error('Legil 批量改尺寸启动失败:', error);
+        res.json({
+            success: false,
+            message: '启动失败：' + error.message
+        });
+    }
+});
+
+/**
+ * ============================================
+ * Legil 创意拓展：从本地表格提示词批量生成
+ * ============================================
+ */
+app.post('/api/legil/creative-batch', async (req, res) => {
+    const creativeConfig = normalizeCreativeConfigPayload(req.body || {});
+    const creativeGenerationSettings = normalizeLegilGenerationSettings(
+        req.body && typeof req.body.generationSettings === 'object' ? req.body.generationSettings : creativeConfig.generationSettings,
+        creativeConfig.generationSettings || DEFAULT_CREATIVE_CONFIG.generationSettings
+    );
+    const promptItems = Array.isArray(req.body && req.body.prompts) ? req.body.prompts : [];
+    const normalizedPrompts = promptItems
+        .map((item, index) => {
+            const prompt = typeof item === 'string'
+                ? item
+                : (item && typeof item.prompt === 'string' ? item.prompt : '');
+            const direction = item && typeof item.direction === 'string' ? item.direction : '';
+            const promptTitle = item && typeof item.promptTitle === 'string' ? item.promptTitle : '';
+            const sourceRow = item && Number.isFinite(Number(item.sourceRow)) ? Number(item.sourceRow) : index + 1;
+            return {
+                index: index + 1,
+                sourceRow,
+                direction: direction.trim(),
+                promptTitle: promptTitle.trim(),
+                prompt: prompt.trim()
+            };
+        })
+        .filter(item => item.prompt);
+
+    console.log('\n🎨 收到 Legil 创意拓展批量生成请求');
+    console.log('   输出文件夹:', creativeConfig.outputFolder);
+    console.log('   提示词数量:', normalizedPrompts.length);
+
+    if (isLegilBusy()) {
+        return res.json({
+            success: false,
+            message: '当前已有自动化任务正在运行，请稍后再试'
+        });
+    }
+
+    if (normalizedPrompts.length === 0) {
+        return res.json({
+            success: false,
+            message: '请先上传表格并提取有效画面提示词'
+        });
+    }
+
+    try {
+        fs.mkdirSync(creativeConfig.outputFolder, { recursive: true });
+        if (!fs.statSync(creativeConfig.outputFolder).isDirectory()) {
+            return res.json({
+                success: false,
+                message: '输出路径不是文件夹'
+            });
+        }
+
+        if (creativeConfig.referenceFolder) {
+            if (!fs.existsSync(creativeConfig.referenceFolder) || !fs.statSync(creativeConfig.referenceFolder).isDirectory()) {
+                return res.json({
+                    success: false,
+                    message: 'Legil参考图文件夹不存在或不是文件夹'
+                });
+            }
+        }
+
+        appConfig.creative = {
+            ...creativeConfig,
+            generationSettings: creativeGenerationSettings
+        };
+        persistRuntimeConfig({
+            creative: appConfig.creative
+        });
+
+        automationState.legilTaskRunning = true;
+        automationState.legilStopRequested = false;
+        automationState.legilTaskType = 'creative-batch';
+        const batchRunId = formatDateTimeForFile();
+        const outputTotal = normalizedPrompts.length * (Number(creativeGenerationSettings.outputQuantity) || 1);
+        automationState.legilTaskProgress = {
+            taskType: 'creative-batch',
+            phase: 'queued',
+            total: normalizedPrompts.length,
+            currentIndex: 0,
+            completed: 0,
+            success: 0,
+            failed: 0,
+            saved: 0,
+            outputTotal,
+            currentName: '',
+            currentAction: '创意拓展任务已排队，准备开始...',
+            startedAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+        };
+
+        res.json({
+            success: true,
+            message: `已启动 Legil 创意拓展任务，共 ${normalizedPrompts.length} 组提示词。请通过实时日志查看进度。`,
+            totalPrompts: normalizedPrompts.length,
+            outputTotal,
+            progress: automationState.legilTaskProgress
+        });
+
+        (async () => {
+            const previousSaveFolder = legilAutomation.saveFolder;
+            const previousReferenceFolder = legilAutomation.referenceFolder;
+            const previousReferenceImages = Array.isArray(legilAutomation.referenceImages)
+                ? [...legilAutomation.referenceImages]
+                : [];
+            const previousRefIndex = legilAutomation.currentRefIndex;
+            const previousGenerationSettings = {
+                ...legilAutomation.getConfig().settings
+            };
+
+            logger.system('========================================');
+            logger.system('开始 Legil 创意拓展批量生成任务');
+            logger.info(`输出文件夹: ${creativeConfig.outputFolder}`);
+            logger.info(`提示词数量: ${normalizedPrompts.length}`);
+            logger.info(creativeConfig.referenceFolder
+                ? `Legil参考图文件夹: ${creativeConfig.referenceFolder}`
+                : 'Legil参考图文件夹: 未配置，生成时不上传参考图');
+            logger.info(`创意拓展 Legil 参数: 模型 ${legilAutomation.getImageModelLabel(creativeGenerationSettings.imageModel)}，宽高比 ${creativeGenerationSettings.aspectRatio}，分辨率 ${creativeGenerationSettings.resolution}，输出数量 ${creativeGenerationSettings.outputQuantity}`);
+            logger.system('========================================');
+
+            let outputSequence = 1;
+            let successCount = 0;
+            let failedCount = 0;
+            let savedTotal = 0;
+            let stopped = false;
+
+            try {
+                for (let i = 0; i < normalizedPrompts.length; i++) {
+                    if (isLegilStopRequested()) {
+                        stopped = true;
+                        logger.warn('⏹️ 创意拓展任务已停止，退出剩余提示词处理');
+                        break;
+                    }
+
+                    const promptItem = normalizedPrompts[i];
+                    const directionName = [promptItem.direction, promptItem.promptTitle]
+                        .filter(Boolean)
+                        .join('_') || `表格第${promptItem.sourceRow}行`;
+                    automationState.legilTaskProgress = {
+                        ...(automationState.legilTaskProgress || {}),
+                        taskType: 'creative-batch',
+                        phase: 'running',
+                        total: normalizedPrompts.length,
+                        currentIndex: i + 1,
+                        completed: successCount + failedCount,
+                        success: successCount,
+                        failed: failedCount,
+                        saved: savedTotal,
+                        outputTotal,
+                        currentName: directionName,
+                        currentAction: `正在生成第 ${i + 1}/${normalizedPrompts.length} 组：${directionName}`,
+                        updatedAt: new Date().toISOString()
+                    };
+
+                    logger.info('');
+                    logger.info(`🎨 正在处理创意提示词 ${i + 1}/${normalizedPrompts.length}: ${directionName}`);
+
+                    try {
+                        const result = await legilAutomation.generateImage(promptItem.prompt, i + 1, {
+                            saveFolder: creativeConfig.outputFolder,
+                            referenceFolder: creativeConfig.referenceFolder || undefined,
+                            skipReferenceUpload: !creativeConfig.referenceFolder,
+                            generationSettings: creativeGenerationSettings,
+                            outputSequence,
+                            outputTotal,
+                            runId: batchRunId,
+                            referenceImageIndex: i + 1,
+                            totalReferenceImages: normalizedPrompts.length,
+                            referenceImageName: directionName,
+                            promptIndexWithinImage: 1,
+                            totalPromptsForImage: 1,
+                            shouldAbort: isLegilStopRequested
+                        });
+
+                        if (result.success) {
+                            const savedCount = Number(result.savedCount) || 1;
+                            outputSequence += savedCount;
+                            successCount += 1;
+                            savedTotal += savedCount;
+                            automationState.legilTaskProgress = {
+                                ...(automationState.legilTaskProgress || {}),
+                                phase: 'running',
+                                completed: successCount + failedCount,
+                                success: successCount,
+                                failed: failedCount,
+                                saved: savedTotal,
+                                currentAction: `第 ${i + 1}/${normalizedPrompts.length} 组已完成，保存 ${savedCount} 张`,
+                                updatedAt: new Date().toISOString()
+                            };
+                            logger.info(`✅ 创意提示词 ${i + 1}/${normalizedPrompts.length} 完成，保存 ${savedCount} 张`);
+                        } else if (isLegilStopRequested() || String(result.message || '').includes('操作已取消')) {
+                            stopped = true;
+                            automationState.legilTaskProgress = {
+                                ...(automationState.legilTaskProgress || {}),
+                                phase: 'stopping',
+                                currentAction: '创意拓展任务正在停止...',
+                                updatedAt: new Date().toISOString()
+                            };
+                            logger.warn('⏹️ 创意拓展任务已停止');
+                            break;
+                        } else {
+                            failedCount += 1;
+                            automationState.legilTaskProgress = {
+                                ...(automationState.legilTaskProgress || {}),
+                                phase: 'running',
+                                completed: successCount + failedCount,
+                                success: successCount,
+                                failed: failedCount,
+                                saved: savedTotal,
+                                currentAction: `第 ${i + 1}/${normalizedPrompts.length} 组失败：${result.message}`,
+                                updatedAt: new Date().toISOString()
+                            };
+                            logger.error(`❌ 创意提示词 ${i + 1}/${normalizedPrompts.length} 失败: ${result.message}`);
+                        }
+                    } catch (error) {
+                        if (isLegilStopRequested() || error.message === '操作已取消') {
+                            stopped = true;
+                            automationState.legilTaskProgress = {
+                                ...(automationState.legilTaskProgress || {}),
+                                phase: 'stopping',
+                                currentAction: '创意拓展任务正在停止...',
+                                updatedAt: new Date().toISOString()
+                            };
+                            logger.warn('⏹️ 创意拓展任务已停止');
+                            break;
+                        }
+                        failedCount += 1;
+                        automationState.legilTaskProgress = {
+                            ...(automationState.legilTaskProgress || {}),
+                            phase: 'running',
+                            completed: successCount + failedCount,
+                            success: successCount,
+                            failed: failedCount,
+                            saved: savedTotal,
+                            currentAction: `第 ${i + 1}/${normalizedPrompts.length} 组出错：${error.message}`,
+                            updatedAt: new Date().toISOString()
+                        };
+                        logger.error(`❌ 创意提示词 ${i + 1}/${normalizedPrompts.length} 出错: ${error.message}`);
+                    }
+
+                    if (i < normalizedPrompts.length - 1) {
+                        logger.info('等待 5 秒后继续下一组提示词...');
+                        try {
+                            await sleepWithLegilStop(5000);
+                        } catch (error) {
+                            stopped = true;
+                            logger.warn('⏹️ 创意拓展任务已停止');
+                            break;
+                        }
+                    }
+                }
+
+                logger.system('========================================');
+                if (stopped) {
+                    automationState.legilTaskProgress = {
+                        ...(automationState.legilTaskProgress || {}),
+                        phase: 'stopped',
+                        completed: successCount + failedCount,
+                        success: successCount,
+                        failed: failedCount,
+                        saved: savedTotal,
+                        currentAction: `创意拓展任务已停止：成功 ${successCount} 组，失败 ${failedCount} 组`,
+                        updatedAt: new Date().toISOString()
+                    };
+                    logger.system(`⏹️ Legil 创意拓展任务已停止：成功 ${successCount} 组，失败 ${failedCount} 组`);
+                } else {
+                    automationState.legilTaskProgress = {
+                        ...(automationState.legilTaskProgress || {}),
+                        phase: 'completed',
+                        currentIndex: normalizedPrompts.length,
+                        completed: normalizedPrompts.length,
+                        success: successCount,
+                        failed: failedCount,
+                        saved: savedTotal,
+                        currentAction: `创意拓展任务完成：成功 ${successCount} 组，失败 ${failedCount} 组`,
+                        updatedAt: new Date().toISOString()
+                    };
+                    logger.system(`✅ Legil 创意拓展任务完成：成功 ${successCount} 组，失败 ${failedCount} 组`);
+                }
+                logger.system('========================================');
+            } finally {
+                legilAutomation.saveFolder = previousSaveFolder;
+                legilAutomation.referenceFolder = previousReferenceFolder;
+                legilAutomation.referenceImages = previousReferenceImages;
+                legilAutomation.currentRefIndex = previousRefIndex;
+                legilAutomation.generationSettings = previousGenerationSettings;
+                automationState.legilTaskRunning = false;
+                automationState.legilStopRequested = false;
+                automationState.legilTaskType = null;
+            }
+        })();
+    } catch (error) {
+        automationState.legilTaskRunning = false;
+        automationState.legilStopRequested = false;
+        automationState.legilTaskType = null;
+        console.error('Legil 创意拓展启动失败:', error);
+        res.json({
+            success: false,
+            message: '启动失败：' + error.message
+        });
+    }
 });
 
 /**
@@ -928,8 +1979,10 @@ app.post('/api/workflow/start', async (req, res) => {
     console.log('   输入文件夹:', inputFolder || '使用默认路径');
     console.log('   输出文件夹:', outputFolder || '使用默认路径');
     console.log('   Legil参考图文件夹:', legilReferenceFolder || appConfig.legilReferenceFolder || '使用默认路径');
+    logger.system('收到完整工作流启动请求，正在校验文件夹和配置...');
 
     if (automationState.legilTaskRunning) {
+        logger.warn('工作流启动失败：当前已有 Legil 生成任务正在运行');
         return res.json({
             success: false,
             message: '当前已有 Legil 生成任务正在运行，请稍后再启动工作流'
@@ -939,6 +1992,7 @@ app.post('/api/workflow/start', async (req, res) => {
     const legilRefFolder = legilReferenceFolder || appConfig.legilReferenceFolder;
     const validation = workflowController.validateStart(inputFolder, outputFolder, legilRefFolder);
     if (!validation.success) {
+        logger.error(`工作流启动失败：${validation.message}`);
         return res.json({
             success: false,
             message: validation.message
@@ -947,6 +2001,7 @@ app.post('/api/workflow/start', async (req, res) => {
 
     const doubaoConfig = doubaoAutomation.getConfig();
     if (!doubaoConfig.apiKeyConfigured || !doubaoConfig.modelId) {
+        logger.error('工作流启动失败：豆包 API Key 或模型 ID 未配置');
         return res.json({
             success: false,
             message: '请先在豆包API配置中填写火山方舟 API Key 和模型 ID / Endpoint ID'
@@ -959,6 +2014,7 @@ app.post('/api/workflow/start', async (req, res) => {
         message: `工作流已启动，将处理 ${validation.totalImages} 张参考图，请在日志中查看进度`,
         totalImages: validation.totalImages
     });
+    logger.system(`工作流启动请求已通过校验，将处理 ${validation.totalImages} 张参考图`);
 
     // 在后台执行工作流（不阻塞响应）
     (async () => {
@@ -997,6 +2053,70 @@ app.get('/api/workflow/status', (req, res) => {
     });
 });
 
+app.get('/api/workflow/resume-info', (req, res) => {
+    const resumeInfo = workflowController.getResumeInfo();
+    res.json({
+        success: true,
+        resume: resumeInfo
+    });
+});
+
+app.post('/api/workflow/resume', async (req, res) => {
+    console.log('\n↩️ 收到继续上次工作流请求');
+
+    if (automationState.legilTaskRunning) {
+        return res.json({
+            success: false,
+            message: '当前已有 Legil 生成任务正在运行，请稍后再继续工作流'
+        });
+    }
+
+    const resumeInfo = workflowController.getResumeInfo();
+    if (!resumeInfo.hasResume) {
+        return res.json({
+            success: false,
+            message: '没有可继续的上次任务'
+        });
+    }
+
+    const doubaoConfig = doubaoAutomation.getConfig();
+    if (!doubaoConfig.apiKeyConfigured || !doubaoConfig.modelId) {
+        return res.json({
+            success: false,
+            message: '请先在豆包API配置中填写火山方舟 API Key 和模型 ID / Endpoint ID'
+        });
+    }
+
+    res.json({
+        success: true,
+        message: `已继续上次任务：第 ${resumeInfo.imageIndex}/${resumeInfo.totalImages} 张参考图，从提示词 ${resumeInfo.promptIndex}/${resumeInfo.totalPrompts} 开始`,
+        resume: resumeInfo
+    });
+
+    (async () => {
+        try {
+            const result = await workflowController.resumeWorkflow();
+            if (result.success) {
+                console.log('\n✅ 继续工作流执行结果:', result.message);
+            } else {
+                console.log('\n⚠️ 继续工作流执行结果:', result.message);
+                logger.warn('继续工作流未完成: ' + result.message);
+            }
+        } catch (error) {
+            console.error('\n❌ 继续工作流执行出错:', error.message);
+            logger.error('继续工作流执行出错: ' + error.message);
+        }
+    })();
+});
+
+app.post('/api/workflow/clear-resume', (req, res) => {
+    workflowController.clearResume();
+    res.json({
+        success: true,
+        message: '已清除上次任务记录'
+    });
+});
+
 /**
  * ============================================
  * 获取工作流最近一次提取的提示词
@@ -1029,10 +2149,12 @@ app.post('/api/workflow/stop', async (req, res) => {
     console.log('\n⏹️ 收到停止工作流请求');
 
     const result = await workflowController.stopWorkflow();
+    const resumeInfo = workflowController.getResumeInfo();
 
     res.json({
         success: result.success,
-        message: result.message
+        message: result.message,
+        resume: resumeInfo
     });
 });
 
@@ -1172,4 +2294,38 @@ server.on('error', (error) => {
 
     console.error('❌ 服务器启动失败:', error.message);
     process.exitCode = 1;
+});
+
+let shuttingDown = false;
+async function gracefulShutdown(signal) {
+    if (shuttingDown) {
+        return;
+    }
+
+    shuttingDown = true;
+    console.log(`\n收到 ${signal}，正在保存浏览器登录状态并关闭服务...`);
+
+    try {
+        await browserController.closeBrowser();
+    } catch (error) {
+        console.error('关闭浏览器时出错:', error.message);
+    }
+
+    server.close(() => {
+        console.log('服务器已关闭');
+        process.exit(0);
+    });
+
+    setTimeout(() => {
+        console.log('关闭超时，强制退出');
+        process.exit(0);
+    }, 5000).unref();
+}
+
+process.on('SIGINT', () => {
+    gracefulShutdown('SIGINT');
+});
+
+process.on('SIGTERM', () => {
+    gracefulShutdown('SIGTERM');
 });

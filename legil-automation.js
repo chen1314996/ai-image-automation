@@ -87,6 +87,10 @@ function extractLegilImageUrl(src) {
     }
 }
 
+function isPageLocalImageUrl(src) {
+    return /^blob:/i.test(String(src || '')) || /^data:image\//i.test(String(src || ''));
+}
+
 const LEGIL_DEFAULT_SETTINGS = {
     imageModel: 'nano-banana-2',
     aspectRatio: '1:1',
@@ -107,6 +111,8 @@ const LEGIL_IMAGE_MODEL_OPTIONS = [
 const LEGIL_ASPECT_RATIOS = ['1:1', '1:4', '1:8', '2:3', '3:4', '4:5', '9:16', '21:9', '16:9', '5:4', '4:3', '3:2', '8:1', '4:1'];
 const LEGIL_RESOLUTIONS = ['512px', '1K', '2K', '4K'];
 const LEGIL_OUTPUT_QUANTITIES = [1, 2, 3, 4];
+const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp', '.bmp', '.gif'];
+const LEGIL_IMAGE_TO_IMAGE_URL = 'https://lumos.diandian.info/legil/image-ai/image-to-image';
 
 class LegilAutomation {
     constructor() {
@@ -315,7 +321,7 @@ class LegilAutomation {
             let page = browserController.getPage('legil');
             if (!page || page.isClosed()) {
                 logger.warn('Legil 页面未打开，正在打开...');
-                const opened = await browserController.openWebsite('legil', 'https://lumos.diandian.info/legil/image-to-image');
+                const opened = await browserController.openWebsite('legil', LEGIL_IMAGE_TO_IMAGE_URL);
                 if (!opened) {
                     throw new Error('无法打开 Legil 页面');
                 }
@@ -327,11 +333,16 @@ class LegilAutomation {
                 throw new Error('Legil 页面不可用');
             }
 
+            await this.ensureLegilImageToImagePage(page, options);
+
             logger.info('[步骤1/6] 正在应用 Legil 生成参数...');
             const appliedGenerationSettings = await this.applyGenerationSettings(page, generationSettings, options);
 
-            // 第2步：上传参考图（如果配置了参考图文件夹）
-            if (this.referenceImages.length > 0 || fs.existsSync(this.referenceFolder)) {
+            // 第2步：上传参考图。改尺寸批处理会传入 referenceImagePath，量产流程继续使用原参考图文件夹。
+            // 创意拓展页面只使用表格中的提示词时，会显式传入 skipReferenceUpload 跳过上传。
+            const hasDirectReferenceImage = typeof options.referenceImagePath === 'string' && options.referenceImagePath.trim();
+            const shouldSkipReferenceUpload = options.skipReferenceUpload === true;
+            if (!shouldSkipReferenceUpload && (hasDirectReferenceImage || this.referenceImages.length > 0 || fs.existsSync(this.referenceFolder))) {
                 logger.info('[步骤2/6] 正在上传参考图...');
                 const uploadSuccess = await this.uploadReferenceImage(page, options);
                 if (uploadSuccess) {
@@ -339,10 +350,15 @@ class LegilAutomation {
                     // 等待图片上传完成并生效
                     await interruptibleSleep(3000, options);
                 } else {
+                    if (hasDirectReferenceImage) {
+                        throw new Error('上传改尺寸输入图失败，请确认 Legil 图生图页面已登录且上传入口可用');
+                    }
                     logger.warn('⚠️ 参考图上传失败，继续生成流程');
                 }
             } else {
-                logger.info('[步骤2/6] 跳过参考图上传（未配置参考图文件夹）');
+                logger.info(shouldSkipReferenceUpload
+                    ? '[步骤2/6] 跳过参考图上传（创意拓展仅使用表格提示词）'
+                    : '[步骤2/6] 跳过参考图上传（未配置参考图文件夹）');
             }
 
             // 第3步：填入提示词
@@ -368,6 +384,9 @@ class LegilAutomation {
                 expectedOutputCount: appliedGenerationSettings.outputQuantity
             });
             if (!generateSuccess) {
+                await this.cleanupTimedOutGeneration(page, options).catch(cleanupError => {
+                    logger.warn(`清理超时生成任务失败，将继续后续流程: ${cleanupError.message}`);
+                });
                 throw new Error('等待图片生成超时');
             }
 
@@ -405,6 +424,65 @@ class LegilAutomation {
         }
     }
 
+    async ensureLegilImageToImagePage(page, options = {}) {
+        throwIfAborted(options);
+
+        const hasControls = async () => page.evaluate(() => {
+            const isVisible = (el) => {
+                const rect = el.getBoundingClientRect();
+                const style = window.getComputedStyle(el);
+                return rect.width > 0 &&
+                    rect.height > 0 &&
+                    style.visibility !== 'hidden' &&
+                    style.display !== 'none' &&
+                    style.opacity !== '0';
+            };
+
+            const hasFileInput = document.querySelectorAll('input[type="file"]').length > 0;
+            const hasPromptInput = Array.from(document.querySelectorAll('textarea, input[type="text"]'))
+                .some(el => isVisible(el));
+            const hasGenerateButton = Array.from(document.querySelectorAll('button'))
+                .some(button => isVisible(button) && /创建图片|生成|重新生成/.test(button.innerText || button.textContent || ''));
+
+            return {
+                hasFileInput,
+                hasPromptInput,
+                hasGenerateButton,
+                text: (document.body?.innerText || '').slice(0, 800)
+            };
+        }).catch(() => ({
+            hasFileInput: false,
+            hasPromptInput: false,
+            hasGenerateButton: false,
+            text: ''
+        }));
+
+        let controls = await hasControls();
+        if (controls.hasPromptInput && controls.hasGenerateButton) {
+            return true;
+        }
+
+        const currentUrl = page.url();
+        if (!currentUrl.includes('/legil/image-ai/image-to-image')) {
+            logger.warn('当前未停留在 Legil 图生图页面，正在重新进入图生图页面...');
+            await page.goto(LEGIL_IMAGE_TO_IMAGE_URL, {
+                waitUntil: 'domcontentloaded',
+                timeout: 30000
+            }).catch(() => {});
+            await interruptibleSleep(5000, options);
+            controls = await hasControls();
+            if (controls.hasPromptInput && controls.hasGenerateButton) {
+                return true;
+            }
+        }
+
+        if (/登录|login|sign in/i.test(controls.text) && !controls.hasPromptInput) {
+            throw new Error('Legil 自动化浏览器未登录或登录已过期，请在自动化浏览器中登录 Legil 后重试');
+        }
+
+        throw new Error('未进入 Legil 图生图页面，请先打开 Legil 图生图页面后重试');
+    }
+
     async getImageKeys(page) {
         if (!page || page.isClosed()) {
             return [];
@@ -437,7 +515,22 @@ class LegilAutomation {
 
             const keys = new Set();
             for (const img of document.querySelectorAll('img')) {
-                const srcList = [img.currentSrc, img.src].filter(Boolean);
+                const srcList = [
+                    img.currentSrc,
+                    img.src,
+                    img.getAttribute('src'),
+                    img.getAttribute('data-src'),
+                    img.getAttribute('data-original'),
+                    img.getAttribute('data-url'),
+                    img.dataset?.src,
+                    img.dataset?.original,
+                    img.dataset?.url
+                ].filter(Boolean);
+                const srcset = img.getAttribute('srcset') || img.getAttribute('data-srcset') || '';
+                srcset.split(',').forEach(part => {
+                    const candidate = part.trim().split(/\s+/)[0];
+                    if (candidate) srcList.push(candidate);
+                });
                 for (const src of srcList) {
                     const raw = String(src).split('#')[0];
                     keys.add(raw);
@@ -458,27 +551,53 @@ class LegilAutomation {
         try {
             throwIfAborted(options);
 
-            // 确保已扫描参考图
-            if (this.referenceImages.length === 0) {
-                this.scanReferenceImages();
-            }
+            let imagePath = '';
+            const directReferenceImagePath = typeof options.referenceImagePath === 'string'
+                ? options.referenceImagePath.trim()
+                : '';
 
-            if (this.referenceImages.length === 0) {
-                logger.warn('没有可用的参考图');
-                return false;
-            }
+            if (directReferenceImagePath) {
+                const ext = path.extname(directReferenceImagePath).toLowerCase();
+                if (!IMAGE_EXTENSIONS.includes(ext)) {
+                    logger.warn(`指定参考图格式不支持，跳过: ${directReferenceImagePath}`);
+                    return false;
+                }
 
-            // 获取下一张参考图
-            const imagePath = this.getNextReferenceImage();
-            if (!imagePath) {
-                logger.warn('无法获取参考图');
-                return false;
-            }
+                if (!fs.existsSync(directReferenceImagePath)) {
+                    logger.warn(`指定参考图文件不存在，跳过: ${directReferenceImagePath}`);
+                    return false;
+                }
 
-            if (!fs.existsSync(imagePath)) {
-                logger.warn(`参考图文件不存在，跳过: ${imagePath}`);
-                this.scanReferenceImages();
-                return false;
+                const stats = fs.statSync(directReferenceImagePath);
+                if (!stats.isFile()) {
+                    logger.warn(`指定参考图不是文件，跳过: ${directReferenceImagePath}`);
+                    return false;
+                }
+
+                imagePath = directReferenceImagePath;
+            } else {
+                // 确保已扫描参考图
+                if (this.referenceImages.length === 0) {
+                    this.scanReferenceImages();
+                }
+
+                if (this.referenceImages.length === 0) {
+                    logger.warn('没有可用的参考图');
+                    return false;
+                }
+
+                // 获取下一张参考图
+                imagePath = this.getNextReferenceImage();
+                if (!imagePath) {
+                    logger.warn('无法获取参考图');
+                    return false;
+                }
+
+                if (!fs.existsSync(imagePath)) {
+                    logger.warn(`参考图文件不存在，跳过: ${imagePath}`);
+                    this.scanReferenceImages();
+                    return false;
+                }
             }
 
             logger.info(`准备上传参考图: ${path.basename(imagePath)}`);
@@ -1280,6 +1399,48 @@ class LegilAutomation {
                         return normalized;
                     }
                 };
+                const collectImageSources = (img) => {
+                    const values = [
+                        img.currentSrc,
+                        img.src,
+                        img.getAttribute('src'),
+                        img.getAttribute('data-src'),
+                        img.getAttribute('data-original'),
+                        img.getAttribute('data-url'),
+                        img.dataset?.src,
+                        img.dataset?.original,
+                        img.dataset?.url
+                    ];
+
+                    const srcset = img.getAttribute('srcset') || img.getAttribute('data-srcset') || '';
+                    srcset.split(',').forEach(part => {
+                        const candidate = part.trim().split(/\s+/)[0];
+                        if (candidate) values.push(candidate);
+                    });
+
+                    return values
+                        .map(value => String(value || '').split('#')[0].trim())
+                        .filter(Boolean);
+                };
+                const pickOutputSource = (img) => {
+                    const sources = collectImageSources(img);
+                    for (const source of sources) {
+                        const outputSrc = extractImageUrl(source);
+                        if (outputSrc.includes('/output') && !outputSrc.includes('/input')) {
+                            return {
+                                src: source,
+                                normalizedSrc: normalizeSrc(source),
+                                outputSrc
+                            };
+                        }
+                    }
+
+                    return {
+                        src: sources[0] || '',
+                        normalizedSrc: sources[0] ? normalizeSrc(sources[0]) : '',
+                        outputSrc: sources[0] ? extractImageUrl(sources[0]) : ''
+                    };
+                };
 
                 const keys = new Set();
                 for (const src of knownKeys || []) {
@@ -1298,6 +1459,53 @@ class LegilAutomation {
                         style.visibility !== 'hidden' &&
                         style.display !== 'none' &&
                         style.opacity !== '0';
+                };
+
+                const resolveOutputSlotBox = (img) => {
+                    const imageRect = img.getBoundingClientRect();
+                    let best = {
+                        left: imageRect.left,
+                        top: imageRect.top,
+                        width: imageRect.width,
+                        height: imageRect.height
+                    };
+
+                    let current = img.parentElement;
+                    for (let i = 0; i < 8 && current; i++) {
+                        const rect = current.getBoundingClientRect();
+                        const style = window.getComputedStyle(current);
+                        const isUsefulSlot =
+                            rect.left > 260 &&
+                            rect.width >= Math.max(90, imageRect.width) &&
+                            rect.height >= Math.max(70, imageRect.height) &&
+                            rect.width <= 700 &&
+                            rect.height <= 520 &&
+                            style.visibility !== 'hidden' &&
+                            style.display !== 'none' &&
+                            style.opacity !== '0';
+
+                        if (isUsefulSlot) {
+                            best = {
+                                left: rect.left,
+                                top: rect.top,
+                                width: rect.width,
+                                height: rect.height
+                            };
+
+                            if (
+                                rect.width >= 120 &&
+                                rect.height >= 100 &&
+                                rect.width <= 360 &&
+                                rect.height <= 360
+                            ) {
+                                break;
+                            }
+                        }
+
+                        current = current.parentElement;
+                    }
+
+                    return best;
                 };
 
                 const text = document.body?.innerText || '';
@@ -1322,19 +1530,24 @@ class LegilAutomation {
                 const newOutputImages = Array.from(document.querySelectorAll('img'))
                     .map((img, index) => {
                         const rect = img.getBoundingClientRect();
-                        const src = (img.currentSrc || img.src || '').split('#')[0];
-                        const normalizedSrc = normalizeSrc(src);
-                        const outputSrc = extractImageUrl(src);
+                        const slotBox = resolveOutputSlotBox(img);
+                        const sourceInfo = pickOutputSource(img);
                         return {
                             index,
-                            src,
-                            normalizedSrc,
-                            outputSrc,
+                            src: sourceInfo.src,
+                            normalizedSrc: sourceInfo.normalizedSrc,
+                            outputSrc: sourceInfo.outputSrc,
                             rect,
-                            width: rect.width,
-                            height: rect.height,
+                            left: slotBox.left,
+                            top: slotBox.top,
+                            width: slotBox.width,
+                            height: slotBox.height,
+                            imageWidth: rect.width,
+                            imageHeight: rect.height,
                             naturalWidth: img.naturalWidth || 0,
-                            naturalHeight: img.naturalHeight || 0
+                            naturalHeight: img.naturalHeight || 0,
+                            area: Math.max(slotBox.width * slotBox.height, rect.width * rect.height),
+                            naturalArea: (img.naturalWidth || 0) * (img.naturalHeight || 0)
                         };
                     })
                     .filter(item =>
@@ -1344,15 +1557,19 @@ class LegilAutomation {
                             !keys.has(item.outputSrc) &&
                             item.outputSrc.includes('/output') &&
                             !item.outputSrc.includes('/input') &&
-                            item.rect.left > 300 &&
-                            item.width > 128 &&
-                            item.height > 128 &&
-                            item.naturalWidth > 128 &&
-                            item.naturalHeight > 128
+                            item.left > 260 &&
+                            item.width >= 90 &&
+                            item.height >= 70 &&
+                            item.imageWidth > 8 &&
+                            item.imageHeight > 8 &&
+                            (item.area > 6000 || item.naturalArea > 6000)
                     );
 
                 return {
                     busy: busyByText || busyByElement || generateButtonBusy,
+                    busyByText,
+                    busyByElement,
+                    generateButtonBusy,
                     generateButtonReady,
                     newImageCount: newOutputImages.length,
                     newImageKeys: newOutputImages
@@ -1361,6 +1578,9 @@ class LegilAutomation {
                 };
             }, beforeKeys).catch(() => ({
                 busy: false,
+                busyByText: false,
+                busyByElement: false,
+                generateButtonBusy: false,
                 generateButtonReady: false,
                 newImageCount: 0,
                 newImageKeys: []
@@ -1424,7 +1644,11 @@ class LegilAutomation {
                 sawBusyState = true;
             }
 
-            if (state.finishedSlotCount >= expectedOutputCount && !state.busy && state.generateButtonReady) {
+            const hasExpectedOutputs = state.finishedSlotCount >= expectedOutputCount;
+            const stillGeneratingCurrentTask = state.generateButtonBusy === true;
+            const canAcceptStableOutputs = hasExpectedOutputs && !stillGeneratingCurrentTask;
+
+            if (canAcceptStableOutputs) {
                 const signature = `${(state.newImageKeys || []).join('|')}|failed:${state.failedImageCount}`;
                 if (signature && signature === lastReadySignature) {
                     readyConfirmations += 1;
@@ -1439,6 +1663,9 @@ class LegilAutomation {
                 }
 
                 if (readyConfirmations >= 2) {
+                    if (state.busy && !state.generateButtonReady) {
+                        logger.warn('页面仍有全局加载/处理中标记，但本次输出图已稳定，继续保存图片');
+                    }
                     if (state.failedImageCount > 0) {
                         logger.warn(`✅ 生成状态已稳定结束：${state.newImageCount} 张有效图，跳过 ${state.failedImageCount} 张失败图`);
                     } else {
@@ -1465,6 +1692,229 @@ class LegilAutomation {
         }
 
         logger.error('等待图片生成超时');
+        return false;
+    }
+
+    async cleanupTimedOutGeneration(page, options = {}) {
+        if (!page || page.isClosed()) {
+            return false;
+        }
+
+        throwIfAborted(options);
+        logger.warn('⏱️ 当前 Legil 生成等待超时，尝试删除卡住的生成中任务...');
+
+        const rowHandle = await page.evaluateHandle(() => {
+            const isVisible = (el) => {
+                if (!el || !(el instanceof Element)) return false;
+                const rect = el.getBoundingClientRect();
+                const style = window.getComputedStyle(el);
+                return rect.width > 0 &&
+                    rect.height > 0 &&
+                    style.visibility !== 'hidden' &&
+                    style.display !== 'none' &&
+                    style.opacity !== '0';
+            };
+
+            const getRect = (el) => {
+                const rect = el.getBoundingClientRect();
+                return {
+                    left: rect.left,
+                    top: rect.top,
+                    right: rect.right,
+                    bottom: rect.bottom,
+                    width: rect.width,
+                    height: rect.height
+                };
+            };
+
+            const busyElements = Array.from(document.querySelectorAll(
+                'svg[class*="animate-spin"], [class*="loading"], [class*="spin"], [aria-busy="true"], div, span, button'
+            )).filter(el => {
+                if (!isVisible(el)) return false;
+                const text = String(el.innerText || el.textContent || '');
+                const className = String(el.className || '');
+                const ariaBusy = el.getAttribute('aria-busy') === 'true';
+                return ariaBusy ||
+                    /animate-spin|loading|spin/i.test(className) ||
+                    /生成中|正在生成|排队|处理中|请稍候|loading/i.test(text);
+            });
+
+            const candidates = [];
+            for (const busyEl of busyElements) {
+                let current = busyEl;
+                for (let depth = 0; depth < 10 && current; depth++) {
+                    const rect = getRect(current);
+                    if (
+                        rect.left > 300 &&
+                        rect.top > 60 &&
+                        rect.width >= 420 &&
+                        rect.height >= 120 &&
+                        rect.height <= 520 &&
+                        isVisible(current)
+                    ) {
+                        const text = String(current.innerText || current.textContent || '');
+                        const imageCount = current.querySelectorAll('img').length;
+                        const busyCount = current.querySelectorAll('svg[class*="animate-spin"], [class*="loading"], [class*="spin"], [aria-busy="true"]').length;
+                        candidates.push({
+                            el: current,
+                            top: rect.top,
+                            left: rect.left,
+                            area: rect.width * rect.height,
+                            score: (busyCount * 10) + (imageCount * 2) + (/生成中|正在生成|排队|处理中/.test(text) ? 10 : 0) - depth
+                        });
+                    }
+                    current = current.parentElement;
+                }
+            }
+
+            candidates.sort((a, b) => {
+                if (b.score !== a.score) return b.score - a.score;
+                if (Math.abs(a.top - b.top) > 8) return a.top - b.top;
+                if (a.area !== b.area) return a.area - b.area;
+                return a.left - b.left;
+            });
+
+            return candidates[0]?.el || null;
+        }).catch(() => null);
+
+        const rowElement = rowHandle ? rowHandle.asElement() : null;
+        if (!rowElement) {
+            logger.warn('未找到可删除的生成中任务行，可能页面结构已变化');
+            return false;
+        }
+
+        await rowElement.hover({ timeout: 3000 }).catch(() => {});
+        await interruptibleSleep(500, options);
+
+        const deleteHandle = await page.evaluateHandle((row) => {
+            const isVisible = (el) => {
+                if (!el || !(el instanceof Element)) return false;
+                const rect = el.getBoundingClientRect();
+                const style = window.getComputedStyle(el);
+                return rect.width > 0 &&
+                    rect.height > 0 &&
+                    style.visibility !== 'hidden' &&
+                    style.display !== 'none' &&
+                    style.opacity !== '0';
+            };
+
+            const normalizeText = (value) => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
+            const rowRect = row.getBoundingClientRect();
+            const controls = Array.from(row.querySelectorAll('button, [role="button"], [aria-label], [title], svg, div, span'));
+            const candidates = [];
+
+            for (const el of controls) {
+                if (!isVisible(el)) continue;
+                const rect = el.getBoundingClientRect();
+                if (rect.left < rowRect.right - 90 || rect.top > rowRect.top + 80) continue;
+
+                const text = normalizeText(el.innerText || el.textContent || '');
+                const aria = normalizeText(el.getAttribute('aria-label'));
+                const title = normalizeText(el.getAttribute('title'));
+                const className = normalizeText(el.className);
+                const html = normalizeText(el.outerHTML || '');
+                const deleteLike =
+                    /删除|delete|trash|移除|remove/.test(text) ||
+                    /删除|delete|trash|移除|remove/.test(aria) ||
+                    /删除|delete|trash|移除|remove/.test(title) ||
+                    /delete|trash|remove/.test(className) ||
+                    /trash|delete|remove/.test(html);
+
+                const clickable = el.closest('button, [role="button"], [aria-label], [title], div') || el;
+                candidates.push({
+                    el: clickable,
+                    top: rect.top,
+                    left: rect.left,
+                    area: rect.width * rect.height,
+                    score: (deleteLike ? 0 : 20) + Math.abs(rowRect.right - rect.right) / 10 + Math.abs(rowRect.top - rect.top) / 10
+                });
+            }
+
+            candidates.sort((a, b) => {
+                if (a.score !== b.score) return a.score - b.score;
+                if (Math.abs(a.top - b.top) > 4) return a.top - b.top;
+                return b.left - a.left;
+            });
+
+            return candidates[0]?.el || null;
+        }, rowElement).catch(() => null);
+
+        const deleteElement = deleteHandle ? deleteHandle.asElement() : null;
+        if (deleteElement) {
+            await deleteElement.click({ timeout: 5000, force: true }).catch(async () => {
+                const box = await deleteElement.boundingBox().catch(() => null);
+                if (box) {
+                    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+                }
+            });
+        } else {
+            const box = await rowElement.boundingBox().catch(() => null);
+            if (!box) {
+                logger.warn('未找到删除按钮，也无法获取生成中任务行位置');
+                return false;
+            }
+            await page.mouse.click(Math.max(0, box.x + box.width - 18), Math.max(0, box.y + 22));
+        }
+
+        await interruptibleSleep(800, options);
+        await this.confirmDeleteDialogIfNeeded(page, options);
+        await interruptibleSleep(1200, options);
+        logger.info('✅ 已尝试删除超时的 Legil 生成中任务，继续后续队列');
+        return true;
+    }
+
+    async confirmDeleteDialogIfNeeded(page, options = {}) {
+        throwIfAborted(options);
+
+        const confirmHandle = await page.evaluateHandle(() => {
+            const isVisible = (el) => {
+                if (!el || !(el instanceof Element)) return false;
+                const rect = el.getBoundingClientRect();
+                const style = window.getComputedStyle(el);
+                return rect.width > 0 &&
+                    rect.height > 0 &&
+                    style.visibility !== 'hidden' &&
+                    style.display !== 'none' &&
+                    style.opacity !== '0';
+            };
+
+            const dialogs = Array.from(document.querySelectorAll('[role="dialog"], [aria-modal="true"], [class*="modal"], [class*="popover"]'))
+                .filter(isVisible);
+            const roots = dialogs.length ? dialogs : [document.body];
+            const candidates = [];
+
+            for (const root of roots) {
+                for (const el of root.querySelectorAll('button, [role="button"], div, span')) {
+                    if (!isVisible(el)) continue;
+                    const text = String(el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+                    if (!/确认|确定|删除|移除|Delete|Remove|OK/i.test(text)) continue;
+                    const rect = el.getBoundingClientRect();
+                    candidates.push({
+                        el: el.closest('button, [role="button"], div') || el,
+                        text,
+                        top: rect.top,
+                        left: rect.left,
+                        score: (/删除|移除|Delete|Remove/i.test(text) ? 0 : 5) + (/取消|Cancel/i.test(text) ? 100 : 0)
+                    });
+                }
+            }
+
+            candidates.sort((a, b) => {
+                if (a.score !== b.score) return a.score - b.score;
+                if (Math.abs(a.top - b.top) > 4) return b.top - a.top;
+                return b.left - a.left;
+            });
+
+            return candidates[0]?.el || null;
+        }).catch(() => null);
+
+        const confirmElement = confirmHandle ? confirmHandle.asElement() : null;
+        if (confirmElement) {
+            await confirmElement.click({ timeout: 3000, force: true }).catch(() => {});
+            logger.info('已确认删除超时任务');
+            return true;
+        }
+
         return false;
     }
 
@@ -1505,6 +1955,51 @@ class LegilAutomation {
                 const match = outputSrc.match(/\/output\/[^?#\s)]+/);
                 return match ? match[0] : outputSrc;
             };
+            const collectImageSources = (img) => {
+                const values = [
+                    img.currentSrc,
+                    img.src,
+                    img.getAttribute('src'),
+                    img.getAttribute('data-src'),
+                    img.getAttribute('data-original'),
+                    img.getAttribute('data-url'),
+                    img.dataset?.src,
+                    img.dataset?.original,
+                    img.dataset?.url
+                ];
+
+                const srcset = img.getAttribute('srcset') || img.getAttribute('data-srcset') || '';
+                srcset.split(',').forEach(part => {
+                    const candidate = part.trim().split(/\s+/)[0];
+                    if (candidate) values.push(candidate);
+                });
+
+                return values
+                    .map(value => String(value || '').split('#')[0].trim())
+                    .filter(Boolean);
+            };
+            const pickOutputSource = (img) => {
+                const sources = collectImageSources(img);
+                for (const source of sources) {
+                    const outputSrc = extractImageUrl(source);
+                    if (outputSrc.includes('/output') && !outputSrc.includes('/input')) {
+                        return {
+                            src: source,
+                            normalizedSrc: normalizeSrc(source),
+                            outputSrc,
+                            identity: outputIdentity(source)
+                        };
+                    }
+                }
+
+                const fallback = sources[0] || '';
+                return {
+                    src: fallback,
+                    normalizedSrc: fallback ? normalizeSrc(fallback) : '',
+                    outputSrc: fallback ? extractImageUrl(fallback) : '',
+                    identity: fallback ? outputIdentity(fallback) : ''
+                };
+            };
             const keys = new Set();
             for (const src of knownKeys || []) {
                 const raw = String(src || '').split('#')[0];
@@ -1514,6 +2009,54 @@ class LegilAutomation {
                 keys.add(extractImageUrl(raw));
                 keys.add(outputIdentity(raw));
             }
+
+            const resolveOutputSlotBox = (img) => {
+                const imageRect = img.getBoundingClientRect();
+                let best = {
+                    left: imageRect.left,
+                    top: imageRect.top,
+                    width: imageRect.width,
+                    height: imageRect.height
+                };
+
+                let current = img.parentElement;
+                for (let i = 0; i < 8 && current; i++) {
+                    const rect = current.getBoundingClientRect();
+                    const style = window.getComputedStyle(current);
+                    const isUsefulSlot =
+                        rect.left > 260 &&
+                        rect.width >= Math.max(90, imageRect.width) &&
+                        rect.height >= Math.max(70, imageRect.height) &&
+                        rect.width <= 700 &&
+                        rect.height <= 520 &&
+                        style.visibility !== 'hidden' &&
+                        style.display !== 'none' &&
+                        style.opacity !== '0';
+
+                    if (isUsefulSlot) {
+                        best = {
+                            left: rect.left,
+                            top: rect.top,
+                            width: rect.width,
+                            height: rect.height
+                        };
+
+                        // 横版/竖版图通常被放在黑底结果槽位里，优先用这个槽位作为生成结果的可见范围。
+                        if (
+                            rect.width >= 120 &&
+                            rect.height >= 100 &&
+                            rect.width <= 360 &&
+                            rect.height <= 360
+                        ) {
+                            break;
+                        }
+                    }
+
+                    current = current.parentElement;
+                }
+
+                return best;
+            };
 
             const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
             const collected = new Map();
@@ -1560,6 +2103,10 @@ class LegilAutomation {
                     displayHeight: item.height,
                     left: item.left,
                     top: item.top,
+                    imageLeft: item.imageLeft,
+                    imageTop: item.imageTop,
+                    imageDisplayWidth: item.imageWidth,
+                    imageDisplayHeight: item.imageHeight,
                     identity: item.identity
                 }));
 
@@ -1567,26 +2114,28 @@ class LegilAutomation {
                 Array.from(document.querySelectorAll('img'))
                     .map((img, index) => {
                     const rect = img.getBoundingClientRect();
-                    const src = (img.currentSrc || img.src || '').split('#')[0];
-                    const normalizedSrc = normalizeSrc(src);
-                    const outputSrc = extractImageUrl(src);
-                    const identity = outputIdentity(src);
+                    const slotBox = resolveOutputSlotBox(img);
+                    const sourceInfo = pickOutputSource(img);
                     const style = window.getComputedStyle(img);
                     return {
                         index,
-                        src,
-                        normalizedSrc,
-                        outputSrc,
-                        identity,
-                        left: rect.left,
-                        top: rect.top,
-                        width: rect.width,
-                        height: rect.height,
+                        src: sourceInfo.src,
+                        normalizedSrc: sourceInfo.normalizedSrc,
+                        outputSrc: sourceInfo.outputSrc,
+                        identity: sourceInfo.identity,
+                        left: slotBox.left,
+                        top: slotBox.top,
+                        width: slotBox.width,
+                        height: slotBox.height,
+                        imageLeft: rect.left,
+                        imageTop: rect.top,
+                        imageWidth: rect.width,
+                        imageHeight: rect.height,
                         naturalWidth: img.naturalWidth || 0,
                         naturalHeight: img.naturalHeight || 0,
-                        area: rect.width * rect.height,
+                        area: Math.max(slotBox.width * slotBox.height, rect.width * rect.height),
                         naturalArea: (img.naturalWidth || 0) * (img.naturalHeight || 0),
-                        visible: !!src &&
+                        visible: !!sourceInfo.src &&
                             rect.width > 0 &&
                             rect.height > 0 &&
                             style.visibility !== 'hidden' &&
@@ -1603,12 +2152,13 @@ class LegilAutomation {
                     !keys.has(item.identity) &&
                     item.outputSrc.includes('/output') &&
                     !item.outputSrc.includes('/input') &&
-                    item.left > 300 &&
+                    item.left > 260 &&
                     isInTargetRow(item.top) &&
-                    item.width > 48 &&
-                    item.height > 48 &&
-                    item.naturalWidth > 128 &&
-                    item.naturalHeight > 128
+                    item.width >= 90 &&
+                    item.height >= 70 &&
+                    item.imageWidth > 8 &&
+                    item.imageHeight > 8 &&
+                    (item.area > 6000 || item.naturalArea > 6000)
                 )
                     .forEach(item => {
                         const key = item.identity || item.outputSrc || item.normalizedSrc || item.src;
@@ -1861,6 +2411,77 @@ class LegilAutomation {
         return new URL(withoutResize, pageUrl).href;
     }
 
+    buildDownloadUrlVariants(rawUrl, pageUrl) {
+        const variants = new Map();
+        const addVariant = (url, label, isThumbnail = false) => {
+            if (!url || isPageLocalImageUrl(url)) return;
+
+            try {
+                const absoluteUrl = new URL(url, pageUrl).href;
+                if (!isLegilOutputUrl(absoluteUrl)) return;
+                if (!variants.has(absoluteUrl)) {
+                    variants.set(absoluteUrl, {
+                        url: absoluteUrl,
+                        label,
+                        isThumbnail
+                    });
+                }
+            } catch (e) {}
+        };
+
+        const raw = String(rawUrl || '').trim();
+        if (!raw) {
+            return [];
+        }
+
+        const candidateUrls = [extractLegilImageUrl(raw), raw].filter(Boolean);
+        try {
+            const parsedRaw = new URL(raw, pageUrl);
+            const embeddedUrl = parsedRaw.searchParams.get('url');
+            if (embeddedUrl) {
+                candidateUrls.unshift(normalizeImageUrl(embeddedUrl));
+            }
+        } catch (e) {}
+
+        for (const candidate of candidateUrls) {
+            let absolute = '';
+            try {
+                absolute = new URL(candidate, pageUrl).href;
+            } catch (e) {
+                continue;
+            }
+
+            let strippedUrl = absolute;
+            let stripped = false;
+            try {
+                const parsed = new URL(absolute);
+                for (const key of ['x-oss-process', 'x-image-process', 'image_process']) {
+                    const value = parsed.searchParams.get(key);
+                    if (value && /resize|thumbnail|quality|format/i.test(value)) {
+                        parsed.searchParams.delete(key);
+                        stripped = true;
+                    }
+                }
+                strippedUrl = parsed.href;
+            } catch (e) {}
+
+            const regexStripped = strippedUrl.replace(/(?:image\/)?resize,w_\d+(?:,h_\d+)?,?/gi, '');
+            if (regexStripped !== strippedUrl) {
+                strippedUrl = regexStripped;
+                stripped = true;
+            }
+
+            if (stripped) {
+                addVariant(strippedUrl, '去除缩略参数后的原图地址', false);
+            }
+
+            const hasThumbnailMarker = /(?:image\/)?resize,w_\d+|x-oss-process=.*resize|[?&]w=\d+|\/_next\/image/i.test(absolute);
+            addVariant(absolute, hasThumbnailMarker ? '页面缩略图地址' : '页面图片地址', hasThumbnailMarker);
+        }
+
+        return Array.from(variants.values()).slice(0, 5);
+    }
+
     async downloadImageToFile(page, imageUrl, savePath, options = {}) {
         throwIfAborted(options);
         const context = page.context();
@@ -1876,6 +2497,7 @@ class LegilAutomation {
         if (userAgent) {
             headers['user-agent'] = userAgent;
         }
+        headers.accept = 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8';
 
         const response = await context.request.get(imageUrl, { headers });
 
@@ -1890,6 +2512,42 @@ class LegilAutomation {
 
         fs.writeFileSync(savePath, buffer);
         return this.validateSavedImageFile(savePath);
+    }
+
+    async downloadImageByBrowserNavigation(page, imageUrl, savePath, options = {}) {
+        throwIfAborted(options);
+
+        const imagePage = await page.context().newPage();
+        try {
+            const response = await imagePage.goto(imageUrl, {
+                waitUntil: 'load',
+                timeout: 30000,
+                referer: page.url()
+            });
+
+            if (!response) {
+                throw new Error('浏览器未返回图片响应');
+            }
+
+            if (!response.ok()) {
+                throw new Error(`浏览器打开图片失败: HTTP ${response.status()}`);
+            }
+
+            const contentType = String(response.headers()['content-type'] || '').toLowerCase();
+            if (contentType && !contentType.includes('image') && !contentType.includes('octet-stream')) {
+                throw new Error(`浏览器响应不是图片: ${contentType}`);
+            }
+
+            const buffer = await response.body();
+            if (!buffer || buffer.length === 0) {
+                throw new Error('浏览器下载的数据为空');
+            }
+
+            fs.writeFileSync(savePath, buffer);
+            return this.validateSavedImageFile(savePath);
+        } finally {
+            await imagePage.close().catch(() => {});
+        }
     }
 
     async downloadImageToFileWithRetries(page, imageUrl, savePath, options = {}) {
@@ -2003,6 +2661,51 @@ class LegilAutomation {
                 const match = outputSrc.match(/\/output\/[^?#\s)]+/);
                 return match ? match[0] : outputSrc;
             };
+            const collectImageSources = (img) => {
+                const values = [
+                    img.currentSrc,
+                    img.src,
+                    img.getAttribute('src'),
+                    img.getAttribute('data-src'),
+                    img.getAttribute('data-original'),
+                    img.getAttribute('data-url'),
+                    img.dataset?.src,
+                    img.dataset?.original,
+                    img.dataset?.url
+                ];
+
+                const srcset = img.getAttribute('srcset') || img.getAttribute('data-srcset') || '';
+                srcset.split(',').forEach(part => {
+                    const candidate = part.trim().split(/\s+/)[0];
+                    if (candidate) values.push(candidate);
+                });
+
+                return values
+                    .map(value => String(value || '').split('#')[0].trim())
+                    .filter(Boolean);
+            };
+            const pickOutputSource = (img) => {
+                const sources = collectImageSources(img);
+                for (const source of sources) {
+                    const outputSrc = extractImageUrl(source);
+                    if (outputSrc.includes('/output') && !outputSrc.includes('/input')) {
+                        return {
+                            src: source,
+                            normalizedSrc: normalizeSrc(source),
+                            outputSrc,
+                            identity: outputIdentity(source)
+                        };
+                    }
+                }
+
+                const fallback = sources[0] || '';
+                return {
+                    src: fallback,
+                    normalizedSrc: fallback ? normalizeSrc(fallback) : '',
+                    outputSrc: fallback ? extractImageUrl(fallback) : '',
+                    identity: fallback ? outputIdentity(fallback) : ''
+                };
+            };
             const keys = new Set();
             for (const src of knownKeys || []) {
                 const raw = String(src || '').split('#')[0];
@@ -2035,6 +2738,54 @@ class LegilAutomation {
                     style.display !== 'none' &&
                     style.opacity !== '0';
             };
+
+            const resolveOutputSlotBox = (img) => {
+                const imageRect = img.getBoundingClientRect();
+                let best = {
+                    left: imageRect.left,
+                    top: imageRect.top,
+                    width: imageRect.width,
+                    height: imageRect.height
+                };
+
+                let current = img.parentElement;
+                for (let i = 0; i < 8 && current; i++) {
+                    const rect = current.getBoundingClientRect();
+                    const style = window.getComputedStyle(current);
+                    const isUsefulSlot =
+                        rect.left > 260 &&
+                        rect.width >= Math.max(90, imageRect.width) &&
+                        rect.height >= Math.max(70, imageRect.height) &&
+                        rect.width <= 700 &&
+                        rect.height <= 520 &&
+                        style.visibility !== 'hidden' &&
+                        style.display !== 'none' &&
+                        style.opacity !== '0';
+
+                    if (isUsefulSlot) {
+                        best = {
+                            left: rect.left,
+                            top: rect.top,
+                            width: rect.width,
+                            height: rect.height
+                        };
+
+                        if (
+                            rect.width >= 120 &&
+                            rect.height >= 100 &&
+                            rect.width <= 360 &&
+                            rect.height <= 360
+                        ) {
+                            break;
+                        }
+                    }
+
+                    current = current.parentElement;
+                }
+
+                return best;
+            };
+
             const targetRowTop = Number.isFinite(Number(info?.top)) ? Number(info.top) : null;
             const rowTolerance = 150;
             const isInTargetRow = (top) => {
@@ -2057,22 +2808,24 @@ class LegilAutomation {
             const collectCandidates = () => sortCandidates(Array.from(document.querySelectorAll('img'))
                 .map((img, index) => {
                     const rect = img.getBoundingClientRect();
-                    const src = (img.currentSrc || img.src || '').split('#')[0];
-                    const normalizedSrc = normalizeSrc(src);
-                    const outputSrc = extractImageUrl(src);
-                    const identity = outputIdentity(src);
+                    const slotBox = resolveOutputSlotBox(img);
+                    const sourceInfo = pickOutputSource(img);
                     return {
                         img,
                         index,
-                        src,
-                        normalizedSrc,
-                        outputSrc,
-                        identity,
-                        left: rect.left,
-                        top: rect.top,
-                        width: rect.width,
-                        height: rect.height,
-                        area: rect.width * rect.height,
+                        src: sourceInfo.src,
+                        normalizedSrc: sourceInfo.normalizedSrc,
+                        outputSrc: sourceInfo.outputSrc,
+                        identity: sourceInfo.identity,
+                        left: slotBox.left,
+                        top: slotBox.top,
+                        width: slotBox.width,
+                        height: slotBox.height,
+                        imageLeft: rect.left,
+                        imageTop: rect.top,
+                        imageWidth: rect.width,
+                        imageHeight: rect.height,
+                        area: Math.max(slotBox.width * slotBox.height, rect.width * rect.height),
                         naturalArea: (img.naturalWidth || 0) * (img.naturalHeight || 0),
                         visible: isVisible(img)
                     };
@@ -2080,10 +2833,13 @@ class LegilAutomation {
                 .filter(item =>
                     item.visible &&
                     item.src &&
-                    item.left > 300 &&
+                    item.left > 260 &&
                     isInTargetRow(item.top) &&
-                    item.width > 48 &&
-                    item.height > 48 &&
+                    item.width >= 90 &&
+                    item.height >= 70 &&
+                    item.imageWidth > 8 &&
+                    item.imageHeight > 8 &&
+                    (item.area > 6000 || item.naturalArea > 6000) &&
                     item.outputSrc.includes('/output') &&
                     !item.outputSrc.includes('/input') &&
                     !keys.has(item.src) &&
@@ -2290,6 +3046,43 @@ class LegilAutomation {
                 const match = outputSrc.match(/\/output\/[^?#\s)]+/);
                 return match ? match[0] : '';
             };
+            const collectImageSources = (img) => {
+                const values = [
+                    img.currentSrc,
+                    img.src,
+                    img.getAttribute('src'),
+                    img.getAttribute('data-src'),
+                    img.getAttribute('data-original'),
+                    img.getAttribute('data-url'),
+                    img.dataset?.src,
+                    img.dataset?.original,
+                    img.dataset?.url
+                ];
+
+                const srcset = img.getAttribute('srcset') || img.getAttribute('data-srcset') || '';
+                srcset.split(',').forEach(part => {
+                    const candidate = part.trim().split(/\s+/)[0];
+                    if (candidate) values.push(candidate);
+                });
+
+                let current = img;
+                for (let i = 0; i < 4 && current; i++) {
+                    if (current.tagName === 'A' && current.getAttribute('href')) {
+                        values.push(current.getAttribute('href'));
+                    }
+                    values.push(
+                        current.getAttribute('data-download-url'),
+                        current.getAttribute('data-href'),
+                        current.dataset?.downloadUrl,
+                        current.dataset?.href
+                    );
+                    current = current.parentElement;
+                }
+
+                return Array.from(new Set(values
+                    .map(value => String(value || '').split('#')[0].trim())
+                    .filter(Boolean)));
+            };
             const isVisible = (el) => {
                 const rect = el.getBoundingClientRect();
                 const style = window.getComputedStyle(el);
@@ -2319,8 +3112,8 @@ class LegilAutomation {
             for (const selector of selectors) {
                 for (const img of document.querySelectorAll(selector)) {
                     if (!isVisible(img)) continue;
-                    const src = img.currentSrc || img.src || '';
-                    if (!src || outputIdentity(src) !== fallbackIdentity) continue;
+                    const sources = collectImageSources(img);
+                    if (!sources.some(src => outputIdentity(src) === fallbackIdentity)) continue;
 
                     const rect = img.getBoundingClientRect();
                     candidates.push({
@@ -2357,32 +3150,128 @@ class LegilAutomation {
             ? await sourceElement.evaluate(el => ({
                 src: el.currentSrc || el.src || '',
                 width: el.naturalWidth || 0,
-                height: el.naturalHeight || 0
+                height: el.naturalHeight || 0,
+                displayWidth: el.getBoundingClientRect().width || 0,
+                displayHeight: el.getBoundingClientRect().height || 0,
+                candidates: (() => {
+                    const values = [
+                        el.currentSrc,
+                        el.src,
+                        el.getAttribute('src'),
+                        el.getAttribute('data-src'),
+                        el.getAttribute('data-original'),
+                        el.getAttribute('data-url'),
+                        el.dataset?.src,
+                        el.dataset?.original,
+                        el.dataset?.url
+                    ];
+
+                    const srcset = el.getAttribute('srcset') || el.getAttribute('data-srcset') || '';
+                    srcset.split(',').forEach(part => {
+                        const candidate = part.trim().split(/\s+/)[0];
+                        if (candidate) values.push(candidate);
+                    });
+
+                    let current = el;
+                    for (let i = 0; i < 5 && current; i++) {
+                        if (current.tagName === 'A' && current.getAttribute('href')) {
+                            values.push(current.getAttribute('href'));
+                        }
+                        values.push(
+                            current.getAttribute('data-download-url'),
+                            current.getAttribute('data-href'),
+                            current.dataset?.downloadUrl,
+                            current.dataset?.href
+                        );
+                        current = current.parentElement;
+                    }
+
+                    return Array.from(new Set(values
+                        .map(value => String(value || '').split('#')[0].trim())
+                        .filter(Boolean)));
+                })()
             })).catch(() => null)
             : null;
 
-        const sourceSrc = sourceInfo?.src || fallbackSrc;
+        const sourceCandidates = Array.from(new Set([
+            ...(Array.isArray(sourceInfo?.candidates) ? sourceInfo.candidates : []),
+            sourceInfo?.src,
+            fallbackSrc
+        ]
+            .map(value => String(value || '').trim())
+            .filter(Boolean)));
         let savedSize = 0;
 
-        if (sourceSrc && isLegilOutputUrl(sourceSrc)) {
-            const downloadUrl = this.resolveDownloadUrl(sourceSrc, page.url());
+        const allowThumbnailCandidate = Number(sourceInfo?.width || 0) >= 700 ||
+            Number(sourceInfo?.height || 0) >= 700 ||
+            Number(sourceInfo?.displayWidth || 0) >= 700 ||
+            Number(sourceInfo?.displayHeight || 0) >= 700;
+        const downloadCandidates = [];
+        const seenDownloadUrls = new Set();
+
+        for (const candidate of sourceCandidates) {
+            for (const variant of this.buildDownloadUrlVariants(candidate, page.url())) {
+                if (variant.isThumbnail && !allowThumbnailCandidate) {
+                    continue;
+                }
+                if (seenDownloadUrls.has(variant.url)) {
+                    continue;
+                }
+                seenDownloadUrls.add(variant.url);
+                downloadCandidates.push(variant);
+            }
+        }
+
+        if (downloadCandidates.length === 0 && sourceCandidates.some(src => isLegilOutputUrl(src))) {
+            logger.warn('只找到缩略图地址，跳过直接保存缩略图，改用后续大图截图兜底');
+        }
+
+        for (let i = 0; i < downloadCandidates.length && !savedSize; i++) {
+            const candidate = downloadCandidates[i];
+            logger.info(`尝试保存大图：${candidate.label}`);
 
             try {
-                savedSize = await this.downloadImageToFileWithRetries(page, downloadUrl, savePath, options);
+                savedSize = i === 0
+                    ? await this.downloadImageToFileWithRetries(page, candidate.url, savePath, options)
+                    : await this.downloadImageToFile(page, candidate.url, savePath, options);
+                if (savedSize) break;
             } catch (downloadError) {
-                logger.warn(`大图直链下载失败，尝试页面内下载: ${downloadError.message}`);
+                logger.warn(`${candidate.label}直链下载失败: ${downloadError.message}`);
             }
 
-            if (!savedSize) {
-                try {
-                    savedSize = await this.fetchImageInPageToFile(page, downloadUrl, savePath, options);
-                } catch (pageFetchError) {
-                    logger.warn(`大图页面内下载失败，改用大图截图保存: ${pageFetchError.message}`);
+            try {
+                savedSize = await this.downloadImageByBrowserNavigation(page, candidate.url, savePath, options);
+                if (savedSize) {
+                    logger.info('已通过浏览器真实图片响应保存大图');
+                    break;
                 }
+            } catch (browserDownloadError) {
+                logger.warn(`${candidate.label}浏览器下载失败: ${browserDownloadError.message}`);
+            }
+
+            try {
+                savedSize = await this.fetchImageInPageToFile(page, candidate.url, savePath, options);
+                if (savedSize) break;
+            } catch (pageFetchError) {
+                logger.warn(`${candidate.label}页面内下载失败: ${pageFetchError.message}`);
+            }
+        }
+
+        const localCandidates = sourceCandidates.filter(isPageLocalImageUrl);
+        for (const localUrl of localCandidates) {
+            try {
+                savedSize = await this.fetchImageInPageToFile(page, localUrl, savePath, options);
+                if (savedSize) {
+                    logger.info('已通过大图弹窗内存图片保存');
+                    return savedSize;
+                }
+            } catch (localError) {
+                logger.warn(`大图弹窗内存图片保存失败: ${localError.message}`);
             }
         }
 
         if (!savedSize) {
+            logger.warn('所有大图下载方式失败，改用大图弹窗截图保存');
             savedSize = await this.screenshotElementToFile(page, sourceElement, savePath, options);
         }
 
@@ -2400,14 +3289,37 @@ class LegilAutomation {
                 throw new Error('未找到本次输出图缩略图');
             }
 
-            const thumbInfo = await thumbnailElement.evaluate(el => ({
-                src: el.src,
-                currentSrc: el.currentSrc || el.src,
-                width: el.naturalWidth || 0,
-                height: el.naturalHeight || 0
-            }));
+            const thumbInfo = await thumbnailElement.evaluate(el => {
+                const values = [
+                    el.currentSrc,
+                    el.src,
+                    el.getAttribute('src'),
+                    el.getAttribute('data-src'),
+                    el.getAttribute('data-original'),
+                    el.getAttribute('data-url'),
+                    el.dataset?.src,
+                    el.dataset?.original,
+                    el.dataset?.url
+                ];
 
-            const thumbSrc = thumbInfo.currentSrc || thumbInfo.src;
+                const srcset = el.getAttribute('srcset') || el.getAttribute('data-srcset') || '';
+                srcset.split(',').forEach(part => {
+                    const candidate = part.trim().split(/\s+/)[0];
+                    if (candidate) values.push(candidate);
+                });
+
+                return {
+                    src: el.src,
+                    currentSrc: el.currentSrc || el.src,
+                    width: el.naturalWidth || 0,
+                    height: el.naturalHeight || 0,
+                    candidates: Array.from(new Set(values
+                        .map(value => String(value || '').split('#')[0].trim())
+                        .filter(Boolean)))
+                };
+            });
+
+            const thumbSrc = (thumbInfo.candidates || []).find(src => isLegilOutputUrl(src)) || thumbInfo.currentSrc || thumbInfo.src;
             if (!isLegilOutputUrl(thumbSrc)) {
                 throw new Error('候选图片不是 Legil 输出图，已停止保存以避免拿到参考图或历史图');
             }
@@ -2421,7 +3333,14 @@ class LegilAutomation {
             previewOpen = true;
             await interruptibleSleep(3000, options);
 
-            const previewElement = await this.getOpenedPreviewImageElement(page, thumbSrc);
+            let previewElement = null;
+            for (let attempt = 0; attempt < 4; attempt++) {
+                previewElement = await this.getOpenedPreviewImageElement(page, thumbSrc);
+                if (previewElement) {
+                    break;
+                }
+                await interruptibleSleep(1000, options);
+            }
             const savedSize = await this.saveOpenedPreviewToFile(page, previewElement, thumbnailElement, thumbSrc, savePath, options);
 
             return savedSize;

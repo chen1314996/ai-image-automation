@@ -1541,6 +1541,21 @@
             text-align: left;
         }
 
+        .resume-actions {
+            display: none;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+            margin-top: 12px;
+        }
+
+        .resume-actions.active {
+            display: grid;
+        }
+
+        .resume-actions .btn {
+            min-height: 42px;
+        }
+
         .prompts-section {
             display: none !important;
         }
@@ -4616,6 +4631,272 @@
             grid-template-columns: repeat(2, minmax(0, 1fr));
         }
 
+        .page-tabs {
+            width: min(100%, 520px);
+            margin: 0 auto 18px;
+            padding: 4px;
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 4px;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 10px;
+            background: rgba(8, 11, 15, 0.62);
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+        }
+
+        .page-tab {
+            height: 38px;
+            border: 0;
+            border-radius: 7px;
+            background: transparent;
+            color: var(--flat-muted);
+            font: inherit;
+            font-size: 14px;
+            font-weight: 800;
+            cursor: pointer;
+            transition: color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
+        }
+
+        .page-tab:hover {
+            color: var(--flat-text);
+            background: rgba(255, 255, 255, 0.045);
+        }
+
+        .page-tab.active {
+            color: #07110f;
+            background: #91c4b9;
+            box-shadow: 0 8px 20px rgba(52, 103, 92, 0.22);
+        }
+
+        .page-view {
+            display: none;
+        }
+
+        .page-view.active {
+            display: block;
+        }
+
+        body.resize-mode #doubaoStatusItem,
+        body.creative-mode #doubaoStatusItem {
+            display: none;
+        }
+
+        .resize-grid,
+        .creative-grid {
+            display: grid;
+            grid-template-columns: minmax(0, 0.98fr) minmax(0, 1.02fr);
+            gap: 16px;
+            margin-bottom: 16px;
+            align-items: start;
+        }
+
+        .resize-quick-actions,
+        .creative-quick-actions {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 8px;
+            margin-top: 8px;
+        }
+
+        .resize-prompt-layout,
+        .creative-start-layout {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) 220px;
+            gap: 12px;
+            align-items: end;
+        }
+
+        .resize-prompt-layout textarea {
+            min-height: 148px;
+        }
+
+        .resize-start-panel,
+        .creative-start-panel {
+            display: grid;
+            gap: 10px;
+        }
+
+        .resize-start-panel .btn,
+        .creative-start-panel .btn {
+            width: 100%;
+            min-height: 46px;
+            justify-content: center;
+        }
+
+        .table-upload-box {
+            display: grid;
+            gap: 12px;
+            padding: 14px;
+            border: 1px dashed rgba(145, 196, 185, 0.34);
+            border-radius: 10px;
+            background: rgba(145, 196, 185, 0.055);
+            transition: border-color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+        }
+
+        .table-upload-box.drag-over {
+            border-color: rgba(51, 214, 166, 0.86);
+            background: rgba(51, 214, 166, 0.11);
+            box-shadow: 0 0 0 1px rgba(51, 214, 166, 0.22), 0 16px 34px rgba(0, 0, 0, 0.22);
+            transform: translateY(-1px);
+        }
+
+        .table-upload-box input[type="file"] {
+            width: 100%;
+            color: var(--flat-muted);
+        }
+
+        .table-drop-title {
+            color: var(--flat-text);
+            font-size: 14px;
+            font-weight: 900;
+        }
+
+        .table-drop-hint {
+            color: var(--flat-muted);
+            font-size: 12px;
+            line-height: 1.5;
+        }
+
+        .creative-preview-list {
+            display: grid;
+            gap: 8px;
+            max-height: 420px;
+            overflow: auto;
+            padding-right: 4px;
+        }
+
+        .creative-preview-item {
+            display: grid;
+            gap: 5px;
+            padding: 10px 12px;
+            border: 1px solid rgba(255, 255, 255, 0.075);
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.035);
+        }
+
+        .creative-preview-item.is-unselected {
+            opacity: 0.52;
+        }
+
+        .creative-preview-meta {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            gap: 10px;
+            align-items: start;
+            color: var(--flat-muted);
+            font-size: 12px;
+            font-weight: 800;
+        }
+
+        .creative-check-label {
+            min-width: 0;
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            cursor: pointer;
+        }
+
+        .creative-check-label input {
+            width: 16px;
+            height: 16px;
+            margin-top: 1px;
+            accent-color: #33d6a6;
+            flex: 0 0 auto;
+        }
+
+        .creative-preview-title {
+            min-width: 0;
+            color: var(--flat-text);
+            overflow-wrap: anywhere;
+        }
+
+        .creative-preview-text {
+            color: var(--flat-text);
+            font-size: 13px;
+            line-height: 1.55;
+        }
+
+        .creative-selection-bar {
+            position: sticky;
+            top: 0;
+            z-index: 2;
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto auto;
+            gap: 8px;
+            align-items: center;
+            padding: 10px;
+            border: 1px solid rgba(255, 255, 255, 0.075);
+            border-radius: 8px;
+            background: rgba(12, 17, 20, 0.92);
+            backdrop-filter: blur(12px);
+        }
+
+        .creative-selection-count {
+            color: var(--flat-muted);
+            font-size: 12px;
+            font-weight: 800;
+        }
+
+        .creative-mini-btn {
+            min-height: 30px;
+            padding: 0 10px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 7px;
+            background: rgba(255, 255, 255, 0.045);
+            color: var(--flat-text);
+            font: inherit;
+            font-size: 12px;
+            font-weight: 800;
+            cursor: pointer;
+        }
+
+        .creative-mini-btn:hover {
+            background: rgba(255, 255, 255, 0.075);
+        }
+
+        .creative-progress-panel {
+            margin-top: 14px;
+            padding: 16px;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 10px;
+            background: rgba(8, 11, 15, 0.34);
+        }
+
+        .creative-progress-panel .progress-header {
+            margin-bottom: 14px;
+        }
+
+        .creative-progress-panel .progress-item {
+            margin-bottom: 14px;
+        }
+
+        .creative-progress-panel .status-text {
+            margin-top: 10px;
+            overflow-wrap: anywhere;
+        }
+
+        .creative-stats-grid {
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+        }
+
+        @media (max-width: 640px) {
+            .creative-stats-grid {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+        }
+
+        @media (max-width: 900px) {
+            .resize-grid,
+            .creative-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .resize-prompt-layout,
+            .creative-start-layout {
+                grid-template-columns: 1fr;
+            }
+        }
+
         @media (max-width: 760px) {
             .brand-icon {
                 width: 34px;
@@ -4709,8 +4990,13 @@
     <div class="app">
         <!-- Header -->
         <header class="header">
+            <nav class="page-tabs" aria-label="页面切换">
+                <button type="button" class="page-tab active" id="massPageTab" onclick="switchPage('mass')">量产</button>
+                <button type="button" class="page-tab" id="resizePageTab" onclick="switchPage('resize')">改尺寸</button>
+                <button type="button" class="page-tab" id="creativePageTab" onclick="switchPage('creative')">创意拓展</button>
+            </nav>
             <h1><span class="brand-icon" aria-hidden="true"></span><span>AI生图自动化平台</span></h1>
-            <p>豆包API生成提示词 → Legil生成图片 → 全自动循环处理</p>
+            <p id="pageSubtitle">豆包API生成提示词 → Legil生成图片 → 全自动循环处理</p>
         </header>
 
         <!-- Status Bar -->
@@ -4729,6 +5015,7 @@
             </div>
         </div>
 
+        <section class="page-view active" id="massPage">
         <!-- Main Grid -->
         <div class="main-grid">
             <!-- Configuration Card -->
@@ -4745,7 +5032,7 @@
                     </div>
                     <div class="folder-path-row">
                         <div class="folder-input-combo">
-                            <input type="text" id="referenceFolder" placeholder="默认：D:\工作\自动化工作流1\输入" value="D:\工作\自动化工作流1\输入">
+                            <input type="text" id="referenceFolder" placeholder="默认：D:\工作\自动化工作流1\批量产图\输入" value="D:\工作\自动化工作流1\批量产图\输入">
                             <button type="button" class="folder-history-button" id="referenceFolderHistoryButton" onclick="toggleFolderHistory('referenceFolder')"><span class="history-caret">▼</span>历史</button>
                             <div class="folder-history-menu" id="referenceFolderHistoryMenu"></div>
                         </div>
@@ -4761,7 +5048,7 @@
                     </div>
                     <div class="folder-path-row">
                         <div class="folder-input-combo">
-                            <input type="text" id="legilReferenceFolder" placeholder="默认：D:\工作\自动化工作流1\Legil参考图" value="D:\工作\自动化工作流1\Legil参考图">
+                            <input type="text" id="legilReferenceFolder" placeholder="默认：D:\工作\自动化工作流1\批量产图\参考图" value="D:\工作\自动化工作流1\批量产图\参考图">
                             <button type="button" class="folder-history-button" id="legilReferenceFolderHistoryButton" onclick="toggleFolderHistory('legilReferenceFolder')"><span class="history-caret">▼</span>历史</button>
                             <div class="folder-history-menu" id="legilReferenceFolderHistoryMenu"></div>
                         </div>
@@ -4777,7 +5064,7 @@
                     </div>
                     <div class="folder-path-row">
                         <div class="folder-input-combo">
-                            <input type="text" id="saveFolder" placeholder="默认：D:\工作\自动化工作流1\输出" value="D:\工作\自动化工作流1\输出">
+                            <input type="text" id="saveFolder" placeholder="默认：D:\工作\自动化工作流1\批量产图\输出" value="D:\工作\自动化工作流1\批量产图\输出">
                             <button type="button" class="folder-history-button" id="saveFolderHistoryButton" onclick="toggleFolderHistory('saveFolder')"><span class="history-caret">▼</span>历史</button>
                             <div class="folder-history-menu" id="saveFolderHistoryMenu"></div>
                         </div>
@@ -4907,6 +5194,10 @@
                 <button class="btn btn-large" id="oneClickStartBtn" onclick="startWorkflowWithConfirm()">
                     ▶️ 开始自动化流程
                 </button>
+                <div class="resume-actions" id="workflowResumeActions">
+                    <button class="btn btn-primary" id="resumeWorkflowBtn" onclick="resumeWorkflowFromStop()">↩️ 继续之前任务</button>
+                    <button class="btn btn-secondary" id="newWorkflowBtn" onclick="startNewWorkflowFromStop()">🆕 开启新任务</button>
+                </div>
             </div>
 
             <!-- Progress Panel -->
@@ -4974,6 +5265,259 @@
                 <div class="prompts-list" id="promptsList" style="display: none;"></div>
             </div>
         </div>
+        </section>
+
+        <section class="page-view" id="resizePage">
+            <div class="resize-grid">
+                <div class="card">
+                    <div class="card-title">
+                        <span class="icon icon-blue icon-folder" aria-hidden="true"></span>
+                        改尺寸文件夹
+                    </div>
+
+                    <div class="form-group folder-field">
+                        <div class="folder-field-heading">
+                            <label for="resizeInputFolder">输入文件夹</label>
+                            <span class="folder-desc">Legil 会按文件名顺序读取这里的图片</span>
+                        </div>
+                        <div class="folder-path-row">
+                            <div class="folder-input-combo">
+                                <input type="text" id="resizeInputFolder" placeholder="默认：D:\工作\自动化工作流1\Legil批量改尺寸\输入" value="D:\工作\自动化工作流1\Legil批量改尺寸\输入">
+                                <button type="button" class="folder-history-button" id="resizeInputFolderHistoryButton" onclick="toggleFolderHistory('resizeInputFolder')"><span class="history-caret">▼</span>历史</button>
+                                <div class="folder-history-menu" id="resizeInputFolderHistoryMenu"></div>
+                            </div>
+                            <button class="btn btn-secondary btn-folder-browse" onclick="browseFolder('resizeInputFolder')">浏览</button>
+                        </div>
+                        <div class="info-box" id="resizeInputCountInfo"></div>
+                    </div>
+
+                    <div class="form-group folder-field">
+                        <div class="folder-field-heading">
+                            <label for="resizeOutputFolder">输出文件夹</label>
+                            <span class="folder-desc">改尺寸结果会保存到这个目录</span>
+                        </div>
+                        <div class="folder-path-row">
+                            <div class="folder-input-combo">
+                                <input type="text" id="resizeOutputFolder" placeholder="默认：D:\工作\自动化工作流1\Legil批量改尺寸\输出" value="D:\工作\自动化工作流1\Legil批量改尺寸\输出">
+                                <button type="button" class="folder-history-button" id="resizeOutputFolderHistoryButton" onclick="toggleFolderHistory('resizeOutputFolder')"><span class="history-caret">▼</span>历史</button>
+                                <div class="folder-history-menu" id="resizeOutputFolderHistoryMenu"></div>
+                            </div>
+                            <button class="btn btn-secondary btn-folder-browse" onclick="browseFolder('resizeOutputFolder')">浏览</button>
+                        </div>
+                    </div>
+
+                    <div class="resize-quick-actions">
+                        <button class="btn btn-secondary" onclick="openSingleWebsite('legil')">打开Legil</button>
+                        <button class="btn btn-secondary" onclick="closeBrowser()">关闭浏览器</button>
+                    </div>
+                </div>
+
+                <details class="card collapsible-card compact-config-card" open>
+                    <summary class="card-title">
+                        <span class="icon icon-purple icon-image" aria-hidden="true"></span>
+                        Legil生成参数
+                    </summary>
+
+                    <div class="setting-group">
+                        <label>图生图模型</label>
+                        <div class="model-options" id="resizeLegilImageModelOptions"></div>
+                    </div>
+
+                    <div class="setting-group">
+                        <label>宽高比</label>
+                        <div class="setting-options" id="resizeLegilAspectRatioOptions"></div>
+                    </div>
+
+                    <div class="setting-group">
+                        <label>分辨率</label>
+                        <div class="setting-options" id="resizeLegilResolutionOptions"></div>
+                    </div>
+
+                    <div class="setting-group">
+                        <label>输出数量</label>
+                        <div class="setting-options" id="resizeLegilOutputQuantityOptions"></div>
+                    </div>
+
+                    <div class="input-actions">
+                        <button class="btn btn-primary" onclick="saveResizeConfig()">保存改尺寸参数</button>
+                        <button class="btn btn-secondary" onclick="loadResizeConfig()">刷新参数</button>
+                    </div>
+                    <div class="info-box" id="resizeLegilGenerationConfigInfo"></div>
+                </details>
+
+                <div class="card card-wide">
+                    <div class="card-title">
+                        <span class="icon icon-green icon-chat" aria-hidden="true"></span>
+                        固定提示词
+                    </div>
+
+                    <div class="resize-prompt-layout">
+                        <div class="form-group">
+                            <label for="resizePromptTemplate">发送给 Legil 的固定文字提示词</label>
+                            <textarea id="resizePromptTemplate" placeholder="请输入每张图片发送给 Legil 的固定提示词"></textarea>
+                            <div class="field-meta">
+                                <span id="resizePromptCount">0 字</span>
+                            </div>
+                        </div>
+
+                        <div class="resize-start-panel">
+                            <button class="btn btn-secondary" id="resizeSaveConfigBtn" onclick="saveResizeConfig()">保存改尺寸配置</button>
+                            <button class="btn btn-primary btn-large" id="resizeStartBtn" onclick="startResizeBatchWithConfirm()">开始改尺寸</button>
+                            <button class="btn btn-danger" id="resizeStopBtn" onclick="stopResizeBatch()" disabled>停止工作流</button>
+                        </div>
+                    </div>
+                    <div class="info-box" id="resizeBatchInfo"></div>
+                </div>
+            </div>
+        </section>
+
+        <section class="page-view" id="creativePage">
+            <div class="creative-grid">
+                <div class="card">
+                    <div class="card-title">
+                        <span class="icon icon-green icon-chat" aria-hidden="true"></span>
+                        表格提示词
+                    </div>
+
+                    <div class="table-upload-box" id="creativeTableDropzone">
+                        <div>
+                            <div class="table-drop-title">拖拽表格到这里，或点击选择文件</div>
+                            <div class="table-drop-hint">支持 xlsx / xls / csv，松手后会自动解析提示词。</div>
+                        </div>
+                        <div class="form-group">
+                            <label for="creativeTableFile">上传表格文件</label>
+                            <input type="file" id="creativeTableFile" accept=".xlsx,.xls,.csv" onchange="handleCreativeTableFileChange()">
+                            <div class="field-meta">
+                                <span id="creativeTableFileInfo">支持 xlsx / xls / csv，优先读取“画面提示词/提示词/prompt”列</span>
+                            </div>
+                        </div>
+                        <button class="btn btn-secondary" onclick="parseCreativeTableFile()">重新解析表格</button>
+                    </div>
+
+                    <div class="form-group folder-field" style="margin-top: 14px;">
+                        <div class="folder-field-heading">
+                            <label for="creativeOutputFolder">输出文件夹</label>
+                            <span class="folder-desc">创意拓展生成结果保存到这里</span>
+                        </div>
+                        <div class="folder-path-row">
+                            <div class="folder-input-combo">
+                                <input type="text" id="creativeOutputFolder" placeholder="默认：D:\工作\自动化工作流1\创意拓展\输出" value="D:\工作\自动化工作流1\创意拓展\输出">
+                                <button type="button" class="folder-history-button" id="creativeOutputFolderHistoryButton" onclick="toggleFolderHistory('creativeOutputFolder')"><span class="history-caret">▼</span>历史</button>
+                                <div class="folder-history-menu" id="creativeOutputFolderHistoryMenu"></div>
+                            </div>
+                            <button class="btn btn-secondary btn-folder-browse" onclick="browseFolder('creativeOutputFolder')">浏览</button>
+                        </div>
+                    </div>
+
+                    <div class="form-group folder-field">
+                        <div class="folder-field-heading">
+                            <label for="creativeReferenceFolder">Legil参考图文件夹</label>
+                            <span class="folder-desc">可选，留空则只发送表格提示词</span>
+                        </div>
+                        <div class="folder-path-row">
+                            <div class="folder-input-combo">
+                                <input type="text" id="creativeReferenceFolder" placeholder="可选：选择后会循环上传参考图" value="">
+                                <button type="button" class="folder-history-button" id="creativeReferenceFolderHistoryButton" onclick="toggleFolderHistory('creativeReferenceFolder')"><span class="history-caret">▼</span>历史</button>
+                                <div class="folder-history-menu" id="creativeReferenceFolderHistoryMenu"></div>
+                            </div>
+                            <button class="btn btn-secondary btn-folder-browse" onclick="browseFolder('creativeReferenceFolder')">浏览</button>
+                        </div>
+                    </div>
+
+                    <div class="creative-quick-actions">
+                        <button class="btn btn-secondary" onclick="openSingleWebsite('legil')">打开Legil</button>
+                        <button class="btn btn-secondary" onclick="closeBrowser()">关闭浏览器</button>
+                    </div>
+                </div>
+
+                <details class="card collapsible-card compact-config-card" open>
+                    <summary class="card-title">
+                        <span class="icon icon-purple icon-image" aria-hidden="true"></span>
+                        Legil生成参数
+                    </summary>
+
+                    <div class="setting-group">
+                        <label>图生图模型</label>
+                        <div class="model-options" id="creativeLegilImageModelOptions"></div>
+                    </div>
+
+                    <div class="setting-group">
+                        <label>宽高比</label>
+                        <div class="setting-options" id="creativeLegilAspectRatioOptions"></div>
+                    </div>
+
+                    <div class="setting-group">
+                        <label>分辨率</label>
+                        <div class="setting-options" id="creativeLegilResolutionOptions"></div>
+                    </div>
+
+                    <div class="setting-group">
+                        <label>输出数量</label>
+                        <div class="setting-options" id="creativeLegilOutputQuantityOptions"></div>
+                    </div>
+
+                    <div class="input-actions">
+                        <button class="btn btn-primary" onclick="saveCreativeConfig()">保存创意拓展参数</button>
+                        <button class="btn btn-secondary" onclick="loadCreativeConfig()">刷新参数</button>
+                    </div>
+                    <div class="info-box" id="creativeLegilGenerationConfigInfo"></div>
+                </details>
+
+                <div class="card card-wide">
+                    <div class="card-title">
+                        <span class="icon icon-blue icon-folder" aria-hidden="true"></span>
+                        提示词预览与启动
+                    </div>
+
+                    <div class="creative-start-layout">
+                        <div>
+                            <div class="info-box" id="creativeTableInfo">请先上传表格文件，系统会自动提取画面提示词。</div>
+                            <div class="creative-preview-list" id="creativePromptPreview"></div>
+                        </div>
+
+                        <div class="creative-start-panel">
+                            <button class="btn btn-secondary" id="creativeSaveConfigBtn" onclick="saveCreativeConfig()">保存配置</button>
+                            <button class="btn btn-primary btn-large" id="creativeStartBtn" onclick="startCreativeBatchWithConfirm()">开始创意拓展</button>
+                            <button class="btn btn-secondary" id="creativeResumeTaskBtn" onclick="resumeCreativeStoppedTask()" hidden disabled>继续任务</button>
+                            <button class="btn btn-secondary" id="creativeNewTaskBtn" onclick="startCreativeNewTask()" hidden>新任务</button>
+                            <button class="btn btn-danger" id="creativeStopBtn" onclick="stopCreativeBatch()" disabled>停止工作流</button>
+                        </div>
+                    </div>
+                    <div class="progress-panel creative-progress-panel" id="creativeProgressPanel">
+                        <div class="progress-header">创意拓展进度</div>
+                        <div class="progress-item">
+                            <div class="progress-label">
+                                <span>提示词生成进度</span>
+                                <span id="creativeProgressText">0 / 0</span>
+                            </div>
+                            <div class="progress-bar">
+                                <div class="progress-fill" id="creativeProgressBar" style="width: 0%"></div>
+                            </div>
+                        </div>
+                        <div class="status-text" id="creativeCurrentStatusText">等待启动...</div>
+                        <div class="stats-grid creative-stats-grid">
+                            <div class="stat-item">
+                                <div class="stat-value" id="creativeStatsSuccess">0</div>
+                                <div class="stat-label">成功</div>
+                            </div>
+                            <div class="stat-item">
+                                <div class="stat-value" id="creativeStatsFailed">0</div>
+                                <div class="stat-label">失败</div>
+                            </div>
+                            <div class="stat-item">
+                                <div class="stat-value" id="creativeStatsSaved">0</div>
+                                <div class="stat-label">已保存</div>
+                            </div>
+                            <div class="stat-item">
+                                <div class="stat-value" id="creativeStatsSelected">0</div>
+                                <div class="stat-label">总组数</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="info-box" id="creativeBatchInfo"></div>
+                </div>
+            </div>
+        </section>
 
         <!-- Log Section -->
         <div class="log-section">
@@ -5006,10 +5550,17 @@
     <script>
         // Global config
         const config = {
-            referenceFolder: 'D:\\工作\\自动化工作流1\\输入',
-            saveFolder: 'D:\\工作\\自动化工作流1\\输出',
+            referenceFolder: 'D:\\工作\\自动化工作流1\\批量产图\\输入',
+            saveFolder: 'D:\\工作\\自动化工作流1\\批量产图\\输出',
             legilUrl: 'https://lumos.diandian.info/legil/image-ai/image-to-image',
-            legilReferenceFolder: 'D:\\工作\\自动化工作流1\\Legil参考图',
+            legilReferenceFolder: 'D:\\工作\\自动化工作流1\\批量产图\\参考图',
+            resizeInputFolder: 'D:\\工作\\自动化工作流1\\Legil批量改尺寸\\输入',
+            resizeOutputFolder: 'D:\\工作\\自动化工作流1\\Legil批量改尺寸\\输出',
+            creativeOutputFolder: 'D:\\工作\\自动化工作流1\\创意拓展\\输出',
+            creativeReferenceFolder: '',
+            resizePromptTemplate: '',
+            creativePrompts: [],
+            creativeTableFileName: '',
             doubaoPromptTemplate: '',
             doubaoModelId: '',
             legilGeneration: {
@@ -5017,13 +5568,29 @@
                 aspectRatio: '1:1',
                 resolution: '2K',
                 outputQuantity: 1
+            },
+            resizeLegilGeneration: {
+                imageModel: 'nano-banana-2',
+                aspectRatio: '16:9',
+                resolution: '1K',
+                outputQuantity: 1
+            },
+            creativeLegilGeneration: {
+                imageModel: 'nano-banana-2',
+                aspectRatio: '1:1',
+                resolution: '1K',
+                outputQuantity: 1
             }
         };
 
         const folderDefaults = {
-            referenceFolder: 'D:\\工作\\自动化工作流1\\输入',
-            legilReferenceFolder: 'D:\\工作\\自动化工作流1\\Legil参考图',
-            saveFolder: 'D:\\工作\\自动化工作流1\\输出'
+            referenceFolder: 'D:\\工作\\自动化工作流1\\批量产图\\输入',
+            legilReferenceFolder: 'D:\\工作\\自动化工作流1\\批量产图\\参考图',
+            saveFolder: 'D:\\工作\\自动化工作流1\\批量产图\\输出',
+            resizeInputFolder: 'D:\\工作\\自动化工作流1\\Legil批量改尺寸\\输入',
+            resizeOutputFolder: 'D:\\工作\\自动化工作流1\\Legil批量改尺寸\\输出',
+            creativeOutputFolder: 'D:\\工作\\自动化工作流1\\创意拓展\\输出',
+            creativeReferenceFolder: ''
         };
         const folderHistoryKey = 'ai-image-automation-folder-history-v1';
         const folderHistoryLimit = 8;
@@ -5031,6 +5598,11 @@
         // SSE connection
         let eventSource = null;
         let progressInterval = null;
+        let resizeStatusInterval = null;
+        let creativeStatusInterval = null;
+        let creativeLastRunIndexes = [];
+        let creativeResumeIndexes = [];
+        let workflowResumeInfo = null;
         const maxLogEntries = 1000;
 
         // Initialize
@@ -5042,10 +5614,19 @@
             loadLegilRefFolderConfig();
             loadDoubaoConfig();
             loadLegilGenerationConfig();
+            loadResizeConfig();
+            loadCreativeConfig();
+            refreshWorkflowResumeControls();
             const promptTextarea = document.getElementById('doubaoPromptTemplate');
             if (promptTextarea) {
                 promptTextarea.addEventListener('input', updateDoubaoPromptCount);
             }
+            const resizePromptTextarea = document.getElementById('resizePromptTemplate');
+            if (resizePromptTextarea) {
+                resizePromptTextarea.addEventListener('input', updateResizePromptCount);
+                resizePromptTextarea.addEventListener('blur', () => saveResizeConfig({ silent: true }));
+            }
+            initCreativeTableDropzone();
         });
 
         // Logging
@@ -5112,6 +5693,27 @@
         // Modal
         function closeModal() {
             document.getElementById('completionModal').classList.remove('active');
+        }
+
+        function switchPage(page) {
+            const targetPage = page === 'resize' || page === 'creative' ? page : 'mass';
+            document.getElementById('massPage')?.classList.toggle('active', targetPage === 'mass');
+            document.getElementById('resizePage')?.classList.toggle('active', targetPage === 'resize');
+            document.getElementById('creativePage')?.classList.toggle('active', targetPage === 'creative');
+            document.getElementById('massPageTab')?.classList.toggle('active', targetPage === 'mass');
+            document.getElementById('resizePageTab')?.classList.toggle('active', targetPage === 'resize');
+            document.getElementById('creativePageTab')?.classList.toggle('active', targetPage === 'creative');
+            document.body.classList.toggle('resize-mode', targetPage === 'resize');
+            document.body.classList.toggle('creative-mode', targetPage === 'creative');
+            const subtitle = document.getElementById('pageSubtitle');
+            if (subtitle) {
+                subtitle.textContent = targetPage === 'creative'
+                    ? '本地表格提示词 → Legil逐组生成 → 自动保存'
+                    : (targetPage === 'resize'
+                        ? 'Legil批量改尺寸 → 自动保存到输出文件夹'
+                        : '豆包API生成提示词 → Legil生成图片 → 全自动循环处理');
+            }
+            closeFolderHistoryMenus();
         }
 
         function loadFolderHistory() {
@@ -5291,6 +5893,13 @@
                 await checkReferenceFolder({ silent: true });
             } else if (inputId === 'legilReferenceFolder') {
                 await checkLegilReferenceFolder({ silent: true });
+            } else if (inputId === 'resizeInputFolder') {
+                await checkResizeInputFolder({ silent: true });
+                await saveResizeConfig({ silent: true });
+            } else if (inputId === 'resizeOutputFolder') {
+                await saveResizeConfig({ silent: true });
+            } else if (inputId === 'creativeOutputFolder' || inputId === 'creativeReferenceFolder') {
+                await saveCreativeConfig({ silent: true });
             }
         }
 
@@ -5432,6 +6041,735 @@
                     addFolderHistory('legilReferenceFolder', data.folderPath);
                 }
             } catch (e) {}
+        }
+
+        function updateResizePromptCount() {
+            const textarea = document.getElementById('resizePromptTemplate');
+            const counter = document.getElementById('resizePromptCount');
+            if (textarea && counter) {
+                counter.textContent = `${textarea.value.length} 字`;
+            }
+        }
+
+        async function checkResizeInputFolder(options = {}) {
+            const folderPath = document.getElementById('resizeInputFolder')?.value.trim();
+            const infoBox = document.getElementById('resizeInputCountInfo');
+            if (!folderPath) {
+                if (!options.silent) showToast('请输入改尺寸输入文件夹路径', 'error');
+                return false;
+            }
+
+            if (infoBox) {
+                infoBox.className = 'info-box loading';
+                infoBox.textContent = '统计中...';
+            }
+
+            try {
+                const res = await fetch('/api/count-images', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ folderPath })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    if (infoBox) {
+                        infoBox.className = 'info-box success';
+                        infoBox.textContent = `✅ 找到 ${data.count} 张输入图`;
+                    }
+                    addFolderHistory('resizeInputFolder', folderPath);
+                    if (!options.silent) showToast(`成功找到 ${data.count} 张图片`);
+                    return true;
+                }
+
+                if (infoBox) {
+                    infoBox.className = 'info-box error';
+                    infoBox.textContent = '❌ ' + data.message;
+                }
+                return false;
+            } catch (e) {
+                if (infoBox) {
+                    infoBox.className = 'info-box error';
+                    infoBox.textContent = '❌ 请求失败';
+                }
+                return false;
+            }
+        }
+
+        async function readJsonResponse(response, fallbackMessage = '请求失败') {
+            const contentType = response.headers.get('content-type') || '';
+            if (!contentType.includes('application/json')) {
+                await response.text().catch(() => '');
+                throw new Error(fallbackMessage);
+            }
+
+            const data = await response.json();
+            if (!response.ok) {
+                throw new Error(data.message || fallbackMessage);
+            }
+            return data;
+        }
+
+        async function fetchJsonWithTimeout(url, options = {}, timeoutMs = 20000, fallbackMessage = '请求失败') {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+            try {
+                const response = await fetch(url, {
+                    ...options,
+                    signal: controller.signal
+                });
+                return await readJsonResponse(response, fallbackMessage);
+            } catch (error) {
+                if (error && error.name === 'AbortError') {
+                    throw new Error('请求超时，请检查服务器是否正常运行');
+                }
+                throw error;
+            } finally {
+                clearTimeout(timer);
+            }
+        }
+
+        async function loadResizeConfig() {
+            try {
+                const res = await fetch('/api/config/resize');
+                const data = await readJsonResponse(res, '读取改尺寸配置失败，请重启服务器后刷新页面');
+                if (!data.success || !data.config) return;
+
+                config.resizeInputFolder = data.config.inputFolder || config.resizeInputFolder;
+                config.resizeOutputFolder = data.config.outputFolder || config.resizeOutputFolder;
+                config.resizePromptTemplate = data.config.promptTemplate || '';
+                renderResizeLegilGenerationConfig(data.config);
+
+                const input = document.getElementById('resizeInputFolder');
+                const output = document.getElementById('resizeOutputFolder');
+                const prompt = document.getElementById('resizePromptTemplate');
+                if (input) input.value = config.resizeInputFolder;
+                if (output) output.value = config.resizeOutputFolder;
+                if (prompt) prompt.value = config.resizePromptTemplate;
+
+                addFolderHistory('resizeInputFolder', config.resizeInputFolder);
+                addFolderHistory('resizeOutputFolder', config.resizeOutputFolder);
+                updateResizePromptCount();
+            } catch (e) {}
+        }
+
+        async function saveResizeConfig(options = {}) {
+            const silent = options.silent === true;
+            const infoBox = document.getElementById('resizeBatchInfo');
+            const inputFolder = document.getElementById('resizeInputFolder')?.value.trim() || config.resizeInputFolder;
+            const outputFolder = document.getElementById('resizeOutputFolder')?.value.trim() || config.resizeOutputFolder;
+            const promptTemplate = document.getElementById('resizePromptTemplate')?.value || '';
+
+            try {
+                const res = await fetch('/api/config/resize', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        inputFolder,
+                        outputFolder,
+                        promptTemplate,
+                        generationSettings: config.resizeLegilGeneration
+                    })
+                });
+                const data = await readJsonResponse(res, '保存改尺寸配置失败，请重启服务器后刷新页面');
+                if (!data.success || !data.config) {
+                    throw new Error(data.message || '保存失败');
+                }
+
+                config.resizeInputFolder = data.config.inputFolder;
+                config.resizeOutputFolder = data.config.outputFolder;
+                config.resizePromptTemplate = data.config.promptTemplate || '';
+                if (data.config.generationSettings) {
+                    config.resizeLegilGeneration = {
+                        imageModel: data.config.generationSettings.imageModel || config.resizeLegilGeneration.imageModel,
+                        aspectRatio: data.config.generationSettings.aspectRatio || config.resizeLegilGeneration.aspectRatio,
+                        resolution: data.config.generationSettings.resolution || config.resizeLegilGeneration.resolution,
+                        outputQuantity: Number(data.config.generationSettings.outputQuantity) || config.resizeLegilGeneration.outputQuantity
+                    };
+                    updateResizeLegilGenerationActiveStates();
+                }
+                addFolderHistory('resizeInputFolder', config.resizeInputFolder);
+                addFolderHistory('resizeOutputFolder', config.resizeOutputFolder);
+
+                if (infoBox && !silent) {
+                    infoBox.className = 'info-box success';
+                    infoBox.textContent = '✅ 改尺寸配置已保存';
+                }
+                if (!silent) showToast('改尺寸配置已保存');
+                return true;
+            } catch (e) {
+                if (infoBox && !silent) {
+                    infoBox.className = 'info-box error';
+                    infoBox.textContent = '❌ ' + e.message;
+                }
+                if (!silent) showToast(e.message || '保存改尺寸配置失败', 'error');
+                return false;
+            }
+        }
+
+        function setResizeLegilGenerationInfo(className, text) {
+            const infoBox = document.getElementById('resizeLegilGenerationConfigInfo');
+            if (!infoBox) return;
+            infoBox.className = className;
+            infoBox.textContent = text;
+        }
+
+        function setResizeLegilGenerationValue(key, value) {
+            config.resizeLegilGeneration[key] = key === 'outputQuantity' ? Number(value) : value;
+            updateResizeLegilGenerationActiveStates();
+        }
+
+        function updateResizeLegilGenerationActiveStates() {
+            document.querySelectorAll('[data-resize-legil-setting]').forEach(button => {
+                const key = button.dataset.resizeLegilSetting;
+                button.classList.toggle('active', String(button.dataset.value) === String(config.resizeLegilGeneration[key]));
+            });
+        }
+
+        function renderResizeLegilImageModelOptions(options) {
+            const container = document.getElementById('resizeLegilImageModelOptions');
+            if (!container) return;
+            container.textContent = '';
+
+            const safeOptions = Array.isArray(options) && options.length
+                ? options
+                : [
+                    { value: 'seedream-4.5', label: 'Seedream 4.5' },
+                    { value: 'gpt-image-2', label: 'GPT-Image-2' },
+                    { value: 'gpt-image-1', label: 'GPT-Image-1' },
+                    { value: 'nano-banana-2', label: 'Nano Banana 2' },
+                    { value: 'nano-banana-pro', label: 'Nano Banana Pro' },
+                    { value: 'nano-banana', label: 'Nano Banana' },
+                    { value: 'imagen-3', label: 'Imagen-3' }
+                ];
+
+            safeOptions.forEach(option => {
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.className = 'model-option';
+                button.dataset.resizeLegilSetting = 'imageModel';
+                button.dataset.value = option.value;
+                button.onclick = () => setResizeLegilGenerationValue('imageModel', option.value);
+
+                const title = document.createElement('span');
+                title.className = 'model-option-title';
+                title.textContent = option.label || option.value;
+
+                const desc = document.createElement('span');
+                desc.className = 'model-option-desc';
+                desc.textContent = option.description || '';
+
+                button.appendChild(title);
+                button.appendChild(desc);
+                container.appendChild(button);
+            });
+        }
+
+        function renderResizeLegilSettingOptions(key, values) {
+            const idMap = {
+                aspectRatio: 'resizeLegilAspectRatioOptions',
+                resolution: 'resizeLegilResolutionOptions',
+                outputQuantity: 'resizeLegilOutputQuantityOptions'
+            };
+            const container = document.getElementById(idMap[key]);
+            if (!container) return;
+            container.textContent = '';
+
+            (values || []).forEach(value => {
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.className = 'setting-option';
+                button.dataset.resizeLegilSetting = key;
+                button.dataset.value = value;
+                button.textContent = value;
+                button.onclick = () => setResizeLegilGenerationValue(key, value);
+                container.appendChild(button);
+            });
+        }
+
+        function renderResizeLegilGenerationConfig(dataConfig) {
+            const settings = dataConfig.generationSettings || dataConfig.defaultGenerationSettings || {};
+            const options = dataConfig.generationOptions || {};
+            config.resizeLegilGeneration = {
+                imageModel: settings.imageModel || 'nano-banana-2',
+                aspectRatio: settings.aspectRatio || '16:9',
+                resolution: settings.resolution || '1K',
+                outputQuantity: Number(settings.outputQuantity) || 1
+            };
+
+            renderResizeLegilImageModelOptions(options.imageModels || []);
+            renderResizeLegilSettingOptions('aspectRatio', options.aspectRatios || []);
+            renderResizeLegilSettingOptions('resolution', options.resolutions || []);
+            renderResizeLegilSettingOptions('outputQuantity', options.outputQuantities || []);
+            updateResizeLegilGenerationActiveStates();
+
+            const modelLabel = getLegilImageModelLabel(config.resizeLegilGeneration.imageModel, options.imageModels);
+            setResizeLegilGenerationInfo(
+                'info-box success',
+                `✅ 改尺寸参数：${modelLabel} / ${config.resizeLegilGeneration.aspectRatio} / ${config.resizeLegilGeneration.resolution} / ${config.resizeLegilGeneration.outputQuantity}张`
+            );
+        }
+
+        function setCreativeLegilGenerationInfo(className, text) {
+            const infoBox = document.getElementById('creativeLegilGenerationConfigInfo');
+            if (!infoBox) return;
+            infoBox.className = className;
+            infoBox.textContent = text;
+        }
+
+        function setCreativeLegilGenerationValue(key, value) {
+            config.creativeLegilGeneration[key] = key === 'outputQuantity' ? Number(value) : value;
+            updateCreativeLegilGenerationActiveStates();
+        }
+
+        function updateCreativeLegilGenerationActiveStates() {
+            document.querySelectorAll('[data-creative-legil-setting]').forEach(button => {
+                const key = button.dataset.creativeLegilSetting;
+                button.classList.toggle('active', String(button.dataset.value) === String(config.creativeLegilGeneration[key]));
+            });
+        }
+
+        function renderCreativeLegilImageModelOptions(options) {
+            const container = document.getElementById('creativeLegilImageModelOptions');
+            if (!container) return;
+            container.textContent = '';
+
+            const safeOptions = Array.isArray(options) && options.length
+                ? options
+                : [
+                    { value: 'seedream-4.5', label: 'Seedream 4.5' },
+                    { value: 'gpt-image-2', label: 'GPT-Image-2' },
+                    { value: 'gpt-image-1', label: 'GPT-Image-1' },
+                    { value: 'nano-banana-2', label: 'Nano Banana 2' },
+                    { value: 'nano-banana-pro', label: 'Nano Banana Pro' },
+                    { value: 'nano-banana', label: 'Nano Banana' },
+                    { value: 'imagen-3', label: 'Imagen-3' }
+                ];
+
+            safeOptions.forEach(option => {
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.className = 'model-option';
+                button.dataset.creativeLegilSetting = 'imageModel';
+                button.dataset.value = option.value;
+                button.onclick = () => setCreativeLegilGenerationValue('imageModel', option.value);
+
+                const title = document.createElement('span');
+                title.className = 'model-option-title';
+                title.textContent = option.label || option.value;
+
+                const desc = document.createElement('span');
+                desc.className = 'model-option-desc';
+                desc.textContent = option.description || '';
+
+                button.appendChild(title);
+                button.appendChild(desc);
+                container.appendChild(button);
+            });
+        }
+
+        function renderCreativeLegilSettingOptions(key, values) {
+            const idMap = {
+                aspectRatio: 'creativeLegilAspectRatioOptions',
+                resolution: 'creativeLegilResolutionOptions',
+                outputQuantity: 'creativeLegilOutputQuantityOptions'
+            };
+            const container = document.getElementById(idMap[key]);
+            if (!container) return;
+            container.textContent = '';
+
+            (values || []).forEach(value => {
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.className = 'setting-option';
+                button.dataset.creativeLegilSetting = key;
+                button.dataset.value = value;
+                button.textContent = value;
+                button.onclick = () => setCreativeLegilGenerationValue(key, value);
+                container.appendChild(button);
+            });
+        }
+
+        function renderCreativeLegilGenerationConfig(dataConfig) {
+            const settings = dataConfig.generationSettings || dataConfig.defaultGenerationSettings || {};
+            const options = dataConfig.generationOptions || {};
+            config.creativeLegilGeneration = {
+                imageModel: settings.imageModel || 'nano-banana-2',
+                aspectRatio: settings.aspectRatio || '1:1',
+                resolution: settings.resolution || '1K',
+                outputQuantity: Number(settings.outputQuantity) || 1
+            };
+
+            renderCreativeLegilImageModelOptions(options.imageModels || []);
+            renderCreativeLegilSettingOptions('aspectRatio', options.aspectRatios || []);
+            renderCreativeLegilSettingOptions('resolution', options.resolutions || []);
+            renderCreativeLegilSettingOptions('outputQuantity', options.outputQuantities || []);
+            updateCreativeLegilGenerationActiveStates();
+
+            const modelLabel = getLegilImageModelLabel(config.creativeLegilGeneration.imageModel, options.imageModels);
+            setCreativeLegilGenerationInfo(
+                'info-box success',
+                `✅ 创意拓展参数：${modelLabel} / ${config.creativeLegilGeneration.aspectRatio} / ${config.creativeLegilGeneration.resolution} / ${config.creativeLegilGeneration.outputQuantity}张`
+            );
+        }
+
+        async function loadCreativeConfig() {
+            try {
+                const res = await fetch('/api/config/creative');
+                const data = await readJsonResponse(res, '读取创意拓展配置失败，请重启服务器后刷新页面');
+                if (!data.success || !data.config) return;
+
+                config.creativeOutputFolder = data.config.outputFolder || config.creativeOutputFolder;
+                config.creativeReferenceFolder = data.config.referenceFolder || '';
+                renderCreativeLegilGenerationConfig(data.config);
+
+                const output = document.getElementById('creativeOutputFolder');
+                const reference = document.getElementById('creativeReferenceFolder');
+                if (output) output.value = config.creativeOutputFolder;
+                if (reference) reference.value = config.creativeReferenceFolder;
+
+                addFolderHistory('creativeOutputFolder', config.creativeOutputFolder);
+                if (config.creativeReferenceFolder) {
+                    addFolderHistory('creativeReferenceFolder', config.creativeReferenceFolder);
+                }
+            } catch (e) {}
+        }
+
+        async function saveCreativeConfig(options = {}) {
+            const silent = options.silent === true;
+            const infoBox = document.getElementById('creativeBatchInfo');
+            const outputFolder = document.getElementById('creativeOutputFolder')?.value.trim() || config.creativeOutputFolder;
+            const referenceFolder = document.getElementById('creativeReferenceFolder')?.value.trim() || '';
+
+            try {
+                const res = await fetch('/api/config/creative', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        outputFolder,
+                        referenceFolder,
+                        generationSettings: config.creativeLegilGeneration
+                    })
+                });
+                const data = await readJsonResponse(res, '保存创意拓展配置失败，请重启服务器后刷新页面');
+                if (!data.success || !data.config) {
+                    throw new Error(data.message || '保存失败');
+                }
+
+                config.creativeOutputFolder = data.config.outputFolder;
+                config.creativeReferenceFolder = data.config.referenceFolder || '';
+                if (data.config.generationSettings) {
+                    config.creativeLegilGeneration = {
+                        imageModel: data.config.generationSettings.imageModel || config.creativeLegilGeneration.imageModel,
+                        aspectRatio: data.config.generationSettings.aspectRatio || config.creativeLegilGeneration.aspectRatio,
+                        resolution: data.config.generationSettings.resolution || config.creativeLegilGeneration.resolution,
+                        outputQuantity: Number(data.config.generationSettings.outputQuantity) || config.creativeLegilGeneration.outputQuantity
+                    };
+                    updateCreativeLegilGenerationActiveStates();
+                }
+                addFolderHistory('creativeOutputFolder', config.creativeOutputFolder);
+                if (config.creativeReferenceFolder) {
+                    addFolderHistory('creativeReferenceFolder', config.creativeReferenceFolder);
+                }
+
+                if (infoBox && !silent) {
+                    infoBox.className = 'info-box success';
+                    infoBox.textContent = '✅ 创意拓展配置已保存';
+                }
+                if (!silent) showToast('创意拓展配置已保存');
+                return true;
+            } catch (e) {
+                if (infoBox && !silent) {
+                    infoBox.className = 'info-box error';
+                    infoBox.textContent = '❌ ' + e.message;
+                }
+                if (!silent) showToast(e.message || '保存创意拓展配置失败', 'error');
+                return false;
+            }
+        }
+
+        function readFileAsBase64(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => {
+                    const result = String(reader.result || '');
+                    resolve(result.includes(',') ? result.split(',').pop() : result);
+                };
+                reader.onerror = () => reject(new Error('读取表格文件失败'));
+                reader.readAsDataURL(file);
+            });
+        }
+
+        async function handleCreativeTableFileChange() {
+            await parseCreativeTableFile();
+        }
+
+        function initCreativeTableDropzone() {
+            const dropzone = document.getElementById('creativeTableDropzone');
+            const fileInput = document.getElementById('creativeTableFile');
+            if (!dropzone || !fileInput) return;
+
+            const stopDefaults = (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+            };
+
+            ['dragenter', 'dragover'].forEach(eventName => {
+                dropzone.addEventListener(eventName, (event) => {
+                    stopDefaults(event);
+                    dropzone.classList.add('drag-over');
+                });
+            });
+
+            dropzone.addEventListener('click', (event) => {
+                if (event.target.closest('button, input, label')) return;
+                fileInput.click();
+            });
+
+            ['dragleave', 'dragend'].forEach(eventName => {
+                dropzone.addEventListener(eventName, (event) => {
+                    stopDefaults(event);
+                    if (!dropzone.contains(event.relatedTarget)) {
+                        dropzone.classList.remove('drag-over');
+                    }
+                });
+            });
+
+            dropzone.addEventListener('drop', async (event) => {
+                stopDefaults(event);
+                dropzone.classList.remove('drag-over');
+
+                const file = event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files[0];
+                if (!file) return;
+
+                const ext = file.name.split('.').pop().toLowerCase();
+                if (!['xlsx', 'xls', 'csv'].includes(ext)) {
+                    showToast('请拖入 xlsx / xls / csv 表格文件', 'error');
+                    return;
+                }
+
+                try {
+                    const transfer = new DataTransfer();
+                    transfer.items.add(file);
+                    fileInput.files = transfer.files;
+                } catch (e) {}
+
+                await parseCreativeTableFile(file);
+            });
+        }
+
+        async function parseCreativeTableFile(explicitFile = null) {
+            const fileInput = document.getElementById('creativeTableFile');
+            const infoBox = document.getElementById('creativeTableInfo');
+            const fileInfo = document.getElementById('creativeTableFileInfo');
+            const file = explicitFile || (fileInput && fileInput.files && fileInput.files[0]);
+
+            if (!file) {
+                showToast('请先选择表格文件', 'error');
+                return false;
+            }
+
+            if (infoBox) {
+                infoBox.className = 'info-box loading';
+                infoBox.textContent = '正在解析表格...';
+            }
+            if (fileInfo) {
+                fileInfo.textContent = `${file.name} / ${(file.size / 1024).toFixed(1)} KB`;
+            }
+
+            try {
+                const fileContentBase64 = await readFileAsBase64(file);
+                const data = await fetchJsonWithTimeout('/api/creative/parse-table', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        fileName: file.name,
+                        fileContentBase64
+                    })
+                }, 60000, '解析表格失败，请检查文件格式');
+
+                if (!data.success) {
+                    throw new Error(data.message || '解析失败');
+                }
+
+                config.creativePrompts = Array.isArray(data.prompts)
+                    ? data.prompts.map((item, index) => ({
+                        ...item,
+                        index: index + 1,
+                        selected: item.selected !== false
+                    }))
+                    : [];
+                config.creativeTableFileName = data.fileName || file.name;
+                renderCreativePromptPreview(config.creativePrompts);
+
+                if (infoBox) {
+                    infoBox.className = 'info-box success';
+                    infoBox.textContent = `✅ 已从 ${config.creativeTableFileName} / ${data.sheetName || '首个工作表'} 提取 ${config.creativePrompts.length} 组提示词`;
+                }
+                addLog(`✅ 创意拓展表格解析完成：${config.creativePrompts.length} 组提示词`, 'success');
+                showToast(`已提取 ${config.creativePrompts.length} 组提示词`);
+                return true;
+            } catch (e) {
+                config.creativePrompts = [];
+                renderCreativePromptPreview([]);
+                if (infoBox) {
+                    infoBox.className = 'info-box error';
+                    infoBox.textContent = '❌ ' + e.message;
+                }
+                showToast(e.message || '解析表格失败', 'error');
+                return false;
+            }
+        }
+
+        function getSelectedCreativePrompts() {
+            return (Array.isArray(config.creativePrompts) ? config.creativePrompts : [])
+                .filter(item => item && item.selected !== false && String(item.prompt || '').trim());
+        }
+
+        function getCreativePromptIndex(item, fallbackIndex = 0) {
+            const value = Number(item && item.index);
+            return Number.isFinite(value) && value > 0 ? value : fallbackIndex + 1;
+        }
+
+        function setCreativeNewTaskVisible(visible) {
+            const btn = document.getElementById('creativeNewTaskBtn');
+            if (btn) btn.hidden = visible !== true;
+        }
+
+        function setCreativeResumeTaskVisible(visible, remainingCount = 0) {
+            const btn = document.getElementById('creativeResumeTaskBtn');
+            if (!btn) return;
+            btn.hidden = visible !== true;
+            btn.disabled = visible !== true || remainingCount <= 0;
+            btn.textContent = remainingCount > 0 ? `继续任务（剩余 ${remainingCount} 组）` : '继续任务';
+        }
+
+        function setCreativeStoppedActionsVisible(visible, remainingCount = 0) {
+            setCreativeResumeTaskVisible(visible === true && remainingCount > 0, remainingCount);
+            setCreativeNewTaskVisible(visible === true);
+        }
+
+        function selectCreativePromptsByIndexes(indexes) {
+            const selected = new Set((indexes || []).map(Number).filter(Number.isFinite));
+            (config.creativePrompts || []).forEach((item, index) => {
+                item.selected = selected.has(getCreativePromptIndex(item, index));
+            });
+            renderCreativePromptPreview(config.creativePrompts);
+        }
+
+        function getCreativeRemainingRunIndexes(progress) {
+            const completed = Math.max(0, Number(progress && progress.completed) || 0);
+            const runIndexes = creativeLastRunIndexes.length > 0
+                ? creativeLastRunIndexes
+                : getSelectedCreativePrompts().map((item, index) => getCreativePromptIndex(item, index));
+            return runIndexes.slice(Math.min(completed, runIndexes.length));
+        }
+
+        function updateCreativeSelectionCount() {
+            const count = document.getElementById('creativeSelectionCount');
+            const total = Array.isArray(config.creativePrompts) ? config.creativePrompts.length : 0;
+            const selected = getSelectedCreativePrompts().length;
+            if (count) {
+                count.textContent = `已选择 ${selected} / ${total} 组`;
+            }
+            const selectedStat = document.getElementById('creativeStatsSelected');
+            if (selectedStat) {
+                selectedStat.textContent = selected || 0;
+            }
+        }
+
+        function toggleCreativePromptSelection(index, checked) {
+            const item = (config.creativePrompts || [])[index - 1];
+            if (!item) return;
+            item.selected = checked === true;
+            const card = document.getElementById(`creative-prompt-${index}`);
+            if (card) {
+                card.classList.toggle('is-unselected', item.selected === false);
+            }
+            updateCreativeSelectionCount();
+        }
+
+        function setAllCreativePromptsSelected(selected) {
+            (config.creativePrompts || []).forEach(item => {
+                item.selected = selected === true;
+            });
+            renderCreativePromptPreview(config.creativePrompts);
+        }
+
+        function renderCreativePromptPreview(prompts) {
+            const list = document.getElementById('creativePromptPreview');
+            if (!list) return;
+            list.textContent = '';
+
+            const safePrompts = Array.isArray(prompts) ? prompts : [];
+            if (safePrompts.length === 0) {
+                return;
+            }
+
+            const selectionBar = document.createElement('div');
+            selectionBar.className = 'creative-selection-bar';
+
+            const selectionCount = document.createElement('span');
+            selectionCount.className = 'creative-selection-count';
+            selectionCount.id = 'creativeSelectionCount';
+
+            const selectAllBtn = document.createElement('button');
+            selectAllBtn.type = 'button';
+            selectAllBtn.className = 'creative-mini-btn';
+            selectAllBtn.textContent = '全选';
+            selectAllBtn.onclick = () => setAllCreativePromptsSelected(true);
+
+            const clearBtn = document.createElement('button');
+            clearBtn.type = 'button';
+            clearBtn.className = 'creative-mini-btn';
+            clearBtn.textContent = '全不选';
+            clearBtn.onclick = () => setAllCreativePromptsSelected(false);
+
+            selectionBar.appendChild(selectionCount);
+            selectionBar.appendChild(selectAllBtn);
+            selectionBar.appendChild(clearBtn);
+            list.appendChild(selectionBar);
+
+            safePrompts.forEach(item => {
+                const index = Number(item.index) || (safePrompts.indexOf(item) + 1);
+                const card = document.createElement('div');
+                card.className = 'creative-preview-item';
+                card.id = `creative-prompt-${index}`;
+                card.classList.toggle('is-unselected', item.selected === false);
+
+                const meta = document.createElement('div');
+                meta.className = 'creative-preview-meta';
+
+                const label = document.createElement('label');
+                label.className = 'creative-check-label';
+
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.checked = item.selected !== false;
+                checkbox.onchange = () => toggleCreativePromptSelection(index, checkbox.checked);
+
+                const title = document.createElement('span');
+                title.className = 'creative-preview-title';
+                title.textContent = `#${index} ${item.direction || '未命名方向'}${item.promptTitle ? ` / ${item.promptTitle}` : ''}`;
+
+                const row = document.createElement('span');
+                row.textContent = `行 ${item.sourceRow || '-'}`;
+
+                const text = document.createElement('div');
+                text.className = 'creative-preview-text';
+                const content = String(item.prompt || '');
+                text.textContent = content.slice(0, 180) + (content.length > 180 ? '...' : '');
+
+                label.appendChild(checkbox);
+                label.appendChild(title);
+                meta.appendChild(label);
+                meta.appendChild(row);
+                card.appendChild(meta);
+                card.appendChild(text);
+                list.appendChild(card);
+            });
+
+            updateCreativeSelectionCount();
         }
 
         function updateDoubaoPromptCount() {
@@ -5632,10 +6970,6 @@
         }
 
         function renderLegilImageModelOptions(options) {
-            const container = document.getElementById('legilImageModelOptions');
-            if (!container) return;
-            container.textContent = '';
-
             const safeOptions = Array.isArray(options) && options.length
                 ? options
                 : [
@@ -5647,6 +6981,10 @@
                     { value: 'nano-banana', label: 'Nano Banana' },
                     { value: 'imagen-3', label: 'Imagen-3' }
                 ];
+
+            const container = document.getElementById('legilImageModelOptions');
+            if (!container) return;
+            container.textContent = '';
 
             safeOptions.forEach(option => {
                 const button = document.createElement('button');
@@ -5712,8 +7050,14 @@
             renderLegilSettingOptions('outputQuantity', options.outputQuantities || []);
         }
 
-        async function loadLegilGenerationConfig() {
+        function setLegilGenerationInfo(className, text) {
             const infoBox = document.getElementById('legilGenerationConfigInfo');
+            if (!infoBox) return;
+            infoBox.className = className;
+            infoBox.textContent = text;
+        }
+
+        async function loadLegilGenerationConfig() {
             try {
                 const res = await fetch('/api/config/legil-generation');
                 const data = await res.json();
@@ -5723,28 +7067,17 @@
 
                 renderLegilGenerationConfig(data.config);
 
-                if (infoBox) {
-                    const s = data.config.settings;
-                    const modelLabel = getLegilImageModelLabel(s.imageModel, data.config.options?.imageModels);
-                    infoBox.className = 'info-box success';
-                    infoBox.textContent = `✅ 当前参数：${modelLabel} / ${s.aspectRatio} / ${s.resolution} / ${s.outputQuantity}张`;
-                }
+                const s = data.config.settings;
+                const modelLabel = getLegilImageModelLabel(s.imageModel, data.config.options?.imageModels);
+                setLegilGenerationInfo('info-box success', `✅ 当前参数：${modelLabel} / ${s.aspectRatio} / ${s.resolution} / ${s.outputQuantity}张`);
             } catch (e) {
-                if (infoBox) {
-                    infoBox.className = 'info-box error';
-                    infoBox.textContent = '❌ Legil参数读取失败';
-                }
+                setLegilGenerationInfo('info-box error', '❌ Legil参数读取失败');
             }
         }
 
         async function saveLegilGenerationConfig(options = {}) {
             const silent = options.silent === true;
-            const infoBox = document.getElementById('legilGenerationConfigInfo');
-
-            if (infoBox) {
-                infoBox.className = 'info-box loading';
-                infoBox.textContent = '保存中...';
-            }
+            setLegilGenerationInfo('info-box loading', '保存中...');
 
             try {
                 const res = await fetch('/api/config/legil-generation', {
@@ -5760,20 +7093,14 @@
                 renderLegilGenerationConfig(data.config);
                 const s = data.config.settings;
                 const modelLabel = getLegilImageModelLabel(s.imageModel, data.config.options?.imageModels);
-                if (infoBox) {
-                    infoBox.className = 'info-box success';
-                    infoBox.textContent = `✅ 已保存：${modelLabel} / ${s.aspectRatio} / ${s.resolution} / ${s.outputQuantity}张`;
-                }
+                setLegilGenerationInfo('info-box success', `✅ 已保存：${modelLabel} / ${s.aspectRatio} / ${s.resolution} / ${s.outputQuantity}张`);
                 if (!silent) {
                     showToast('Legil参数已保存');
                     addLog(`✅ Legil参数已保存：${modelLabel} / ${s.aspectRatio} / ${s.resolution} / ${s.outputQuantity}张`, 'success');
                 }
                 return true;
             } catch (e) {
-                if (infoBox) {
-                    infoBox.className = 'info-box error';
-                    infoBox.textContent = '❌ ' + e.message;
-                }
+                setLegilGenerationInfo('info-box error', '❌ ' + e.message);
                 if (!silent) showToast(e.message || 'Legil参数保存失败', 'error');
                 return false;
             }
@@ -5857,6 +7184,483 @@
             } catch (e) {}
         }
 
+        async function startResizeBatchWithConfirm() {
+            const confirmed = confirm(
+                '请确认以下事项：\n\n' +
+                '✅ 已在浏览器中登录 Legil 账号\n' +
+                '✅ 改尺寸输入文件夹路径正确\n' +
+                '✅ 改尺寸输出文件夹路径正确\n' +
+                '✅ 固定提示词内容已确认\n\n' +
+                '点击"确定"开始批量改尺寸。'
+            );
+            if (!confirmed) return;
+
+            await startResizeBatch();
+        }
+
+        async function startResizeBatch() {
+            const inputFolder = document.getElementById('resizeInputFolder')?.value.trim();
+            const outputFolder = document.getElementById('resizeOutputFolder')?.value.trim();
+            const promptTemplate = document.getElementById('resizePromptTemplate')?.value.trim();
+            const infoBox = document.getElementById('resizeBatchInfo');
+            const startBtn = document.getElementById('resizeStartBtn');
+            const stopBtn = document.getElementById('resizeStopBtn');
+
+            if (!inputFolder) return showToast('请输入改尺寸输入文件夹路径', 'error');
+            if (!outputFolder) return showToast('请输入改尺寸输出文件夹路径', 'error');
+            if (!promptTemplate) return showToast('请输入发送给 Legil 的固定文字提示词', 'error');
+
+            addFolderHistory('resizeInputFolder', inputFolder);
+            addFolderHistory('resizeOutputFolder', outputFolder);
+
+            if (startBtn) {
+                startBtn.disabled = true;
+                startBtn.textContent = '运行中...';
+            }
+            if (stopBtn) {
+                stopBtn.disabled = true;
+                stopBtn.textContent = '停止工作流';
+            }
+            if (infoBox) {
+                infoBox.className = 'info-box loading';
+                infoBox.textContent = '正在启动 Legil 批量改尺寸任务...';
+            }
+
+            try {
+                const configSaved = await saveResizeConfig({ silent: true });
+                if (!configSaved) {
+                    throw new Error('改尺寸配置保存失败');
+                }
+
+                const res = await fetch('/api/legil/resize-batch', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        inputFolder,
+                        outputFolder,
+                        promptTemplate,
+                        generationSettings: config.resizeLegilGeneration
+                    })
+                });
+                const data = await readJsonResponse(res, '启动改尺寸失败，请重启服务器后刷新页面');
+
+                if (!data.success) {
+                    throw new Error(data.message || '启动失败');
+                }
+
+                if (infoBox) {
+                    infoBox.className = 'info-box success';
+                    infoBox.textContent = `✅ 已启动：${data.totalImages || 0} 张输入图`;
+                }
+                addLog(`✅ Legil批量改尺寸已启动：${data.totalImages || 0} 张输入图`, 'success');
+                showToast('改尺寸任务已启动');
+                if (stopBtn) {
+                    stopBtn.disabled = false;
+                    stopBtn.textContent = '停止工作流';
+                }
+                startResizeStatusPolling();
+            } catch (e) {
+                if (infoBox) {
+                    infoBox.className = 'info-box error';
+                    infoBox.textContent = '❌ ' + e.message;
+                }
+                showToast(e.message || '启动改尺寸失败', 'error');
+                resetResizeUI();
+            }
+        }
+
+        async function stopResizeBatch() {
+            const stopBtn = document.getElementById('resizeStopBtn');
+            const infoBox = document.getElementById('resizeBatchInfo');
+
+            if (stopBtn) {
+                stopBtn.disabled = true;
+                stopBtn.textContent = '停止中...';
+            }
+            if (infoBox) {
+                infoBox.className = 'info-box loading';
+                infoBox.textContent = '正在停止改尺寸任务...';
+            }
+
+            addLog('正在停止改尺寸任务...', 'system');
+
+            try {
+                const res = await fetch('/api/legil/stop', { method: 'POST' });
+                const data = await readJsonResponse(res, '停止改尺寸任务失败，请重启服务器后刷新页面');
+                if (!data.success) {
+                    throw new Error(data.message || '停止失败');
+                }
+
+                showToast('已发送停止指令');
+                addLog('⏹️ 已发送停止改尺寸任务指令', 'system');
+                startResizeStatusPolling();
+            } catch (e) {
+                if (infoBox) {
+                    infoBox.className = 'info-box error';
+                    infoBox.textContent = '❌ ' + e.message;
+                }
+                if (stopBtn) {
+                    stopBtn.disabled = false;
+                    stopBtn.textContent = '停止工作流';
+                }
+                showToast(e.message || '停止失败', 'error');
+            }
+        }
+
+        function startResizeStatusPolling() {
+            if (resizeStatusInterval) {
+                clearInterval(resizeStatusInterval);
+                resizeStatusInterval = null;
+            }
+            checkResizeTaskStatus();
+            resizeStatusInterval = setInterval(checkResizeTaskStatus, 3000);
+        }
+
+        async function checkResizeTaskStatus() {
+            try {
+                const res = await fetch('/api/legil/task-status');
+                const data = await readJsonResponse(res, '读取改尺寸任务状态失败');
+                if (!data.success) return;
+
+                if (!data.running) {
+                    if (resizeStatusInterval) {
+                        clearInterval(resizeStatusInterval);
+                        resizeStatusInterval = null;
+                    }
+                    resetResizeUI();
+                } else {
+                    const stopBtn = document.getElementById('resizeStopBtn');
+                    if (stopBtn) {
+                        stopBtn.disabled = data.stopRequested === true;
+                        stopBtn.textContent = data.stopRequested === true ? '停止中...' : '停止工作流';
+                    }
+                }
+            } catch (e) {}
+        }
+
+        function resetResizeUI() {
+            const startBtn = document.getElementById('resizeStartBtn');
+            const stopBtn = document.getElementById('resizeStopBtn');
+            if (startBtn) {
+                startBtn.disabled = false;
+                startBtn.textContent = '开始改尺寸';
+            }
+            if (stopBtn) {
+                stopBtn.disabled = true;
+                stopBtn.textContent = '停止工作流';
+            }
+        }
+
+        function prepareCreativeStoppedActions(progress) {
+            const remainingIndexes = getCreativeRemainingRunIndexes(progress);
+            const startBtn = document.getElementById('creativeStartBtn');
+            const infoBox = document.getElementById('creativeBatchInfo');
+            const hasPrompts = Array.isArray(config.creativePrompts) && config.creativePrompts.length > 0;
+
+            creativeResumeIndexes = remainingIndexes;
+            setCreativeStoppedActionsVisible(hasPrompts, remainingIndexes.length);
+
+            if (remainingIndexes.length > 0) {
+                selectCreativePromptsByIndexes(remainingIndexes);
+                if (startBtn) {
+                    startBtn.disabled = true;
+                    startBtn.textContent = '请选择继续任务或新任务';
+                }
+                if (infoBox) {
+                    infoBox.className = 'info-box success';
+                    infoBox.textContent = `⏹️ 创意拓展已停止，可点击“继续任务”处理剩余 ${remainingIndexes.length} 组，或点击“新任务”重新开始。`;
+                }
+                return;
+            }
+
+            if (startBtn) {
+                startBtn.disabled = hasPrompts;
+                startBtn.textContent = hasPrompts ? '请选择新任务' : '开始创意拓展';
+            }
+            if (infoBox) {
+                infoBox.className = 'info-box success';
+                infoBox.textContent = '⏹️ 创意拓展已停止，可以点击“新任务”重新开始。';
+            }
+        }
+
+        async function resumeCreativeStoppedTask() {
+            if (creativeResumeIndexes.length === 0) {
+                showToast('没有可继续的剩余任务', 'error');
+                return;
+            }
+
+            selectCreativePromptsByIndexes(creativeResumeIndexes);
+            await startCreativeBatchWithConfirm();
+        }
+
+        async function startCreativeNewTask() {
+            if (!Array.isArray(config.creativePrompts) || config.creativePrompts.length === 0) {
+                showToast('请先上传表格并提取提示词', 'error');
+                return;
+            }
+
+            setAllCreativePromptsSelected(true);
+            creativeLastRunIndexes = [];
+            creativeResumeIndexes = [];
+
+            const startBtn = document.getElementById('creativeStartBtn');
+            if (startBtn) {
+                startBtn.disabled = false;
+                startBtn.textContent = '开始创意拓展';
+            }
+
+            await startCreativeBatchWithConfirm();
+        }
+
+        async function startCreativeBatchWithConfirm() {
+            const confirmed = confirm(
+                '请确认以下事项：\n\n' +
+                '✅ 已在浏览器中登录 Legil 账号\n' +
+                '✅ 已上传并解析表格提示词\n' +
+                '✅ 创意拓展输出文件夹路径正确\n' +
+                '✅ Legil生成参数已确认\n\n' +
+                '点击"确定"开始创意拓展批量生成。'
+            );
+            if (!confirmed) return;
+
+            await startCreativeBatch();
+        }
+
+        async function startCreativeBatch() {
+            const outputFolder = document.getElementById('creativeOutputFolder')?.value.trim();
+            const referenceFolder = document.getElementById('creativeReferenceFolder')?.value.trim() || '';
+            const infoBox = document.getElementById('creativeBatchInfo');
+            const startBtn = document.getElementById('creativeStartBtn');
+            const stopBtn = document.getElementById('creativeStopBtn');
+
+            if (!outputFolder) return showToast('请输入创意拓展输出文件夹路径', 'error');
+            if (!Array.isArray(config.creativePrompts) || config.creativePrompts.length === 0) {
+                return showToast('请先上传表格并提取提示词', 'error');
+            }
+            const selectedPrompts = getSelectedCreativePrompts();
+            if (selectedPrompts.length === 0) {
+                return showToast('请至少勾选一组要生成的提示词', 'error');
+            }
+            creativeLastRunIndexes = selectedPrompts.map((item, index) => getCreativePromptIndex(item, index));
+            creativeResumeIndexes = [];
+            setCreativeStoppedActionsVisible(false);
+
+            addFolderHistory('creativeOutputFolder', outputFolder);
+            if (referenceFolder) addFolderHistory('creativeReferenceFolder', referenceFolder);
+
+            if (startBtn) {
+                startBtn.disabled = true;
+                startBtn.textContent = '运行中...';
+            }
+            if (stopBtn) {
+                stopBtn.disabled = true;
+                stopBtn.textContent = '停止工作流';
+            }
+            if (infoBox) {
+                infoBox.className = 'info-box loading';
+                infoBox.textContent = '正在启动 Legil 创意拓展任务...';
+            }
+
+            try {
+                const configSaved = await saveCreativeConfig({ silent: true });
+                if (!configSaved) {
+                    throw new Error('创意拓展配置保存失败');
+                }
+
+                const data = await fetchJsonWithTimeout('/api/legil/creative-batch', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        outputFolder,
+                        referenceFolder,
+                        prompts: selectedPrompts,
+                        generationSettings: config.creativeLegilGeneration
+                    })
+                }, 30000, '启动创意拓展失败，请重启服务器后刷新页面');
+
+                if (!data.success) {
+                    throw new Error(data.message || '启动失败');
+                }
+
+                document.getElementById('creativeProgressPanel')?.classList.add('active');
+                updateCreativeProgress(data.progress || {
+                    taskType: 'creative-batch',
+                    phase: 'queued',
+                    total: data.totalPrompts || selectedPrompts.length,
+                    currentIndex: 0,
+                    completed: 0,
+                    success: 0,
+                    failed: 0,
+                    saved: 0,
+                    currentAction: '创意拓展任务已启动，等待 Legil 开始生成...'
+                });
+
+                if (infoBox) {
+                    infoBox.className = 'info-box success';
+                    infoBox.textContent = `✅ 已启动：${data.totalPrompts || 0} 组提示词`;
+                }
+                addLog(`✅ Legil创意拓展已启动：${data.totalPrompts || selectedPrompts.length} 组提示词`, 'success');
+                showToast('创意拓展任务已启动');
+                if (stopBtn) {
+                    stopBtn.disabled = false;
+                    stopBtn.textContent = '停止工作流';
+                }
+                startCreativeStatusPolling();
+            } catch (e) {
+                if (infoBox) {
+                    infoBox.className = 'info-box error';
+                    infoBox.textContent = '❌ ' + e.message;
+                }
+                showToast(e.message || '启动创意拓展失败', 'error');
+                resetCreativeUI();
+            }
+        }
+
+        async function stopCreativeBatch() {
+            const stopBtn = document.getElementById('creativeStopBtn');
+            const infoBox = document.getElementById('creativeBatchInfo');
+
+            if (stopBtn) {
+                stopBtn.disabled = true;
+                stopBtn.textContent = '停止中...';
+            }
+            if (infoBox) {
+                infoBox.className = 'info-box loading';
+                infoBox.textContent = '正在停止创意拓展任务...';
+            }
+
+            addLog('正在停止创意拓展任务...', 'system');
+
+            try {
+                const res = await fetch('/api/legil/stop', { method: 'POST' });
+                const data = await readJsonResponse(res, '停止创意拓展任务失败，请重启服务器后刷新页面');
+                if (!data.success) {
+                    throw new Error(data.message || '停止失败');
+                }
+
+                showToast('已发送停止指令');
+                addLog('⏹️ 已发送停止创意拓展任务指令', 'system');
+                if (infoBox) {
+                    infoBox.className = 'info-box loading';
+                    infoBox.textContent = '已发送停止指令，当前步骤结束后可继续剩余任务或开启新任务。';
+                }
+                startCreativeStatusPolling();
+            } catch (e) {
+                if (infoBox) {
+                    infoBox.className = 'info-box error';
+                    infoBox.textContent = '❌ ' + e.message;
+                }
+                if (stopBtn) {
+                    stopBtn.disabled = false;
+                    stopBtn.textContent = '停止工作流';
+                }
+                showToast(e.message || '停止失败', 'error');
+            }
+        }
+
+        function startCreativeStatusPolling() {
+            if (creativeStatusInterval) {
+                clearInterval(creativeStatusInterval);
+                creativeStatusInterval = null;
+            }
+            checkCreativeTaskStatus();
+            creativeStatusInterval = setInterval(checkCreativeTaskStatus, 3000);
+        }
+
+        function updateCreativeProgress(progress) {
+            if (!progress || progress.taskType !== 'creative-batch') return;
+
+            const panel = document.getElementById('creativeProgressPanel');
+            const total = Math.max(0, Number(progress.total) || 0);
+            const currentIndex = Math.max(0, Number(progress.currentIndex) || 0);
+            const completed = Math.max(0, Number(progress.completed) || 0);
+            const success = Math.max(0, Number(progress.success) || 0);
+            const failed = Math.max(0, Number(progress.failed) || 0);
+            const saved = Math.max(0, Number(progress.saved) || 0);
+            const phase = String(progress.phase || '');
+            const displayIndex = phase === 'completed' ? total : Math.min(total, Math.max(currentIndex, completed));
+            const progressBase = phase === 'completed' ? total : completed;
+            const pct = total > 0 ? Math.max(0, Math.min(100, Math.round((progressBase / total) * 100))) : 0;
+
+            if (panel) panel.classList.add('active');
+
+            const progressText = document.getElementById('creativeProgressText');
+            if (progressText) progressText.textContent = `${displayIndex} / ${total}`;
+
+            const progressBar = document.getElementById('creativeProgressBar');
+            if (progressBar) {
+                progressBar.style.width = `${pct}%`;
+                progressBar.classList.toggle('success', phase === 'completed');
+            }
+
+            const statusText = document.getElementById('creativeCurrentStatusText');
+            if (statusText) {
+                statusText.textContent = progress.currentAction || progress.currentName || '创意拓展任务运行中...';
+            }
+
+            const successEl = document.getElementById('creativeStatsSuccess');
+            const failedEl = document.getElementById('creativeStatsFailed');
+            const savedEl = document.getElementById('creativeStatsSaved');
+            const totalEl = document.getElementById('creativeStatsSelected');
+            if (successEl) successEl.textContent = success;
+            if (failedEl) failedEl.textContent = failed;
+            if (savedEl) savedEl.textContent = saved;
+            if (totalEl) totalEl.textContent = total;
+        }
+
+        async function checkCreativeTaskStatus() {
+            try {
+                const res = await fetch('/api/legil/task-status');
+                const data = await readJsonResponse(res, '读取创意拓展任务状态失败');
+                if (!data.success) return;
+                if (data.progress && data.progress.taskType === 'creative-batch') {
+                    updateCreativeProgress(data.progress);
+                }
+
+                if (!data.running) {
+                    if (creativeStatusInterval) {
+                        clearInterval(creativeStatusInterval);
+                        creativeStatusInterval = null;
+                    }
+                    resetCreativeUI();
+                    if (
+                        data.progress &&
+                        data.progress.taskType === 'creative-batch' &&
+                        String(data.progress.phase || '') === 'stopped'
+                    ) {
+                        prepareCreativeStoppedActions(data.progress);
+                    }
+                } else {
+                    const startBtn = document.getElementById('creativeStartBtn');
+                    if (startBtn) {
+                        startBtn.disabled = true;
+                        startBtn.textContent = data.stopRequested === true ? '等待停止完成...' : '运行中...';
+                    }
+                    setCreativeStoppedActionsVisible(false);
+                    const stopBtn = document.getElementById('creativeStopBtn');
+                    if (stopBtn) {
+                        const isCreativeTask = data.taskType === 'creative-batch';
+                        stopBtn.disabled = !isCreativeTask || data.stopRequested === true;
+                        stopBtn.textContent = data.stopRequested === true ? '停止中...' : '停止工作流';
+                    }
+                }
+            } catch (e) {}
+        }
+
+        function resetCreativeUI() {
+            const startBtn = document.getElementById('creativeStartBtn');
+            const stopBtn = document.getElementById('creativeStopBtn');
+            if (startBtn) {
+                startBtn.disabled = false;
+                startBtn.textContent = '开始创意拓展';
+            }
+            setCreativeStoppedActionsVisible(false);
+            if (stopBtn) {
+                stopBtn.disabled = true;
+                stopBtn.textContent = '停止工作流';
+            }
+        }
+
         // Workflow
         async function startWorkflowWithConfirm() {
             const confirmed = confirm(
@@ -5870,6 +7674,91 @@
             if (!confirmed) return;
 
             await startWorkflow();
+        }
+
+        async function refreshWorkflowResumeControls() {
+            const actions = document.getElementById('workflowResumeActions');
+            const resumeBtn = document.getElementById('resumeWorkflowBtn');
+            if (!actions || !resumeBtn) return;
+
+            try {
+                const res = await fetch('/api/workflow/resume-info');
+                const data = await res.json();
+                workflowResumeInfo = data.success && data.resume && data.resume.hasResume ? data.resume : null;
+            } catch (e) {
+                workflowResumeInfo = null;
+            }
+
+            if (workflowResumeInfo) {
+                actions.classList.add('active');
+                resumeBtn.textContent = `↩️ 继续：第 ${workflowResumeInfo.imageIndex}/${workflowResumeInfo.totalImages} 张，提示词 ${workflowResumeInfo.promptIndex}/${workflowResumeInfo.totalPrompts}`;
+            } else {
+                actions.classList.remove('active');
+                resumeBtn.textContent = '↩️ 继续之前任务';
+            }
+        }
+
+        async function resumeWorkflowFromStop() {
+            if (!workflowResumeInfo) {
+                await refreshWorkflowResumeControls();
+            }
+
+            if (!workflowResumeInfo) {
+                showToast('没有可继续的上次任务', 'error');
+                return;
+            }
+
+            const confirmed = confirm(
+                `继续上次停止的任务？\n\n` +
+                `参考图：${workflowResumeInfo.imageIndex}/${workflowResumeInfo.totalImages} ${workflowResumeInfo.imageName || ''}\n` +
+                `提示词：${workflowResumeInfo.promptIndex}/${workflowResumeInfo.totalPrompts}\n\n` +
+                `点击"确定"后会从该位置继续。`
+            );
+            if (!confirmed) return;
+
+            const resumeBtn = document.getElementById('resumeWorkflowBtn');
+            if (resumeBtn) {
+                resumeBtn.disabled = true;
+                resumeBtn.textContent = '⏳ 正在继续...';
+            }
+
+            document.getElementById('oneClickStartBtn').disabled = true;
+            document.getElementById('oneClickStartBtn').textContent = '⏳ 运行中...';
+            document.getElementById('progressPanel').classList.add('active');
+            addLog('↩️ 正在继续上次停止的工作流...', 'system');
+
+            try {
+                const res = await fetch('/api/workflow/resume', { method: 'POST' });
+                const data = await res.json();
+                if (data.success) {
+                    showToast('已继续上次任务');
+                    workflowResumeInfo = null;
+                    await refreshWorkflowResumeControls();
+                    startProgressPolling();
+                } else {
+                    showToast(data.message || '继续任务失败', 'error');
+                    resetUI();
+                    await refreshWorkflowResumeControls();
+                }
+            } catch (e) {
+                showToast('继续任务失败', 'error');
+                resetUI();
+                await refreshWorkflowResumeControls();
+            } finally {
+                if (resumeBtn) resumeBtn.disabled = false;
+            }
+        }
+
+        async function startNewWorkflowFromStop() {
+            const confirmed = confirm('确定开启新任务？这会清除“继续之前任务”的记录。');
+            if (!confirmed) return;
+
+            try {
+                await fetch('/api/workflow/clear-resume', { method: 'POST' });
+            } catch (e) {}
+            workflowResumeInfo = null;
+            await refreshWorkflowResumeControls();
+            await startWorkflowWithConfirm();
         }
 
         async function startWorkflow() {
@@ -5889,34 +7778,44 @@
             addLog('🚀 启动工作流...', 'system');
 
             try {
+                addLog('正在保存豆包API配置...', 'system');
                 const configSaved = await saveDoubaoConfig({ silent: true });
                 if (!configSaved) {
                     showToast('请先检查豆包配置', 'error');
+                    addLog('❌ 启动失败：豆包API配置保存失败', 'error');
                     resetUI();
                     return;
                 }
+                addLog('正在保存Legil生成参数...', 'system');
                 const legilConfigSaved = await saveLegilGenerationConfig({ silent: true });
                 if (!legilConfigSaved) {
                     showToast('请先检查Legil生成参数', 'error');
+                    addLog('❌ 启动失败：Legil生成参数保存失败', 'error');
                     resetUI();
                     return;
                 }
 
-                const res = await fetch('/api/workflow/start', {
+                addLog('正在提交工作流启动请求...', 'system');
+                const data = await fetchJsonWithTimeout('/api/workflow/start', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ inputFolder, outputFolder, legilReferenceFolder: legilRefFolder })
-                });
-                const data = await res.json();
+                }, 30000, '启动工作流失败，请重启服务器后刷新页面');
                 if (data.success) {
+                    addLog(`✅ 工作流已提交：将处理 ${data.totalImages || 0} 张参考图`, 'success');
                     showToast('工作流已启动');
+                    workflowResumeInfo = null;
+                    await refreshWorkflowResumeControls();
                     startProgressPolling();
                 } else {
                     showToast(data.message, 'error');
+                    addLog(`❌ 启动失败：${data.message || '未知错误'}`, 'error');
                     resetUI();
                 }
             } catch (e) {
-                showToast('启动失败', 'error');
+                const message = e && e.message ? e.message : '启动失败';
+                showToast(message, 'error');
+                addLog(`❌ 启动失败：${message}`, 'error');
                 resetUI();
             }
         }
@@ -5974,6 +7873,7 @@
                         clearInterval(progressInterval);
                         progressInterval = null;
                     }
+                    await refreshWorkflowResumeControls();
                     resetUI();
                 } else if (!s.isRunning && ds.phase === 'error') {
                     if (progressInterval) {
@@ -5998,13 +7898,16 @@
         async function stopWorkflow() {
             addLog('正在停止工作流...', 'system');
             try {
-                await fetch('/api/workflow/stop', { method: 'POST' });
+                const res = await fetch('/api/workflow/stop', { method: 'POST' });
+                const data = await res.json().catch(() => ({}));
                 if (progressInterval) {
                     clearInterval(progressInterval);
                     progressInterval = null;
                 }
                 resetUI();
-                showToast('工作流已停止');
+                workflowResumeInfo = data && data.resume && data.resume.hasResume ? data.resume : null;
+                await refreshWorkflowResumeControls();
+                showToast(workflowResumeInfo ? '工作流已停止，可选择继续或开启新任务' : '工作流已停止');
             } catch (e) {}
         }
 
