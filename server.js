@@ -1,4 +1,4 @@
-/**
+﻿/**
  * ============================================
  * 自动化AI生图网页控制平台 - 服务器端代码
  * ============================================
@@ -14,7 +14,10 @@ const path = require('path');
 
 // 引入 fs 模块，文件系统模块
 const fs = require('fs');
+const axios = require('axios');
+const crypto = require('crypto');
 const { execFile } = require('child_process');
+const { Worker } = require('worker_threads');
 const XLSX = require('xlsx');
 
 // 引入 Playwright 浏览器控制器
@@ -34,6 +37,12 @@ const workflowController = require('./workflow-controller');
 
 const { formatDateTimeForFile, sortNaturallyByName } = require('./file-utils');
 const { readConfig, updateConfig } = require('./config-store');
+const { readSecrets } = require('./secrets-store');
+const {
+    CREATIVE_AGENT_OUTPUT_DIR,
+    getCreativeAgentStatus,
+    getStoredWinkyConfig
+} = require('./creative-agent-service');
 
 const persistedConfig = readConfig();
 
@@ -52,6 +61,7 @@ const DEFAULT_RESIZE_CONFIG = {
 const DEFAULT_CREATIVE_CONFIG = {
     outputFolder: 'D:\\工作\\自动化工作流1\\创意拓展\\输出',
     referenceFolder: '',
+    browserMode: 'headed',
     generationSettings: {
         imageModel: 'nano-banana-2',
         aspectRatio: '1:1',
@@ -100,6 +110,184 @@ const automationState = {
     legilTaskProgress: null
 };
 
+let creativeResumeState = null;
+
+function clampNumber(value, min = 0, max = Number.MAX_SAFE_INTEGER) {
+    const numberValue = Number(value);
+    if (!Number.isFinite(numberValue)) {
+        return min;
+    }
+    return Math.max(min, Math.min(max, Math.floor(numberValue)));
+}
+
+function normalizeCreativeBatchPromptItems(promptItems = []) {
+    return (Array.isArray(promptItems) ? promptItems : [])
+        .map((item, index) => {
+            const prompt = typeof item === 'string'
+                ? item
+                : (item && typeof item.prompt === 'string' ? item.prompt : '');
+            const direction = item && typeof item.direction === 'string' ? item.direction : '';
+            const promptTitle = item && typeof item.promptTitle === 'string' ? item.promptTitle : '';
+            const sourceRow = item && Number.isFinite(Number(item.sourceRow)) ? Number(item.sourceRow) : index + 1;
+            const originalIndex = item && Number.isFinite(Number(item.index)) && Number(item.index) > 0
+                ? Number(item.index)
+                : index + 1;
+            return {
+                index: originalIndex,
+                batchIndex: index + 1,
+                sourceRow,
+                direction: direction.trim(),
+                promptTitle: promptTitle.trim(),
+                prompt: prompt.trim(),
+                selected: true
+            };
+        })
+        .filter(item => item.prompt);
+}
+
+function normalizeCreativeResumeState(state) {
+    if (!state || typeof state !== 'object' || !Array.isArray(state.prompts) || state.prompts.length === 0) {
+        return null;
+    }
+
+    const prompts = normalizeCreativeBatchPromptItems(state.prompts);
+    if (prompts.length === 0) {
+        return null;
+    }
+
+    const total = prompts.length;
+    const nextIndex = clampNumber(
+        state.nextIndex !== undefined ? state.nextIndex : state.completed,
+        0,
+        total
+    );
+    const phase = String(state.phase || 'interrupted');
+    const generationSettings = normalizeLegilGenerationSettings(
+        state.generationSettings,
+        appConfig.creative && appConfig.creative.generationSettings
+            ? appConfig.creative.generationSettings
+            : DEFAULT_CREATIVE_CONFIG.generationSettings
+    );
+
+    return {
+        runId: String(state.runId || ''),
+        phase,
+        tableFileName: String(state.tableFileName || '上次创意拓展任务'),
+        outputFolder: normalizeInputPath(state.outputFolder) || appConfig.creative.outputFolder || DEFAULT_CREATIVE_CONFIG.outputFolder,
+        referenceFolder: normalizeInputPath(state.referenceFolder),
+        browserMode: normalizeCreativeBrowserMode(state.browserMode, appConfig.creative.browserMode || DEFAULT_CREATIVE_CONFIG.browserMode),
+        generationSettings,
+        prompts,
+        total,
+        nextIndex,
+        currentIndex: clampNumber(state.currentIndex, 0, total),
+        completed: clampNumber(state.completed !== undefined ? state.completed : nextIndex, 0, total),
+        success: clampNumber(state.success, 0, total),
+        failed: clampNumber(state.failed, 0, total),
+        saved: clampNumber(state.saved, 0),
+        outputTotal: clampNumber(state.outputTotal, 0),
+        currentName: String(state.currentName || ''),
+        currentAction: String(state.currentAction || '创意拓展任务被中断，可选择继续剩余任务。'),
+        startedAt: String(state.startedAt || new Date().toISOString()),
+        updatedAt: String(state.updatedAt || new Date().toISOString())
+    };
+}
+
+function persistCreativeResumeState() {
+    try {
+        updateConfig({ creativeResume: creativeResumeState });
+    } catch (error) {
+        console.warn('保存创意拓展恢复状态失败:', error.message);
+    }
+}
+
+function setCreativeResumeState(state) {
+    creativeResumeState = state ? normalizeCreativeResumeState(state) : null;
+    if (creativeResumeState) {
+        creativeResumeState.updatedAt = new Date().toISOString();
+    }
+    persistCreativeResumeState();
+    return creativeResumeState;
+}
+
+function updateCreativeResumeState(updates = {}) {
+    if (!creativeResumeState) {
+        return null;
+    }
+
+    creativeResumeState = normalizeCreativeResumeState({
+        ...creativeResumeState,
+        ...(updates && typeof updates === 'object' ? updates : {}),
+        updatedAt: new Date().toISOString()
+    });
+    persistCreativeResumeState();
+    return creativeResumeState;
+}
+
+function clearCreativeResumeState() {
+    creativeResumeState = null;
+    persistCreativeResumeState();
+}
+
+function getCreativeResumeInfo(includePrompts = false) {
+    const state = normalizeCreativeResumeState(creativeResumeState);
+    if (!state) {
+        return { hasResume: false };
+    }
+
+    creativeResumeState = state;
+    const nextIndex = clampNumber(state.nextIndex, 0, state.total);
+    const remainingPrompts = state.prompts.slice(nextIndex);
+    if (remainingPrompts.length === 0 || state.phase === 'completed') {
+        return { hasResume: false };
+    }
+
+    return {
+        hasResume: true,
+        runId: state.runId,
+        phase: state.phase,
+        tableFileName: state.tableFileName,
+        total: state.total,
+        completed: Math.min(state.completed, state.total),
+        success: state.success,
+        failed: state.failed,
+        saved: state.saved,
+        remainingCount: remainingPrompts.length,
+        remainingIndexes: remainingPrompts.map(item => item.index),
+        outputFolder: state.outputFolder,
+        referenceFolder: state.referenceFolder,
+        browserMode: state.browserMode,
+        generationSettings: {
+            ...state.generationSettings
+        },
+        startedAt: state.startedAt,
+        updatedAt: state.updatedAt,
+        currentAction: state.currentAction,
+        progress: {
+            taskType: 'creative-batch',
+            phase: state.phase,
+            total: state.total,
+            currentIndex: state.currentIndex || nextIndex,
+            completed: Math.min(state.completed, state.total),
+            success: state.success,
+            failed: state.failed,
+            saved: state.saved,
+            outputTotal: state.outputTotal,
+            browserMode: state.browserMode,
+            currentName: state.currentName,
+            currentAction: state.currentAction,
+            startedAt: state.startedAt,
+            updatedAt: state.updatedAt
+        },
+        prompts: includePrompts
+            ? state.prompts.map((item, index) => ({
+                ...item,
+                selected: remainingPrompts.some(remaining => remaining.index === item.index) || index >= nextIndex
+            }))
+            : undefined
+    };
+}
+
 function normalizeInputPath(value) {
     if (typeof value !== 'string') {
         return '';
@@ -142,9 +330,20 @@ function normalizeResizeConfigPayload(payload = {}) {
     };
 }
 
+function normalizeCreativeBrowserMode(value, fallback = 'headed') {
+    if (value === 'headless' || value === 'headed') {
+        return value;
+    }
+    return fallback === 'headless' ? 'headless' : 'headed';
+}
+
 function normalizeCreativeConfigPayload(payload = {}) {
     const outputFolder = normalizeInputPath(payload.outputFolder) || appConfig.creative.outputFolder || DEFAULT_CREATIVE_CONFIG.outputFolder;
     const referenceFolder = normalizeInputPath(payload.referenceFolder);
+    const browserMode = normalizeCreativeBrowserMode(
+        payload.browserMode,
+        appConfig.creative.browserMode || DEFAULT_CREATIVE_CONFIG.browserMode
+    );
     const generationSettings = normalizeLegilGenerationSettings(
         payload.generationSettings,
         appConfig.creative.generationSettings || DEFAULT_CREATIVE_CONFIG.generationSettings
@@ -153,6 +352,7 @@ function normalizeCreativeConfigPayload(payload = {}) {
     return {
         outputFolder,
         referenceFolder,
+        browserMode,
         generationSettings
     };
 }
@@ -193,6 +393,14 @@ function normalizeLegilGenerationSettings(settings = {}, fallback = {}) {
         resolution,
         outputQuantity
     };
+}
+
+creativeResumeState = normalizeCreativeResumeState(persistedConfig.creativeResume);
+if (creativeResumeState && ['queued', 'running', 'stopping'].includes(String(creativeResumeState.phase || ''))) {
+    updateCreativeResumeState({
+        phase: 'interrupted',
+        currentAction: '服务器重启或任务被意外打断，可选择继续剩余创意拓展任务。'
+    });
 }
 
 function chooseFolderWithNativeDialog(initialPath = '') {
@@ -244,12 +452,84 @@ exit 2
     });
 }
 
+function runCreativeAgentInWorker(payload) {
+    return new Promise((resolve, reject) => {
+        const worker = new Worker(path.join(__dirname, 'creative-agent-worker.js'), {
+            workerData: payload
+        });
+
+        let settled = false;
+        const settle = (callback, value) => {
+            if (settled) return;
+            settled = true;
+            callback(value);
+        };
+
+        worker.once('message', message => {
+            if (message && message.success) {
+                settle(resolve, message.result);
+                return;
+            }
+            settle(reject, new Error((message && message.message) || '创意拓展 Agent 执行失败'));
+        });
+
+        worker.once('error', error => {
+            settle(reject, error);
+        });
+
+        worker.once('exit', code => {
+            if (code !== 0) {
+                settle(reject, new Error(`创意拓展 Agent worker 已退出，退出码 ${code}`));
+            }
+        });
+    });
+}
+
 function isLegilBusy() {
     return automationState.legilTaskRunning || workflowController.isRunning;
 }
 
 function isLegilStopRequested() {
     return automationState.legilStopRequested === true;
+}
+
+function requestLegilTaskStop() {
+    if (!automationState.legilTaskRunning) {
+        return {
+            success: true,
+            message: '当前没有正在运行的 Legil 任务'
+        };
+    }
+
+    if (!['resize-batch', 'creative-batch'].includes(automationState.legilTaskType)) {
+        return {
+            success: false,
+            message: '当前运行的任务不能从这里停止，请在对应功能区停止'
+        };
+    }
+
+    automationState.legilStopRequested = true;
+    const taskLabel = automationState.legilTaskType === 'creative-batch' ? '创意拓展' : '改尺寸';
+    if (automationState.legilTaskProgress) {
+        automationState.legilTaskProgress = {
+            ...automationState.legilTaskProgress,
+            phase: 'stopping',
+            currentAction: `正在停止${taskLabel}任务...`,
+            updatedAt: new Date().toISOString()
+        };
+    }
+    if (automationState.legilTaskType === 'creative-batch') {
+        updateCreativeResumeState({
+            phase: 'stopping',
+            currentAction: `正在停止${taskLabel}任务...`
+        });
+    }
+    logger.system(`⏹️ 已收到停止${taskLabel}任务指令，正在安全停止...`);
+
+    return {
+        success: true,
+        message: '已发送停止指令，当前步骤结束后会停止'
+    };
 }
 
 async function sleepWithLegilStop(ms) {
@@ -528,6 +808,447 @@ function persistRuntimeConfig(extra = {}) {
         },
         ...extra
     });
+}
+
+function parseCsvConfig(value) {
+    return String(value || '')
+        .split(',')
+        .map(item => item.trim())
+        .filter(Boolean);
+}
+
+function getFeishuConfig() {
+    const secrets = readSecrets();
+    const allowedChatIds = parseCsvConfig(process.env.FEISHU_ALLOWED_CHAT_IDS || secrets.feishuAllowedChatIds);
+    return {
+        verificationToken: String(process.env.FEISHU_VERIFICATION_TOKEN || secrets.feishuVerificationToken || '').trim(),
+        botWebhookUrl: String(process.env.FEISHU_BOT_WEBHOOK_URL || secrets.feishuBotWebhookUrl || '').trim(),
+        botSecret: String(process.env.FEISHU_BOT_SECRET || secrets.feishuBotSecret || '').trim(),
+        allowedChatIds
+    };
+}
+
+function buildFeishuBotSignature(timestamp, secret) {
+    const stringToSign = `${timestamp}\n${secret}`;
+    return crypto.createHmac('sha256', stringToSign).update('').digest('base64');
+}
+
+async function sendFeishuText(text) {
+    const config = getFeishuConfig();
+    if (!config.botWebhookUrl) {
+        return {
+            success: false,
+            message: '未配置飞书机器人 webhook，无法主动发送消息',
+            text
+        };
+    }
+
+    const payload = {
+        msg_type: 'text',
+        content: {
+            text: String(text || '').slice(0, 12000)
+        }
+    };
+
+    if (config.botSecret) {
+        const timestamp = Math.floor(Date.now() / 1000);
+        payload.timestamp = timestamp;
+        payload.sign = buildFeishuBotSignature(timestamp, config.botSecret);
+    }
+
+    const response = await axios.post(config.botWebhookUrl, payload, {
+        timeout: 15000,
+        headers: {
+            'Content-Type': 'application/json'
+        }
+    });
+
+    return {
+        success: true,
+        data: response.data
+    };
+}
+
+function verifyFeishuEventToken(body) {
+    const config = getFeishuConfig();
+    if (!config.verificationToken) {
+        return {
+            success: true
+        };
+    }
+
+    const token = String((body && (body.token || (body.header && body.header.token))) || '').trim();
+    if (token !== config.verificationToken) {
+        return {
+            success: false,
+            message: '飞书事件 token 校验失败'
+        };
+    }
+
+    return {
+        success: true
+    };
+}
+
+function extractFeishuCommandText(body) {
+    const event = body && body.event ? body.event : {};
+    const message = event.message || {};
+    const messageType = String(message.message_type || '').toLowerCase();
+    const rawContent = typeof message.content === 'string' ? message.content : '';
+
+    try {
+        const parsed = rawContent ? JSON.parse(rawContent) : {};
+        if (messageType === 'text' && typeof parsed.text === 'string') {
+            return parsed.text;
+        }
+        if (messageType === 'post' && parsed.post) {
+            const zh = parsed.post.zh_cn || parsed.post.en_us || Object.values(parsed.post)[0] || {};
+            const blocks = Array.isArray(zh.content) ? zh.content : [];
+            return blocks
+                .flatMap(row => Array.isArray(row) ? row : [])
+                .map(item => item && (item.text || item.name || ''))
+                .filter(Boolean)
+                .join(' ');
+        }
+        if (typeof parsed.text === 'string') {
+            return parsed.text;
+        }
+    } catch {
+        return rawContent;
+    }
+
+    return '';
+}
+
+function normalizeFeishuCommandText(text) {
+    return String(text || '')
+        .replace(/<at[^>]*>.*?<\/at>/g, '')
+        .replace(/@\S+/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function assertFeishuChatAllowed(body) {
+    const config = getFeishuConfig();
+    if (!config.allowedChatIds.length) {
+        return {
+            success: true
+        };
+    }
+
+    const chatId = String(body && body.event && body.event.message && body.event.message.chat_id || '').trim();
+    if (config.allowedChatIds.includes(chatId)) {
+        return {
+            success: true
+        };
+    }
+
+    return {
+        success: false,
+        message: '这个飞书会话不在允许控制列表中'
+    };
+}
+
+function getPhaseLabel(phase) {
+    const map = {
+        idle: '空闲',
+        queued: '排队中',
+        running: '运行中',
+        stopping: '停止中',
+        stopped: '已停止',
+        interrupted: '已中断',
+        completed: '已完成',
+        error: '错误',
+        processing_image: '处理参考图',
+        extracting_prompts: '提取提示词',
+        generating_in_legil: 'Legil 生成中'
+    };
+    return map[phase] || phase || '未知';
+}
+
+function buildPlatformStatusText() {
+    const workflowStatus = workflowController.getStatus();
+    const workflowDetail = workflowStatus.currentStatus || {};
+    const workflowResume = workflowController.getResumeInfo();
+    const creativeResume = getCreativeResumeInfo(false);
+    const legilProgress = automationState.legilTaskProgress || {};
+    const browserStatus = {
+        running: !!browserController.browser,
+        legil: browserController.isPageOpen('legil')
+    };
+
+    const lines = [
+        '自动化平台状态',
+        `完整工作流：${workflowStatus.isRunning ? '运行中' : '未运行'}${workflowStatus.progress ? `，进度 ${workflowStatus.progress}%` : ''}`,
+        `当前动作：${workflowDetail.currentAction || '暂无'}`,
+        `图片进度：${workflowStatus.stats.processed || 0}/${workflowStatus.totalImages || 0}，失败 ${workflowStatus.stats.failed || 0}，已生成 ${workflowStatus.stats.totalGenerated || 0}`,
+        `Legil任务：${automationState.legilTaskRunning ? '运行中' : '未运行'}${automationState.legilTaskType ? `（${automationState.legilTaskType}）` : ''}`,
+        `Legil进度：${legilProgress.completed || 0}/${legilProgress.total || 0}，成功 ${legilProgress.success || 0}，失败 ${legilProgress.failed || 0}，已保存 ${legilProgress.saved || 0}`,
+        `Legil动作：${legilProgress.currentAction || '暂无'}`,
+        `完整工作流可继续：${workflowResume.hasResume ? `是，第 ${workflowResume.imageIndex}/${workflowResume.totalImages} 张，提示词 ${workflowResume.promptIndex}/${workflowResume.totalPrompts}` : '否'}`,
+        `创意拓展可继续：${creativeResume.hasResume ? `是，剩余 ${creativeResume.remainingCount}/${creativeResume.total} 组` : '否'}`,
+        `浏览器：${browserStatus.running ? '运行中' : '未启动'}，Legil页面：${browserStatus.legil ? '已打开' : '未打开'}`
+    ];
+
+    return lines.join('\n');
+}
+
+async function startWorkflowFromCurrentConfig(options = {}) {
+    if (automationState.legilTaskRunning) {
+        return {
+            success: false,
+            message: '当前已有 Legil 生成任务正在运行，请稍后再启动完整工作流'
+        };
+    }
+    if (workflowController.isRunning) {
+        return {
+            success: false,
+            message: '完整工作流正在运行中'
+        };
+    }
+
+    if (options.clearResume) {
+        workflowController.clearResume();
+    }
+
+    const legilRefFolder = appConfig.legilReferenceFolder;
+    const validation = workflowController.validateStart(
+        workflowController.inputFolder,
+        workflowController.outputFolder,
+        legilRefFolder
+    );
+    if (!validation.success) {
+        return validation;
+    }
+
+    const doubaoConfig = doubaoAutomation.getConfig();
+    if (!doubaoConfig.apiKeyConfigured || !doubaoConfig.modelId) {
+        return {
+            success: false,
+            message: '请先在豆包API配置中填写火山方舟 API Key 和模型 ID / Endpoint ID'
+        };
+    }
+
+    setImmediate(async () => {
+        try {
+            const result = await workflowController.startWorkflow(
+                validation.inputFolder,
+                validation.outputFolder,
+                validation.legilReferenceFolder
+            );
+            await sendFeishuText(`完整工作流执行结束：${result.message || (result.success ? '已完成' : '未完成')}`);
+        } catch (error) {
+            logger.error('飞书启动的完整工作流执行出错: ' + error.message);
+            await sendFeishuText(`完整工作流执行出错：${error.message}`).catch(() => {});
+        }
+    });
+
+    return {
+        success: true,
+        message: `已启动完整工作流，将处理 ${validation.totalImages} 张参考图`
+    };
+}
+
+async function resumeWorkflowFromFeishu() {
+    if (automationState.legilTaskRunning) {
+        return {
+            success: false,
+            message: '当前已有 Legil 生成任务正在运行，不能继续完整工作流'
+        };
+    }
+    if (workflowController.isRunning) {
+        return {
+            success: false,
+            message: '完整工作流已经在运行中'
+        };
+    }
+
+    const resumeInfo = workflowController.getResumeInfo();
+    if (!resumeInfo.hasResume) {
+        return {
+            success: false,
+            message: '没有可继续的完整工作流任务'
+        };
+    }
+
+    setImmediate(async () => {
+        try {
+            const result = await workflowController.resumeWorkflow();
+            await sendFeishuText(`完整工作流继续执行结束：${result.message || (result.success ? '已完成' : '未完成')}`);
+        } catch (error) {
+            logger.error('飞书继续完整工作流出错: ' + error.message);
+            await sendFeishuText(`完整工作流继续执行出错：${error.message}`).catch(() => {});
+        }
+    });
+
+    return {
+        success: true,
+        message: `已继续完整工作流：第 ${resumeInfo.imageIndex}/${resumeInfo.totalImages} 张，提示词 ${resumeInfo.promptIndex}/${resumeInfo.totalPrompts}`
+    };
+}
+
+async function startCreativeResumeFromFeishu(options = {}) {
+    if (isLegilBusy()) {
+        return {
+            success: false,
+            message: '当前已有自动化任务正在运行，请稍后再继续创意拓展'
+        };
+    }
+
+    const resumeInfo = getCreativeResumeInfo(true);
+    if (!resumeInfo.hasResume || !Array.isArray(resumeInfo.prompts)) {
+        return {
+            success: false,
+            message: '没有可继续的创意拓展任务'
+        };
+    }
+
+    const prompts = options.restart
+        ? resumeInfo.prompts
+        : resumeInfo.prompts.filter(item => item && item.selected !== false);
+    if (prompts.length === 0) {
+        return {
+            success: false,
+            message: '创意拓展恢复状态里没有剩余提示词'
+        };
+    }
+
+    const response = await axios.post(`http://127.0.0.1:${PORT}/api/legil/creative-batch`, {
+        outputFolder: resumeInfo.outputFolder,
+        referenceFolder: resumeInfo.referenceFolder || '',
+        prompts,
+        tableFileName: resumeInfo.tableFileName || '飞书继续创意拓展任务',
+        browserMode: resumeInfo.browserMode,
+        generationSettings: resumeInfo.generationSettings
+    }, {
+        timeout: 15000,
+        headers: {
+            'Content-Type': 'application/json'
+        }
+    });
+
+    return {
+        success: Boolean(response.data && response.data.success),
+        message: response.data && response.data.message
+            ? response.data.message
+            : `已${options.restart ? '重启' : '继续'}创意拓展任务，共 ${prompts.length} 组提示词`
+    };
+}
+
+async function stopAutomationFromFeishu() {
+    if (workflowController.isRunning) {
+        return await workflowController.stopWorkflow();
+    }
+
+    if (automationState.legilTaskRunning) {
+        return requestLegilTaskStop();
+    }
+
+    return {
+        success: true,
+        message: '当前没有正在运行的工作流或 Legil 任务'
+    };
+}
+
+async function resumeAutomationFromFeishu(commandText) {
+    const wantsCreative = /创意|creative/i.test(commandText);
+    const creativeResume = getCreativeResumeInfo(true);
+    const workflowResume = workflowController.getResumeInfo();
+
+    if (wantsCreative && creativeResume.hasResume) {
+        return await startCreativeResumeFromFeishu();
+    }
+    if (workflowResume.hasResume) {
+        return await resumeWorkflowFromFeishu();
+    }
+    if (creativeResume.hasResume) {
+        return await startCreativeResumeFromFeishu();
+    }
+
+    return {
+        success: false,
+        message: '没有可继续的任务'
+    };
+}
+
+async function restartAutomationFromFeishu(commandText) {
+    if (workflowController.isRunning) {
+        const result = await workflowController.stopWorkflow();
+        return {
+            success: result.success,
+            message: `${result.message}。完整工作流已发送停止指令，停止完成后可再次发送“重启工作流”。`
+        };
+    }
+    if (automationState.legilTaskRunning) {
+        const result = requestLegilTaskStop();
+        return {
+            success: result.success,
+            message: `${result.message}。当前 Legil 任务停止完成后可再次发送“重启工作流”。`
+        };
+    }
+
+    const wantsCreative = /创意|creative/i.test(commandText);
+    const creativeResume = getCreativeResumeInfo(true);
+    if (wantsCreative || creativeResume.hasResume) {
+        return await startCreativeResumeFromFeishu({ restart: true });
+    }
+
+    return await startWorkflowFromCurrentConfig({ clearResume: true });
+}
+
+function buildFeishuHelpText() {
+    return [
+        '飞书可用指令：',
+        '状态 / 工作状态：查看完整工作流、Legil任务、浏览器和可继续任务',
+        '进度 / 工作进度：发送当前进度报告',
+        '停止工作流：停止正在运行的完整工作流或 Legil 批量任务',
+        '继续工作流：优先继续完整工作流；如果没有，则继续创意拓展剩余任务',
+        '继续创意拓展：只继续创意拓展剩余提示词',
+        '重启工作流：无运行任务时从当前默认路径重新启动；如果有创意拓展恢复状态，则重启该创意拓展任务',
+        '帮助：查看本说明'
+    ].join('\n');
+}
+
+async function executeFeishuCommand(rawText) {
+    const commandText = normalizeFeishuCommandText(rawText);
+    if (!commandText) {
+        return '';
+    }
+
+    if (/帮助|help|指令/.test(commandText)) {
+        return buildFeishuHelpText();
+    }
+    if (/停止|stop/i.test(commandText)) {
+        const result = await stopAutomationFromFeishu();
+        return `停止指令结果：${result.message}`;
+    }
+    if (/继续|恢复|resume/i.test(commandText)) {
+        const result = await resumeAutomationFromFeishu(commandText);
+        return `继续指令结果：${result.message}`;
+    }
+    if (/重启|重新开始|restart/i.test(commandText)) {
+        const result = await restartAutomationFromFeishu(commandText);
+        return `重启指令结果：${result.message}`;
+    }
+    if (/状态|进度|检查|status|progress/i.test(commandText)) {
+        return buildPlatformStatusText();
+    }
+
+    return `未识别指令：“${commandText}”\n\n${buildFeishuHelpText()}`;
+}
+
+async function handleFeishuEvent(body) {
+    const allowed = assertFeishuChatAllowed(body);
+    if (!allowed.success) {
+        return allowed.message;
+    }
+
+    const text = extractFeishuCommandText(body);
+    if (!text) {
+        return '';
+    }
+
+    return await executeFeishuCommand(text);
 }
 
 // 创建 express 应用实例
@@ -878,6 +1599,82 @@ app.get('/api/browser-status', (req, res) => {
     res.json({
         success: true,
         status: status
+    });
+});
+
+app.get('/api/feishu/status', (req, res) => {
+    const feishuConfig = getFeishuConfig();
+    res.json({
+        success: true,
+        configured: {
+            eventVerificationToken: Boolean(feishuConfig.verificationToken),
+            botWebhookUrl: Boolean(feishuConfig.botWebhookUrl),
+            botSecret: Boolean(feishuConfig.botSecret),
+            allowedChatIds: feishuConfig.allowedChatIds.length
+        },
+        endpoints: {
+            events: '/api/feishu/events',
+            notify: '/api/feishu/notify'
+        },
+        supportedCommands: ['状态', '进度', '停止工作流', '继续工作流', '继续创意拓展', '重启工作流', '帮助']
+    });
+});
+
+app.post('/api/feishu/notify', async (req, res) => {
+    const text = typeof req.body?.text === 'string' && req.body.text.trim()
+        ? req.body.text.trim()
+        : buildPlatformStatusText();
+
+    try {
+        const result = await sendFeishuText(text);
+        res.json(result);
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            message: '飞书消息发送失败：' + error.message
+        });
+    }
+});
+
+app.post('/api/feishu/events', (req, res) => {
+    const body = req.body || {};
+
+    if (body.encrypt) {
+        return res.status(400).json({
+            code: 1,
+            msg: '暂未启用飞书加密事件解析，请先关闭事件加密或使用 verification token 校验'
+        });
+    }
+
+    const verification = verifyFeishuEventToken(body);
+    if (!verification.success) {
+        return res.status(403).json({
+            code: 1,
+            msg: verification.message
+        });
+    }
+
+    if (body.type === 'url_verification' && body.challenge) {
+        return res.json({
+            challenge: body.challenge
+        });
+    }
+
+    res.json({
+        code: 0,
+        msg: 'ok'
+    });
+
+    setImmediate(async () => {
+        try {
+            const resultText = await handleFeishuEvent(body);
+            if (resultText) {
+                await sendFeishuText(resultText);
+            }
+        } catch (error) {
+            logger.error('处理飞书指令失败: ' + error.message);
+            await sendFeishuText('处理飞书指令失败：' + error.message).catch(() => {});
+        }
     });
 });
 
@@ -1368,36 +2165,7 @@ app.get('/api/legil/task-status', (req, res) => {
 });
 
 app.post('/api/legil/stop', (req, res) => {
-    if (!automationState.legilTaskRunning) {
-        return res.json({
-            success: true,
-            message: '当前没有正在运行的 Legil 任务'
-        });
-    }
-
-    if (!['resize-batch', 'creative-batch'].includes(automationState.legilTaskType)) {
-        return res.json({
-            success: false,
-            message: '当前运行的任务不能从这里停止，请在对应功能区停止'
-        });
-    }
-
-    automationState.legilStopRequested = true;
-    const taskLabel = automationState.legilTaskType === 'creative-batch' ? '创意拓展' : '改尺寸';
-    if (automationState.legilTaskProgress) {
-        automationState.legilTaskProgress = {
-            ...automationState.legilTaskProgress,
-            phase: 'stopping',
-            currentAction: `正在停止${taskLabel}任务...`,
-            updatedAt: new Date().toISOString()
-        };
-    }
-    logger.system(`⏹️ 已收到停止${taskLabel}任务指令，正在安全停止...`);
-
-    res.json({
-        success: true,
-        message: '已发送停止指令，当前步骤结束后会停止'
-    });
+    res.json(requestLegilTaskStop());
 });
 
 /**
@@ -1579,6 +2347,9 @@ app.post('/api/legil/resize-batch', async (req, res) => {
                     logger.system(`✅ Legil 批量改尺寸任务完成：成功 ${successCount} 张，失败 ${failedCount} 张`);
                 }
                 logger.system('========================================');
+            } catch (error) {
+                const safeMessage = error && error.message ? error.message : String(error || '未知错误');
+                logger.error(`❌ Legil 批量改尺寸任务被中断: ${safeMessage}`);
             } finally {
                 legilAutomation.saveFolder = previousSaveFolder;
                 legilAutomation.referenceFolder = previousReferenceFolder;
@@ -1602,6 +2373,136 @@ app.post('/api/legil/resize-batch', async (req, res) => {
     }
 });
 
+app.get('/api/creative-agent/status', (req, res) => {
+    res.json(getCreativeAgentStatus());
+});
+
+app.post('/api/creative-agent/run', async (req, res) => {
+    const body = req.body || {};
+    const storedWinkyConfig = getStoredWinkyConfig();
+    const instruction = typeof body.instruction === 'string' ? body.instruction.trim() : '';
+    const apiKey = String(body.apiKey || storedWinkyConfig.apiKey || '').trim();
+    const apiUrl = String(body.apiUrl || storedWinkyConfig.apiUrl || '').trim();
+    const model = String(body.model || storedWinkyConfig.model || '').trim();
+    const provider = String(body.provider || storedWinkyConfig.provider || '').trim();
+    const targetCount = Number.isFinite(Number(body.targetCount)) && Number(body.targetCount) > 0
+        ? Math.floor(Number(body.targetCount))
+        : null;
+    const attachments = Array.isArray(body.attachments) ? body.attachments : [];
+
+    if (!apiKey) {
+        return res.status(400).json({
+            success: false,
+            message: '请填写 Lumos Winky API Key，或在服务器环境变量中设置 WINKY_API_KEY'
+        });
+    }
+
+    if (!apiUrl) {
+        return res.status(400).json({
+            success: false,
+            message: '请填写 Lumos Winky API URL，或在服务器环境变量中设置 WINKY_API_BASE_URL'
+        });
+    }
+
+    if (!model) {
+        return res.status(400).json({
+            success: false,
+            message: '请填写要调用的模型名称，或在服务器环境变量中设置 WINKY_MODEL'
+        });
+    }
+
+    if (!instruction && attachments.length === 0) {
+        return res.status(400).json({
+            success: false,
+            message: '请填写文字指令，或上传表格、图片、文件夹素材'
+        });
+    }
+
+    try {
+        new URL(apiUrl);
+    } catch {
+        return res.status(400).json({
+            success: false,
+            message: 'Lumos Winky API URL 格式不正确，请填写完整的接口地址'
+        });
+    }
+
+    try {
+        logger.system('开始调用创意拓展 Agent');
+        logger.info(`创意拓展 Agent 附件数量: ${attachments.length}`);
+
+        const agentResult = await runCreativeAgentInWorker({
+            apiUrl,
+            apiKey,
+            model,
+            provider,
+            instruction,
+            targetCount,
+            attachments
+        });
+
+        logger.log(`创意拓展 Agent 已生成表格: ${agentResult.fileName}`, 'success');
+        logger.info(agentResult.message);
+
+        res.json({
+            success: true,
+            ...agentResult
+        });
+    } catch (error) {
+        const safeMessage = String(error && error.message ? error.message : error || '未知错误').replaceAll(apiKey, '[REDACTED]');
+        logger.error(`创意拓展 Agent 调用失败: ${safeMessage}`);
+        res.status(500).json({
+            success: false,
+            message: '创意拓展 Agent 调用失败: ' + safeMessage
+        });
+    }
+});
+
+app.get('/api/creative-agent/download/:fileName', (req, res) => {
+    const fileName = path.basename(String(req.params.fileName || ''));
+    const outputRoot = path.resolve(CREATIVE_AGENT_OUTPUT_DIR);
+    const filePath = path.resolve(CREATIVE_AGENT_OUTPUT_DIR, fileName);
+
+    if (!fileName || !filePath.startsWith(outputRoot + path.sep)) {
+        return res.status(400).json({
+            success: false,
+            message: '文件名不正确'
+        });
+    }
+
+    if (!fs.existsSync(filePath)) {
+        return res.status(404).json({
+            success: false,
+            message: '表格文件不存在或已被清理'
+        });
+    }
+
+    res.download(filePath, fileName);
+});
+
+app.get('/api/legil/creative-resume', (req, res) => {
+    res.json({
+        success: true,
+        resume: getCreativeResumeInfo(true)
+    });
+});
+
+app.post('/api/legil/creative-resume/clear', (req, res) => {
+    if (automationState.legilTaskRunning && automationState.legilTaskType === 'creative-batch') {
+        return res.json({
+            success: false,
+            message: '创意拓展任务正在运行，不能清除恢复状态'
+        });
+    }
+
+    clearCreativeResumeState();
+    res.json({
+        success: true,
+        resume: { hasResume: false },
+        message: '已清除创意拓展恢复状态'
+    });
+});
+
 /**
  * ============================================
  * Legil 创意拓展：从本地表格提示词批量生成
@@ -1609,31 +2510,19 @@ app.post('/api/legil/resize-batch', async (req, res) => {
  */
 app.post('/api/legil/creative-batch', async (req, res) => {
     const creativeConfig = normalizeCreativeConfigPayload(req.body || {});
+    const creativeBrowserMode = normalizeCreativeBrowserMode(creativeConfig.browserMode);
+    const creativeHeadless = creativeBrowserMode === 'headless';
     const creativeGenerationSettings = normalizeLegilGenerationSettings(
         req.body && typeof req.body.generationSettings === 'object' ? req.body.generationSettings : creativeConfig.generationSettings,
         creativeConfig.generationSettings || DEFAULT_CREATIVE_CONFIG.generationSettings
     );
     const promptItems = Array.isArray(req.body && req.body.prompts) ? req.body.prompts : [];
-    const normalizedPrompts = promptItems
-        .map((item, index) => {
-            const prompt = typeof item === 'string'
-                ? item
-                : (item && typeof item.prompt === 'string' ? item.prompt : '');
-            const direction = item && typeof item.direction === 'string' ? item.direction : '';
-            const promptTitle = item && typeof item.promptTitle === 'string' ? item.promptTitle : '';
-            const sourceRow = item && Number.isFinite(Number(item.sourceRow)) ? Number(item.sourceRow) : index + 1;
-            return {
-                index: index + 1,
-                sourceRow,
-                direction: direction.trim(),
-                promptTitle: promptTitle.trim(),
-                prompt: prompt.trim()
-            };
-        })
-        .filter(item => item.prompt);
+    const normalizedPrompts = normalizeCreativeBatchPromptItems(promptItems);
+    const creativeTableFileName = String(req.body && req.body.tableFileName ? req.body.tableFileName : '').trim();
 
     console.log('\n🎨 收到 Legil 创意拓展批量生成请求');
     console.log('   输出文件夹:', creativeConfig.outputFolder);
+    console.log('   运行模式:', creativeHeadless ? '无头模式' : '有头模式');
     console.log('   提示词数量:', normalizedPrompts.length);
 
     if (isLegilBusy()) {
@@ -1670,6 +2559,7 @@ app.post('/api/legil/creative-batch', async (req, res) => {
 
         appConfig.creative = {
             ...creativeConfig,
+            browserMode: creativeBrowserMode,
             generationSettings: creativeGenerationSettings
         };
         persistRuntimeConfig({
@@ -1691,17 +2581,42 @@ app.post('/api/legil/creative-batch', async (req, res) => {
             failed: 0,
             saved: 0,
             outputTotal,
+            browserMode: creativeBrowserMode,
             currentName: '',
             currentAction: '创意拓展任务已排队，准备开始...',
             startedAt: new Date().toISOString(),
             updatedAt: new Date().toISOString()
         };
 
+        setCreativeResumeState({
+            runId: batchRunId,
+            phase: 'queued',
+            tableFileName: creativeTableFileName || '创意拓展表格',
+            outputFolder: creativeConfig.outputFolder,
+            referenceFolder: creativeConfig.referenceFolder,
+            browserMode: creativeBrowserMode,
+            generationSettings: creativeGenerationSettings,
+            prompts: normalizedPrompts,
+            total: normalizedPrompts.length,
+            nextIndex: 0,
+            currentIndex: 0,
+            completed: 0,
+            success: 0,
+            failed: 0,
+            saved: 0,
+            outputTotal,
+            currentName: '',
+            currentAction: '创意拓展任务已排队，准备开始...',
+            startedAt: automationState.legilTaskProgress.startedAt,
+            updatedAt: automationState.legilTaskProgress.updatedAt
+        });
+
         res.json({
             success: true,
             message: `已启动 Legil 创意拓展任务，共 ${normalizedPrompts.length} 组提示词。请通过实时日志查看进度。`,
             totalPrompts: normalizedPrompts.length,
             outputTotal,
+            browserMode: creativeBrowserMode,
             progress: automationState.legilTaskProgress
         });
 
@@ -1719,6 +2634,7 @@ app.post('/api/legil/creative-batch', async (req, res) => {
             logger.system('========================================');
             logger.system('开始 Legil 创意拓展批量生成任务');
             logger.info(`输出文件夹: ${creativeConfig.outputFolder}`);
+            logger.info(`运行模式: ${creativeHeadless ? '无头模式' : '有头模式'}`);
             logger.info(`提示词数量: ${normalizedPrompts.length}`);
             logger.info(creativeConfig.referenceFolder
                 ? `Legil参考图文件夹: ${creativeConfig.referenceFolder}`
@@ -1759,6 +2675,17 @@ app.post('/api/legil/creative-batch', async (req, res) => {
                         currentAction: `正在生成第 ${i + 1}/${normalizedPrompts.length} 组：${directionName}`,
                         updatedAt: new Date().toISOString()
                     };
+                    updateCreativeResumeState({
+                        phase: 'running',
+                        currentIndex: i + 1,
+                        nextIndex: i,
+                        completed: successCount + failedCount,
+                        success: successCount,
+                        failed: failedCount,
+                        saved: savedTotal,
+                        currentName: directionName,
+                        currentAction: automationState.legilTaskProgress.currentAction
+                    });
 
                     logger.info('');
                     logger.info(`🎨 正在处理创意提示词 ${i + 1}/${normalizedPrompts.length}: ${directionName}`);
@@ -1777,6 +2704,7 @@ app.post('/api/legil/creative-batch', async (req, res) => {
                             referenceImageName: directionName,
                             promptIndexWithinImage: 1,
                             totalPromptsForImage: 1,
+                            headless: creativeHeadless,
                             shouldAbort: isLegilStopRequested
                         });
 
@@ -1795,6 +2723,17 @@ app.post('/api/legil/creative-batch', async (req, res) => {
                                 currentAction: `第 ${i + 1}/${normalizedPrompts.length} 组已完成，保存 ${savedCount} 张`,
                                 updatedAt: new Date().toISOString()
                             };
+                            updateCreativeResumeState({
+                                phase: 'running',
+                                currentIndex: i + 1,
+                                nextIndex: i + 1,
+                                completed: successCount + failedCount,
+                                success: successCount,
+                                failed: failedCount,
+                                saved: savedTotal,
+                                currentName: directionName,
+                                currentAction: automationState.legilTaskProgress.currentAction
+                            });
                             logger.info(`✅ 创意提示词 ${i + 1}/${normalizedPrompts.length} 完成，保存 ${savedCount} 张`);
                         } else if (isLegilStopRequested() || String(result.message || '').includes('操作已取消')) {
                             stopped = true;
@@ -1804,6 +2743,16 @@ app.post('/api/legil/creative-batch', async (req, res) => {
                                 currentAction: '创意拓展任务正在停止...',
                                 updatedAt: new Date().toISOString()
                             };
+                            updateCreativeResumeState({
+                                phase: 'stopping',
+                                nextIndex: successCount + failedCount,
+                                completed: successCount + failedCount,
+                                success: successCount,
+                                failed: failedCount,
+                                saved: savedTotal,
+                                currentName: directionName,
+                                currentAction: '创意拓展任务正在停止...'
+                            });
                             logger.warn('⏹️ 创意拓展任务已停止');
                             break;
                         } else {
@@ -1818,6 +2767,17 @@ app.post('/api/legil/creative-batch', async (req, res) => {
                                 currentAction: `第 ${i + 1}/${normalizedPrompts.length} 组失败：${result.message}`,
                                 updatedAt: new Date().toISOString()
                             };
+                            updateCreativeResumeState({
+                                phase: 'running',
+                                currentIndex: i + 1,
+                                nextIndex: i + 1,
+                                completed: successCount + failedCount,
+                                success: successCount,
+                                failed: failedCount,
+                                saved: savedTotal,
+                                currentName: directionName,
+                                currentAction: automationState.legilTaskProgress.currentAction
+                            });
                             logger.error(`❌ 创意提示词 ${i + 1}/${normalizedPrompts.length} 失败: ${result.message}`);
                         }
                     } catch (error) {
@@ -1829,6 +2789,16 @@ app.post('/api/legil/creative-batch', async (req, res) => {
                                 currentAction: '创意拓展任务正在停止...',
                                 updatedAt: new Date().toISOString()
                             };
+                            updateCreativeResumeState({
+                                phase: 'stopping',
+                                nextIndex: successCount + failedCount,
+                                completed: successCount + failedCount,
+                                success: successCount,
+                                failed: failedCount,
+                                saved: savedTotal,
+                                currentName: directionName,
+                                currentAction: '创意拓展任务正在停止...'
+                            });
                             logger.warn('⏹️ 创意拓展任务已停止');
                             break;
                         }
@@ -1843,6 +2813,17 @@ app.post('/api/legil/creative-batch', async (req, res) => {
                             currentAction: `第 ${i + 1}/${normalizedPrompts.length} 组出错：${error.message}`,
                             updatedAt: new Date().toISOString()
                         };
+                        updateCreativeResumeState({
+                            phase: 'running',
+                            currentIndex: i + 1,
+                            nextIndex: i + 1,
+                            completed: successCount + failedCount,
+                            success: successCount,
+                            failed: failedCount,
+                            saved: savedTotal,
+                            currentName: directionName,
+                            currentAction: automationState.legilTaskProgress.currentAction
+                        });
                         logger.error(`❌ 创意提示词 ${i + 1}/${normalizedPrompts.length} 出错: ${error.message}`);
                     }
 
@@ -1852,6 +2833,15 @@ app.post('/api/legil/creative-batch', async (req, res) => {
                             await sleepWithLegilStop(5000);
                         } catch (error) {
                             stopped = true;
+                            updateCreativeResumeState({
+                                phase: 'stopping',
+                                nextIndex: successCount + failedCount,
+                                completed: successCount + failedCount,
+                                success: successCount,
+                                failed: failedCount,
+                                saved: savedTotal,
+                                currentAction: '创意拓展任务正在停止...'
+                            });
                             logger.warn('⏹️ 创意拓展任务已停止');
                             break;
                         }
@@ -1870,6 +2860,16 @@ app.post('/api/legil/creative-batch', async (req, res) => {
                         currentAction: `创意拓展任务已停止：成功 ${successCount} 组，失败 ${failedCount} 组`,
                         updatedAt: new Date().toISOString()
                     };
+                    updateCreativeResumeState({
+                        phase: 'stopped',
+                        nextIndex: successCount + failedCount,
+                        currentIndex: successCount + failedCount,
+                        completed: successCount + failedCount,
+                        success: successCount,
+                        failed: failedCount,
+                        saved: savedTotal,
+                        currentAction: automationState.legilTaskProgress.currentAction
+                    });
                     logger.system(`⏹️ Legil 创意拓展任务已停止：成功 ${successCount} 组，失败 ${failedCount} 组`);
                 } else {
                     automationState.legilTaskProgress = {
@@ -1883,9 +2883,37 @@ app.post('/api/legil/creative-batch', async (req, res) => {
                         currentAction: `创意拓展任务完成：成功 ${successCount} 组，失败 ${failedCount} 组`,
                         updatedAt: new Date().toISOString()
                     };
+                    clearCreativeResumeState();
                     logger.system(`✅ Legil 创意拓展任务完成：成功 ${successCount} 组，失败 ${failedCount} 组`);
                 }
                 logger.system('========================================');
+            } catch (error) {
+                const safeMessage = error && error.message ? error.message : String(error || '未知错误');
+                automationState.legilTaskProgress = {
+                    ...(automationState.legilTaskProgress || {}),
+                    taskType: 'creative-batch',
+                    phase: 'interrupted',
+                    total: normalizedPrompts.length,
+                    completed: successCount + failedCount,
+                    success: successCount,
+                    failed: failedCount,
+                    saved: savedTotal,
+                    outputTotal,
+                    browserMode: creativeBrowserMode,
+                    currentAction: `创意拓展任务被中断：${safeMessage}`,
+                    updatedAt: new Date().toISOString()
+                };
+                updateCreativeResumeState({
+                    phase: 'interrupted',
+                    nextIndex: successCount + failedCount,
+                    currentIndex: successCount + failedCount,
+                    completed: successCount + failedCount,
+                    success: successCount,
+                    failed: failedCount,
+                    saved: savedTotal,
+                    currentAction: automationState.legilTaskProgress.currentAction
+                });
+                logger.error(`❌ Legil 创意拓展任务被中断: ${safeMessage}`);
             } finally {
                 legilAutomation.saveFolder = previousSaveFolder;
                 legilAutomation.referenceFolder = previousReferenceFolder;
@@ -1901,6 +2929,7 @@ app.post('/api/legil/creative-batch', async (req, res) => {
         automationState.legilTaskRunning = false;
         automationState.legilStopRequested = false;
         automationState.legilTaskType = null;
+        clearCreativeResumeState();
         console.error('Legil 创意拓展启动失败:', error);
         res.json({
             success: false,

@@ -4716,6 +4716,106 @@
             gap: 10px;
         }
 
+        .creative-browser-mode-options {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .creative-browser-mode-options .model-option {
+            min-height: 58px;
+        }
+
+        .creative-agent-entry {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            gap: 8px;
+            align-items: center;
+            margin-top: 12px;
+        }
+
+        .creative-agent-modal {
+            max-width: 880px;
+            max-height: 90vh;
+            overflow: auto;
+            text-align: left;
+        }
+
+        .creative-agent-modal h3 {
+            margin-bottom: 6px;
+        }
+
+        .creative-agent-modal p {
+            margin-bottom: 18px;
+        }
+
+        .creative-agent-form-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 12px;
+        }
+
+        .creative-agent-modal .form-group {
+            margin-bottom: 12px;
+        }
+
+        .creative-agent-modal input[type="password"],
+        .creative-agent-modal input[type="number"] {
+            width: 100%;
+            min-height: 42px;
+            padding: 11px 13px;
+            color: var(--ui-text);
+            background: var(--ui-field);
+            border: 1px solid var(--ui-border);
+            border-radius: var(--ui-control-radius);
+            font-family: inherit;
+        }
+
+        .creative-agent-modal input[type="password"]:focus,
+        .creative-agent-modal input[type="number"]:focus {
+            outline: none;
+            border-color: rgba(39, 169, 242, 0.82);
+            box-shadow: 0 0 0 3px rgba(39, 169, 242, 0.10);
+        }
+
+        .creative-agent-upload-actions,
+        .creative-agent-result-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 8px;
+        }
+
+        .creative-agent-file-list {
+            min-height: 44px;
+            max-height: 132px;
+            overflow: auto;
+            padding: 10px 12px;
+            color: var(--ui-muted);
+            background: rgba(16, 22, 25, 0.74);
+            border: 1px solid rgba(255, 255, 255, 0.07);
+            border-radius: var(--ui-radius);
+            font-size: 13px;
+            line-height: 1.6;
+        }
+
+        .creative-agent-file-list strong {
+            color: var(--ui-text);
+        }
+
+        .creative-agent-result {
+            margin-top: 12px;
+            display: none;
+        }
+
+        .creative-agent-result.active {
+            display: block;
+        }
+
+        .creative-agent-secret-note {
+            color: var(--ui-muted);
+            font-size: 12px;
+            line-height: 1.5;
+        }
+
         .resize-start-panel .btn,
         .creative-start-panel .btn {
             width: 100%;
@@ -4810,6 +4910,11 @@
             overflow-wrap: anywhere;
         }
 
+        .creative-preview-count {
+            color: #9bd8d0;
+            white-space: nowrap;
+        }
+
         .creative-preview-text {
             color: var(--flat-text);
             font-size: 13px;
@@ -4893,6 +4998,11 @@
 
             .resize-prompt-layout,
             .creative-start-layout {
+                grid-template-columns: 1fr;
+            }
+
+            .creative-agent-form-grid,
+            .creative-agent-entry {
                 grid-template-columns: 1fr;
             }
         }
@@ -5392,6 +5502,10 @@
                             </div>
                         </div>
                         <button class="btn btn-secondary" onclick="parseCreativeTableFile()">重新解析表格</button>
+                        <div class="creative-agent-entry">
+                            <div class="field-meta">也可以让创意拓展Agent生成新表格</div>
+                            <button class="btn btn-primary" onclick="openCreativeAgentDialog()">打开Agent</button>
+                        </div>
                     </div>
 
                     <div class="form-group folder-field" style="margin-top: 14px;">
@@ -5435,6 +5549,20 @@
                         <span class="icon icon-purple icon-image" aria-hidden="true"></span>
                         Legil生成参数
                     </summary>
+
+                    <div class="setting-group">
+                        <label>运行模式</label>
+                        <div class="model-options creative-browser-mode-options" id="creativeBrowserModeOptions">
+                            <button type="button" class="model-option" data-creative-browser-mode="headed" onclick="setCreativeBrowserMode('headed')">
+                                <span class="model-option-title">有头模式</span>
+                                <span class="model-option-desc">显示浏览器窗口</span>
+                            </button>
+                            <button type="button" class="model-option" data-creative-browser-mode="headless" onclick="setCreativeBrowserMode('headless')">
+                                <span class="model-option-title">无头模式</span>
+                                <span class="model-option-desc">后台运行不显示窗口</span>
+                            </button>
+                        </div>
+                    </div>
 
                     <div class="setting-group">
                         <label>图生图模型</label>
@@ -5541,6 +5669,68 @@
         </div>
     </div>
 
+    <div class="modal-overlay" id="creativeAgentModal">
+        <div class="modal creative-agent-modal">
+            <h3>创意拓展Agent</h3>
+            <p>上传表格、图片或文件夹，补充文字指令后生成新的创意拓展表。</p>
+
+            <div class="form-group">
+                <label for="creativeAgentInstruction">文字指令</label>
+                <textarea id="creativeAgentInstruction" placeholder="例如：基于这些参考方向继续扩展 20 个冰封末世广告创意方向，每个方向给 5 条中文画面提示词，避免重复。"></textarea>
+            </div>
+
+            <div class="creative-agent-form-grid">
+                <div class="form-group">
+                    <label for="creativeAgentApiUrl">Winky API URL</label>
+                    <input type="text" id="creativeAgentApiUrl" placeholder="留空则使用服务器环境变量 WINKY_API_BASE_URL">
+                </div>
+                <div class="form-group">
+                    <label for="creativeAgentModel">模型名称</label>
+                    <input type="text" id="creativeAgentModel" placeholder="留空则使用服务器环境变量 WINKY_MODEL">
+                </div>
+                <div class="form-group">
+                    <label for="creativeAgentProvider">厂商（可选）</label>
+                    <input type="text" id="creativeAgentProvider" placeholder="例如 openai / gemini / deepseek / qwen">
+                </div>
+                <div class="form-group">
+                    <label for="creativeAgentTargetCount">目标数量（可选）</label>
+                    <input type="number" id="creativeAgentTargetCount" min="1" step="1" placeholder="例如 20">
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="creativeAgentApiKey">Lumos Winky API Key</label>
+                <input type="password" id="creativeAgentApiKey" autocomplete="off" placeholder="留空则使用服务器环境变量 WINKY_API_KEY">
+                <div class="creative-agent-secret-note" id="creativeAgentKeyHint">Key 只随本次请求发送到本机后端，不会保存到配置或日志。</div>
+            </div>
+
+            <div class="form-group">
+                <label>参考资料</label>
+                <input type="file" id="creativeAgentFileInput" multiple accept=".xlsx,.xls,.csv,.txt,.md,.json,image/*" hidden onchange="handleCreativeAgentFilesChange(this)">
+                <input type="file" id="creativeAgentFolderInput" multiple webkitdirectory directory hidden onchange="handleCreativeAgentFilesChange(this)">
+                <div class="creative-agent-upload-actions">
+                    <button class="btn btn-secondary" onclick="document.getElementById('creativeAgentFileInput')?.click()">添加文件/图片</button>
+                    <button class="btn btn-secondary" onclick="document.getElementById('creativeAgentFolderInput')?.click()">添加文件夹</button>
+                    <button class="btn btn-secondary" onclick="clearCreativeAgentFiles()">清空资料</button>
+                </div>
+                <div class="creative-agent-file-list" id="creativeAgentFileList">未添加参考资料</div>
+            </div>
+
+            <div class="info-box" id="creativeAgentInfo">等待输入指令或添加资料。</div>
+            <div class="creative-agent-result" id="creativeAgentResult">
+                <div class="creative-agent-result-actions">
+                    <button class="btn btn-primary" id="creativeAgentDownloadBtn" onclick="downloadCreativeAgentTable()" disabled>下载表格</button>
+                    <button class="btn btn-success" id="creativeAgentExtractBtn" onclick="extractCreativeAgentPrompts()" disabled>提取提示词</button>
+                </div>
+            </div>
+
+            <div class="modal-actions" style="margin-top: 16px;">
+                <button class="btn btn-primary" id="creativeAgentRunBtn" onclick="runCreativeAgent()">运行Agent</button>
+                <button class="btn btn-secondary" onclick="closeCreativeAgentDialog()">关闭</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Toast -->
     <div class="toast" id="toast">
         <div class="toast-icon">✓</div>
@@ -5558,6 +5748,7 @@
             resizeOutputFolder: 'D:\\工作\\自动化工作流1\\Legil批量改尺寸\\输出',
             creativeOutputFolder: 'D:\\工作\\自动化工作流1\\创意拓展\\输出',
             creativeReferenceFolder: '',
+            creativeBrowserMode: 'headed',
             resizePromptTemplate: '',
             creativePrompts: [],
             creativeTableFileName: '',
@@ -5602,6 +5793,10 @@
         let creativeStatusInterval = null;
         let creativeLastRunIndexes = [];
         let creativeResumeIndexes = [];
+        let creativeResumeInfo = null;
+        let creativeAgentFiles = [];
+        let creativeAgentLastResult = null;
+        let creativeAgentServerStatus = null;
         let workflowResumeInfo = null;
         const maxLogEntries = 1000;
 
@@ -5615,7 +5810,8 @@
             loadDoubaoConfig();
             loadLegilGenerationConfig();
             loadResizeConfig();
-            loadCreativeConfig();
+            loadCreativeConfig().finally(refreshCreativeResumeControls);
+            loadCreativeAgentStatus();
             refreshWorkflowResumeControls();
             const promptTextarea = document.getElementById('doubaoPromptTemplate');
             if (promptTextarea) {
@@ -6317,9 +6513,43 @@
             infoBox.textContent = text;
         }
 
+        function normalizeCreativeBrowserMode(mode) {
+            return mode === 'headless' ? 'headless' : 'headed';
+        }
+
+        function getCreativeBrowserModeLabel(mode) {
+            return normalizeCreativeBrowserMode(mode) === 'headless' ? '无头模式' : '有头模式';
+        }
+
+        function getCreativeCurrentModelLabel() {
+            const modelButton = Array.from(document.querySelectorAll('[data-creative-legil-setting="imageModel"]'))
+                .find(button => button.dataset.value === config.creativeLegilGeneration.imageModel);
+            return modelButton?.querySelector('.model-option-title')?.textContent || config.creativeLegilGeneration.imageModel;
+        }
+
+        function refreshCreativeLegilGenerationSummary() {
+            setCreativeLegilGenerationInfo(
+                'info-box success',
+                `✅ 创意拓展参数：${getCreativeBrowserModeLabel(config.creativeBrowserMode)} / ${getCreativeCurrentModelLabel()} / ${config.creativeLegilGeneration.aspectRatio} / ${config.creativeLegilGeneration.resolution} / ${config.creativeLegilGeneration.outputQuantity}张`
+            );
+        }
+
+        function setCreativeBrowserMode(mode) {
+            config.creativeBrowserMode = normalizeCreativeBrowserMode(mode);
+            updateCreativeBrowserModeActiveState();
+            refreshCreativeLegilGenerationSummary();
+        }
+
+        function updateCreativeBrowserModeActiveState() {
+            document.querySelectorAll('[data-creative-browser-mode]').forEach(button => {
+                button.classList.toggle('active', button.dataset.creativeBrowserMode === config.creativeBrowserMode);
+            });
+        }
+
         function setCreativeLegilGenerationValue(key, value) {
             config.creativeLegilGeneration[key] = key === 'outputQuantity' ? Number(value) : value;
             updateCreativeLegilGenerationActiveStates();
+            refreshCreativeLegilGenerationSummary();
         }
 
         function updateCreativeLegilGenerationActiveStates() {
@@ -6393,6 +6623,7 @@
         function renderCreativeLegilGenerationConfig(dataConfig) {
             const settings = dataConfig.generationSettings || dataConfig.defaultGenerationSettings || {};
             const options = dataConfig.generationOptions || {};
+            config.creativeBrowserMode = normalizeCreativeBrowserMode(dataConfig.browserMode || config.creativeBrowserMode);
             config.creativeLegilGeneration = {
                 imageModel: settings.imageModel || 'nano-banana-2',
                 aspectRatio: settings.aspectRatio || '1:1',
@@ -6404,13 +6635,10 @@
             renderCreativeLegilSettingOptions('aspectRatio', options.aspectRatios || []);
             renderCreativeLegilSettingOptions('resolution', options.resolutions || []);
             renderCreativeLegilSettingOptions('outputQuantity', options.outputQuantities || []);
+            updateCreativeBrowserModeActiveState();
             updateCreativeLegilGenerationActiveStates();
 
-            const modelLabel = getLegilImageModelLabel(config.creativeLegilGeneration.imageModel, options.imageModels);
-            setCreativeLegilGenerationInfo(
-                'info-box success',
-                `✅ 创意拓展参数：${modelLabel} / ${config.creativeLegilGeneration.aspectRatio} / ${config.creativeLegilGeneration.resolution} / ${config.creativeLegilGeneration.outputQuantity}张`
-            );
+            refreshCreativeLegilGenerationSummary();
         }
 
         async function loadCreativeConfig() {
@@ -6448,6 +6676,7 @@
                     body: JSON.stringify({
                         outputFolder,
                         referenceFolder,
+                        browserMode: config.creativeBrowserMode,
                         generationSettings: config.creativeLegilGeneration
                     })
                 });
@@ -6458,6 +6687,8 @@
 
                 config.creativeOutputFolder = data.config.outputFolder;
                 config.creativeReferenceFolder = data.config.referenceFolder || '';
+                config.creativeBrowserMode = normalizeCreativeBrowserMode(data.config.browserMode || config.creativeBrowserMode);
+                updateCreativeBrowserModeActiveState();
                 if (data.config.generationSettings) {
                     config.creativeLegilGeneration = {
                         imageModel: data.config.generationSettings.imageModel || config.creativeLegilGeneration.imageModel,
@@ -6467,6 +6698,7 @@
                     };
                     updateCreativeLegilGenerationActiveStates();
                 }
+                refreshCreativeLegilGenerationSummary();
                 addFolderHistory('creativeOutputFolder', config.creativeOutputFolder);
                 if (config.creativeReferenceFolder) {
                     addFolderHistory('creativeReferenceFolder', config.creativeReferenceFolder);
@@ -6498,6 +6730,227 @@
                 reader.onerror = () => reject(new Error('读取表格文件失败'));
                 reader.readAsDataURL(file);
             });
+        }
+
+        function setCreativeAgentInfo(className, text) {
+            const infoBox = document.getElementById('creativeAgentInfo');
+            if (!infoBox) return;
+            infoBox.className = className;
+            infoBox.textContent = text;
+        }
+
+        async function loadCreativeAgentStatus() {
+            try {
+                const res = await fetch('/api/creative-agent/status');
+                const data = await readJsonResponse(res, '读取创意拓展Agent状态失败');
+                creativeAgentServerStatus = data;
+
+                const apiUrlInput = document.getElementById('creativeAgentApiUrl');
+                const modelInput = document.getElementById('creativeAgentModel');
+                const providerInput = document.getElementById('creativeAgentProvider');
+                if (apiUrlInput && !apiUrlInput.value && data.defaults?.apiUrl) apiUrlInput.value = data.defaults.apiUrl;
+                if (modelInput && !modelInput.value && data.defaults?.model) modelInput.value = data.defaults.model;
+                if (providerInput && !providerInput.value && data.defaults?.provider) providerInput.value = data.defaults.provider;
+
+                const keyHint = document.getElementById('creativeAgentKeyHint');
+                if (keyHint) {
+                    keyHint.textContent = data.configured?.apiKey
+                        ? '服务器已配置 WINKY_API_KEY；页面留空也可以运行，Key 不会回传到前端。'
+                        : 'Key 只随本次请求发送到本机后端，不会保存到配置或日志。';
+                }
+            } catch (e) {}
+        }
+
+        function openCreativeAgentDialog() {
+            document.getElementById('creativeAgentModal')?.classList.add('active');
+            renderCreativeAgentFileList();
+            loadCreativeAgentStatus();
+        }
+
+        function closeCreativeAgentDialog() {
+            document.getElementById('creativeAgentModal')?.classList.remove('active');
+        }
+
+        function creativeAgentFileKey(file) {
+            return [
+                file.webkitRelativePath || file.name,
+                file.size,
+                file.lastModified
+            ].join('::');
+        }
+
+        function handleCreativeAgentFilesChange(input) {
+            const incoming = Array.from(input?.files || []);
+            const existingKeys = new Set(creativeAgentFiles.map(creativeAgentFileKey));
+            incoming.forEach(file => {
+                const key = creativeAgentFileKey(file);
+                if (!existingKeys.has(key)) {
+                    creativeAgentFiles.push(file);
+                    existingKeys.add(key);
+                }
+            });
+            if (input) input.value = '';
+            renderCreativeAgentFileList();
+        }
+
+        function clearCreativeAgentFiles() {
+            creativeAgentFiles = [];
+            renderCreativeAgentFileList();
+        }
+
+        function formatBytes(bytes) {
+            const value = Number(bytes) || 0;
+            if (value < 1024) return `${value} B`;
+            if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+            return `${(value / 1024 / 1024).toFixed(1)} MB`;
+        }
+
+        function renderCreativeAgentFileList() {
+            const list = document.getElementById('creativeAgentFileList');
+            if (!list) return;
+
+            if (!creativeAgentFiles.length) {
+                list.textContent = '未添加参考资料';
+                return;
+            }
+
+            const totalSize = creativeAgentFiles.reduce((sum, file) => sum + (Number(file.size) || 0), 0);
+            const visible = creativeAgentFiles.slice(0, 10);
+            list.innerHTML = [
+                `<strong>${creativeAgentFiles.length} 个文件 / ${formatBytes(totalSize)}</strong>`,
+                ...visible.map(file => `· ${file.webkitRelativePath || file.name} (${formatBytes(file.size)})`),
+                creativeAgentFiles.length > visible.length ? `· 还有 ${creativeAgentFiles.length - visible.length} 个文件未显示` : ''
+            ].filter(Boolean).join('<br>');
+        }
+
+        async function buildCreativeAgentAttachments() {
+            const maxTotalBytes = 42 * 1024 * 1024;
+            const totalSize = creativeAgentFiles.reduce((sum, file) => sum + (Number(file.size) || 0), 0);
+            if (totalSize > maxTotalBytes) {
+                throw new Error(`参考资料总大小 ${formatBytes(totalSize)} 超过限制，请减少到 42 MB 以内`);
+            }
+
+            const attachments = [];
+            for (const file of creativeAgentFiles) {
+                const contentBase64 = await readFileAsBase64(file);
+                attachments.push({
+                    name: file.name,
+                    relativePath: file.webkitRelativePath || file.name,
+                    mimeType: file.type || '',
+                    size: file.size,
+                    contentBase64
+                });
+            }
+            return attachments;
+        }
+
+        function resetCreativeAgentResult() {
+            creativeAgentLastResult = null;
+            document.getElementById('creativeAgentResult')?.classList.remove('active');
+            const downloadBtn = document.getElementById('creativeAgentDownloadBtn');
+            const extractBtn = document.getElementById('creativeAgentExtractBtn');
+            if (downloadBtn) downloadBtn.disabled = true;
+            if (extractBtn) extractBtn.disabled = true;
+        }
+
+        async function runCreativeAgent() {
+            const instruction = document.getElementById('creativeAgentInstruction')?.value.trim() || '';
+            const apiKey = document.getElementById('creativeAgentApiKey')?.value.trim() || '';
+            const apiUrl = document.getElementById('creativeAgentApiUrl')?.value.trim() || '';
+            const model = document.getElementById('creativeAgentModel')?.value.trim() || '';
+            const provider = document.getElementById('creativeAgentProvider')?.value.trim() || '';
+            const targetCountValue = document.getElementById('creativeAgentTargetCount')?.value.trim() || '';
+            const runBtn = document.getElementById('creativeAgentRunBtn');
+
+            if (!instruction && creativeAgentFiles.length === 0) {
+                showToast('请填写文字指令或添加参考资料', 'error');
+                return;
+            }
+
+            resetCreativeAgentResult();
+            if (runBtn) {
+                runBtn.disabled = true;
+                runBtn.textContent = '运行中...';
+            }
+            setCreativeAgentInfo('info-box loading', '正在读取资料并调用创意拓展Agent...');
+
+            try {
+                const attachments = await buildCreativeAgentAttachments();
+                const data = await fetchJsonWithTimeout('/api/creative-agent/run', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        instruction,
+                        apiKey,
+                        apiUrl,
+                        model,
+                        provider,
+                        targetCount: targetCountValue ? Number(targetCountValue) : null,
+                        attachments
+                    })
+                }, 45 * 60 * 1000, '创意拓展Agent运行失败，请检查 Winky API 配置');
+
+                if (!data.success) {
+                    throw new Error(data.message || 'Agent运行失败');
+                }
+
+                creativeAgentLastResult = data;
+                document.getElementById('creativeAgentResult')?.classList.add('active');
+                const downloadBtn = document.getElementById('creativeAgentDownloadBtn');
+                const extractBtn = document.getElementById('creativeAgentExtractBtn');
+                if (downloadBtn) downloadBtn.disabled = !data.downloadUrl;
+                if (extractBtn) extractBtn.disabled = !(Array.isArray(data.prompts) && data.prompts.length > 0);
+
+                const promptCount = Array.isArray(data.prompts) ? data.prompts.length : 0;
+                setCreativeAgentInfo(
+                    'info-box success',
+                    `✅ Agent已生成表格：${data.fileName || 'creative_agent.xlsx'}；可提取 ${promptCount} 组提示词`
+                );
+                addLog(`✅ 创意拓展Agent生成完成：${data.fileName || ''}，提示词 ${promptCount} 组`, 'success');
+                showToast('Agent表格已生成');
+            } catch (e) {
+                setCreativeAgentInfo('info-box error', '❌ ' + (e.message || 'Agent运行失败'));
+                showToast(e.message || 'Agent运行失败', 'error');
+            } finally {
+                if (runBtn) {
+                    runBtn.disabled = false;
+                    runBtn.textContent = '运行Agent';
+                }
+            }
+        }
+
+        function downloadCreativeAgentTable() {
+            if (!creativeAgentLastResult?.downloadUrl) {
+                showToast('还没有可下载的Agent表格', 'error');
+                return;
+            }
+            window.location.href = creativeAgentLastResult.downloadUrl;
+        }
+
+        function extractCreativeAgentPrompts() {
+            const prompts = Array.isArray(creativeAgentLastResult?.prompts)
+                ? creativeAgentLastResult.prompts
+                : [];
+            if (prompts.length === 0) {
+                showToast('生成表格中没有可提取的提示词', 'error');
+                return;
+            }
+
+            config.creativePrompts = prompts.map((item, index) => ({
+                ...item,
+                index: index + 1,
+                selected: item.selected !== false
+            }));
+            config.creativeTableFileName = creativeAgentLastResult.fileName || 'Agent生成表格.xlsx';
+            renderCreativePromptPreview(config.creativePrompts);
+
+            const infoBox = document.getElementById('creativeTableInfo');
+            if (infoBox) {
+                infoBox.className = 'info-box success';
+                infoBox.textContent = `✅ 已从Agent生成表格提取 ${config.creativePrompts.length} 组提示词`;
+            }
+            addLog(`✅ 已提取Agent生成表格提示词：${config.creativePrompts.length} 组`, 'success');
+            showToast(`已提取 ${config.creativePrompts.length} 组提示词`);
         }
 
         async function handleCreativeTableFileChange() {
@@ -6631,6 +7084,146 @@
             return Number.isFinite(value) && value > 0 ? value : fallbackIndex + 1;
         }
 
+        function getCreativeDirectionTitle(item, fallbackIndex = 0) {
+            const direction = String(item && item.direction ? item.direction : '').trim();
+            if (direction) return direction;
+            const sourceRow = item && item.sourceRow ? item.sourceRow : fallbackIndex + 1;
+            return `表格第 ${sourceRow} 行`;
+        }
+
+        function getCreativeDirectionGroupKey(item, fallbackIndex = 0) {
+            const sourceRow = item && Number.isFinite(Number(item.sourceRow)) ? Number(item.sourceRow) : fallbackIndex + 1;
+            return `${sourceRow}::${getCreativeDirectionTitle(item, fallbackIndex)}`;
+        }
+
+        function getCreativePromptGroups(prompts) {
+            const groups = [];
+            const groupMap = new Map();
+            (Array.isArray(prompts) ? prompts : []).forEach((item, index) => {
+                if (!item || !String(item.prompt || '').trim()) return;
+                const key = getCreativeDirectionGroupKey(item, index);
+                if (!groupMap.has(key)) {
+                    const group = {
+                        key,
+                        title: getCreativeDirectionTitle(item, index),
+                        sourceRow: item.sourceRow || '',
+                        firstIndex: getCreativePromptIndex(item, index),
+                        prompts: []
+                    };
+                    groupMap.set(key, group);
+                    groups.push(group);
+                }
+                groupMap.get(key).prompts.push(item);
+            });
+            return groups;
+        }
+
+        function normalizeCreativePromptFromResume(item, fallbackIndex = 0, remainingSet = new Set()) {
+            const index = getCreativePromptIndex(item, fallbackIndex);
+            return {
+                index,
+                sourceRow: Number(item?.sourceRow) || index,
+                sheetName: item?.sheetName || '',
+                direction: item?.direction || `上次任务第 ${index} 组`,
+                promptTitle: item?.promptTitle || `提示词${index}`,
+                promptColumn: item?.promptColumn || null,
+                prompt: String(item?.prompt || '').trim(),
+                selected: remainingSet.size > 0 ? remainingSet.has(index) : item?.selected !== false
+            };
+        }
+
+        function applyCreativeResumeInfo(resume) {
+            creativeResumeInfo = resume && resume.hasResume ? resume : null;
+            if (!creativeResumeInfo) {
+                creativeResumeIndexes = [];
+                setCreativeStoppedActionsVisible(false);
+                return;
+            }
+
+            const remainingIndexes = Array.isArray(creativeResumeInfo.remainingIndexes)
+                ? creativeResumeInfo.remainingIndexes.map(Number).filter(Number.isFinite)
+                : [];
+            const remainingSet = new Set(remainingIndexes);
+            const restoredPrompts = Array.isArray(creativeResumeInfo.prompts)
+                ? creativeResumeInfo.prompts
+                    .map((item, index) => normalizeCreativePromptFromResume(item, index, remainingSet))
+                    .filter(item => item.prompt)
+                : [];
+
+            if (restoredPrompts.length > 0) {
+                config.creativePrompts = restoredPrompts;
+                config.creativeTableFileName = creativeResumeInfo.tableFileName || '上次创意拓展任务';
+                creativeLastRunIndexes = restoredPrompts.map((item, index) => getCreativePromptIndex(item, index));
+                renderCreativePromptPreview(config.creativePrompts);
+            }
+
+            creativeResumeIndexes = remainingIndexes.length > 0
+                ? remainingIndexes
+                : restoredPrompts.filter(item => item.selected !== false).map((item, index) => getCreativePromptIndex(item, index));
+
+            if (creativeResumeIndexes.length > 0 && restoredPrompts.length > 0) {
+                selectCreativePromptsByIndexes(creativeResumeIndexes);
+            }
+
+            if (creativeResumeInfo.outputFolder) {
+                config.creativeOutputFolder = creativeResumeInfo.outputFolder;
+                const output = document.getElementById('creativeOutputFolder');
+                if (output) output.value = config.creativeOutputFolder;
+            }
+            if (creativeResumeInfo.referenceFolder !== undefined) {
+                config.creativeReferenceFolder = creativeResumeInfo.referenceFolder || '';
+                const reference = document.getElementById('creativeReferenceFolder');
+                if (reference) reference.value = config.creativeReferenceFolder;
+            }
+            if (creativeResumeInfo.browserMode) {
+                config.creativeBrowserMode = normalizeCreativeBrowserMode(creativeResumeInfo.browserMode);
+                updateCreativeBrowserModeActiveState();
+            }
+            if (creativeResumeInfo.generationSettings) {
+                config.creativeLegilGeneration = {
+                    ...config.creativeLegilGeneration,
+                    ...creativeResumeInfo.generationSettings,
+                    outputQuantity: Number(creativeResumeInfo.generationSettings.outputQuantity) || config.creativeLegilGeneration.outputQuantity
+                };
+                updateCreativeLegilGenerationActiveStates();
+                refreshCreativeLegilGenerationSummary();
+            }
+            if (creativeResumeInfo.progress) {
+                updateCreativeProgress(creativeResumeInfo.progress);
+            }
+
+            setCreativeStoppedActionsVisible(true, creativeResumeIndexes.length);
+            const startBtn = document.getElementById('creativeStartBtn');
+            if (startBtn) {
+                startBtn.disabled = true;
+                startBtn.textContent = '请选择继续任务或新任务';
+            }
+
+            const infoBox = document.getElementById('creativeBatchInfo');
+            if (infoBox) {
+                const completed = Number(creativeResumeInfo.completed) || 0;
+                const total = Number(creativeResumeInfo.total) || creativeResumeIndexes.length;
+                infoBox.className = 'info-box success';
+                infoBox.textContent = `已找到上次创意拓展任务：已处理 ${completed}/${total} 组，可继续剩余 ${creativeResumeIndexes.length} 组，或开启新任务。`;
+            }
+        }
+
+        async function refreshCreativeResumeControls() {
+            try {
+                const res = await fetch('/api/legil/creative-resume');
+                const data = await readJsonResponse(res, '读取创意拓展恢复状态失败');
+                if (!data.success) return;
+                applyCreativeResumeInfo(data.resume);
+            } catch (e) {}
+        }
+
+        async function clearCreativeResumeOnServer() {
+            try {
+                await fetch('/api/legil/creative-resume/clear', { method: 'POST' });
+            } catch (e) {}
+            creativeResumeInfo = null;
+        }
+
         function setCreativeNewTaskVisible(visible) {
             const btn = document.getElementById('creativeNewTaskBtn');
             if (btn) btn.hidden = visible !== true;
@@ -6667,26 +7260,28 @@
 
         function updateCreativeSelectionCount() {
             const count = document.getElementById('creativeSelectionCount');
-            const total = Array.isArray(config.creativePrompts) ? config.creativePrompts.length : 0;
-            const selected = getSelectedCreativePrompts().length;
+            const groups = getCreativePromptGroups(config.creativePrompts);
+            const selectedPromptCount = getSelectedCreativePrompts().length;
+            const totalPromptCount = Array.isArray(config.creativePrompts) ? config.creativePrompts.length : 0;
+            const selectedGroupCount = groups.filter(group => group.prompts.some(item => item.selected !== false)).length;
             if (count) {
-                count.textContent = `已选择 ${selected} / ${total} 组`;
+                count.textContent = `已选择 ${selectedGroupCount} / ${groups.length} 个方向（${selectedPromptCount} / ${totalPromptCount} 组提示词）`;
             }
             const selectedStat = document.getElementById('creativeStatsSelected');
             if (selectedStat) {
-                selectedStat.textContent = selected || 0;
+                selectedStat.textContent = selectedPromptCount || 0;
             }
         }
 
-        function toggleCreativePromptSelection(index, checked) {
-            const item = (config.creativePrompts || [])[index - 1];
-            if (!item) return;
-            item.selected = checked === true;
-            const card = document.getElementById(`creative-prompt-${index}`);
-            if (card) {
-                card.classList.toggle('is-unselected', item.selected === false);
-            }
-            updateCreativeSelectionCount();
+        function toggleCreativePromptGroupSelection(groupKey, checked) {
+            getCreativePromptGroups(config.creativePrompts)
+                .filter(group => group.key === groupKey)
+                .forEach(group => {
+                    group.prompts.forEach(item => {
+                        item.selected = checked === true;
+                    });
+                });
+            renderCreativePromptPreview(config.creativePrompts);
         }
 
         function setAllCreativePromptsSelected(selected) {
@@ -6730,12 +7325,13 @@
             selectionBar.appendChild(clearBtn);
             list.appendChild(selectionBar);
 
-            safePrompts.forEach(item => {
-                const index = Number(item.index) || (safePrompts.indexOf(item) + 1);
+            const groups = getCreativePromptGroups(safePrompts);
+            groups.forEach((group, groupIndex) => {
+                const selectedCount = group.prompts.filter(item => item.selected !== false).length;
                 const card = document.createElement('div');
                 card.className = 'creative-preview-item';
-                card.id = `creative-prompt-${index}`;
-                card.classList.toggle('is-unselected', item.selected === false);
+                card.id = `creative-direction-${group.firstIndex}`;
+                card.classList.toggle('is-unselected', selectedCount === 0);
 
                 const meta = document.createElement('div');
                 meta.className = 'creative-preview-meta';
@@ -6745,27 +7341,25 @@
 
                 const checkbox = document.createElement('input');
                 checkbox.type = 'checkbox';
-                checkbox.checked = item.selected !== false;
-                checkbox.onchange = () => toggleCreativePromptSelection(index, checkbox.checked);
+                checkbox.checked = selectedCount === group.prompts.length;
+                checkbox.indeterminate = selectedCount > 0 && selectedCount < group.prompts.length;
+                checkbox.onchange = () => toggleCreativePromptGroupSelection(group.key, checkbox.checked);
 
                 const title = document.createElement('span');
                 title.className = 'creative-preview-title';
-                title.textContent = `#${index} ${item.direction || '未命名方向'}${item.promptTitle ? ` / ${item.promptTitle}` : ''}`;
+                title.textContent = `#${groupIndex + 1} ${group.title}`;
 
-                const row = document.createElement('span');
-                row.textContent = `行 ${item.sourceRow || '-'}`;
-
-                const text = document.createElement('div');
-                text.className = 'creative-preview-text';
-                const content = String(item.prompt || '');
-                text.textContent = content.slice(0, 180) + (content.length > 180 ? '...' : '');
+                const summary = document.createElement('span');
+                summary.className = 'creative-preview-count';
+                summary.textContent = selectedCount === group.prompts.length
+                    ? `${group.prompts.length} 组提示词`
+                    : `已选 ${selectedCount}/${group.prompts.length}`;
 
                 label.appendChild(checkbox);
                 label.appendChild(title);
                 meta.appendChild(label);
-                meta.appendChild(row);
+                meta.appendChild(summary);
                 card.appendChild(meta);
-                card.appendChild(text);
                 list.appendChild(card);
             });
 
@@ -7385,8 +7979,11 @@
 
         async function resumeCreativeStoppedTask() {
             if (creativeResumeIndexes.length === 0) {
-                showToast('没有可继续的剩余任务', 'error');
-                return;
+                await refreshCreativeResumeControls();
+                if (creativeResumeIndexes.length === 0) {
+                    showToast('没有可继续的剩余任务', 'error');
+                    return;
+                }
             }
 
             selectCreativePromptsByIndexes(creativeResumeIndexes);
@@ -7413,9 +8010,14 @@
         }
 
         async function startCreativeBatchWithConfirm() {
+            const browserModeLabel = getCreativeBrowserModeLabel(config.creativeBrowserMode);
+            const browserModeNote = config.creativeBrowserMode === 'headless'
+                ? '使用已保存的登录状态后台运行'
+                : '会显示浏览器窗口';
             const confirmed = confirm(
                 '请确认以下事项：\n\n' +
-                '✅ 已在浏览器中登录 Legil 账号\n' +
+                `✅ 运行模式：${browserModeLabel}（${browserModeNote}）\n` +
+                '✅ 已在 Legil 登录账号\n' +
                 '✅ 已上传并解析表格提示词\n' +
                 '✅ 创意拓展输出文件夹路径正确\n' +
                 '✅ Legil生成参数已确认\n\n' +
@@ -7474,6 +8076,8 @@
                         outputFolder,
                         referenceFolder,
                         prompts: selectedPrompts,
+                        tableFileName: config.creativeTableFileName || '',
+                        browserMode: config.creativeBrowserMode,
                         generationSettings: config.creativeLegilGeneration
                     })
                 }, 30000, '启动创意拓展失败，请重启服务器后刷新页面');
@@ -7482,6 +8086,7 @@
                     throw new Error(data.message || '启动失败');
                 }
 
+                creativeResumeInfo = null;
                 document.getElementById('creativeProgressPanel')?.classList.add('active');
                 updateCreativeProgress(data.progress || {
                     taskType: 'creative-batch',
@@ -7629,6 +8234,8 @@
                         String(data.progress.phase || '') === 'stopped'
                     ) {
                         prepareCreativeStoppedActions(data.progress);
+                    } else {
+                        refreshCreativeResumeControls();
                     }
                 } else {
                     const startBtn = document.getElementById('creativeStartBtn');

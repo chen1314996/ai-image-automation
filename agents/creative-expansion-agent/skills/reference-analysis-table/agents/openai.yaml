@@ -1,0 +1,4 @@
+interface:
+  display_name: "参考分析表专家"
+  short_description: "分析参考方向并提炼可复用机制"
+  default_prompt: "Use $reference-analysis-table to analyze reference directions and build a detailed reference analysis table."

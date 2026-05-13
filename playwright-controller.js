@@ -37,6 +37,9 @@ class BrowserController {
 
         // 浏览器上下文（可以用来共享 cookie、缓存等）
         this.context = null;
+
+        // 当前浏览器运行模式。null 表示尚未启动，false=有头，true=无头。
+        this.currentHeadless = null;
     }
 
     /**
@@ -49,8 +52,10 @@ class BrowserController {
      */
     async launchBrowser(headless = false) {
         try {
-            console.log('🚀 正在启动浏览器...');
-            logger.browser('正在启动浏览器...');
+            const useHeadless = headless === true;
+            const modeLabel = useHeadless ? '无头模式' : '有头模式';
+            console.log(`🚀 正在启动浏览器（${modeLabel}）...`);
+            logger.browser(`正在启动浏览器（${modeLabel}）...`);
             console.log(`   用户数据目录: ${USER_DATA_DIR}`);
 
             // 检查是否有残留的浏览器进程
@@ -68,7 +73,7 @@ class BrowserController {
             // 使用持久化用户目录启动浏览器。这样 Legil 的 cookie、localStorage、
             // IndexedDB 等登录信息会像普通浏览器一样自动保存到 browser_data。
             const contextOptions = {
-                headless: headless,              // 是否无头模式
+                headless: useHeadless,           // 是否无头模式
                 slowMo: 100,                     // 增加操作延迟，更自然
                 viewport: { width: 1280, height: 800 },
                 acceptDownloads: true,
@@ -101,10 +106,11 @@ class BrowserController {
             }
 
             this.browser = this.context.browser();
+            this.currentHeadless = useHeadless;
             this.attachLifecycleHandlers();
 
-            console.log('✅ 浏览器启动成功');
-            logger.browser('✅ 浏览器启动成功');
+            console.log(`✅ 浏览器启动成功（${modeLabel}）`);
+            logger.browser(`✅ 浏览器启动成功（${modeLabel}）`);
             return true;
 
         } catch (error) {
@@ -114,6 +120,7 @@ class BrowserController {
             // 重置状态
             this.browser = null;
             this.context = null;
+            this.currentHeadless = null;
 
             return false;
         }
@@ -125,6 +132,7 @@ class BrowserController {
                 this.context = null;
                 this.browser = null;
                 this.pages = {};
+                this.currentHeadless = null;
                 console.log('   浏览器上下文已关闭，登录状态已由 browser_data 自动保留');
             });
         }
@@ -134,6 +142,7 @@ class BrowserController {
                 this.context = null;
                 this.browser = null;
                 this.pages = {};
+                this.currentHeadless = null;
                 console.log('   浏览器已断开连接');
             });
         }
@@ -171,6 +180,28 @@ class BrowserController {
     }
 
     /**
+     * 确保浏览器以指定模式运行。
+     * @param {boolean} headless - true=无头模式，false=有头模式
+     * @returns {Promise<boolean>}
+     */
+    async ensureBrowserMode(headless = false) {
+        const requestedHeadless = headless === true;
+
+        if (this.isBrowserActive() && this.currentHeadless !== null && this.currentHeadless !== requestedHeadless) {
+            const modeLabel = requestedHeadless ? '无头模式' : '有头模式';
+            console.log(`   正在切换浏览器运行模式为${modeLabel}...`);
+            logger.browser(`正在切换浏览器运行模式为${modeLabel}...`);
+            await this.closeBrowser();
+        }
+
+        if (!this.isBrowserActive()) {
+            return await this.launchBrowser(requestedHeadless);
+        }
+
+        return true;
+    }
+
+    /**
      * 保存浏览器状态
      * 持久化上下文会自动把登录信息写入 browser_data。
      */
@@ -186,18 +217,15 @@ class BrowserController {
      * @param {string} url - 要打开的网址
      * @returns {Promise<boolean>} - 成功返回 true，失败返回 false
      */
-    async openWebsite(name, url) {
+    async openWebsite(name, url, options = {}) {
         try {
             console.log(`🌐 准备打开 ${name}: ${url}`);
             logger.browser(`准备打开 ${name}`);
 
-            // 如果浏览器未启动，先启动浏览器
-            if (!this.isBrowserActive()) {
-                console.log('   浏览器未启动，正在启动...');
-                const launched = await this.launchBrowser(false);
-                if (!launched) {
-                    throw new Error('浏览器启动失败');
-                }
+            const requestedHeadless = options && options.headless === true;
+            const ready = await this.ensureBrowserMode(requestedHeadless);
+            if (!ready) {
+                throw new Error('浏览器启动失败');
             }
 
             // 检查浏览器实例是否有效
@@ -260,6 +288,7 @@ class BrowserController {
                 console.log('   重置浏览器状态...');
                 this.browser = null;
                 this.context = null;
+                this.currentHeadless = null;
                 this.pages = {};
             }
 
@@ -380,6 +409,7 @@ class BrowserController {
                 this.context = null;
                 this.pages = {};
                 this.browser = null;
+                this.currentHeadless = null;
             }
         }
 
@@ -391,6 +421,7 @@ class BrowserController {
                 console.error('   关闭浏览器时出错:', error.message);
             } finally {
                 this.browser = null;
+                this.currentHeadless = null;
             }
 
             // 等待一下确保进程完全退出

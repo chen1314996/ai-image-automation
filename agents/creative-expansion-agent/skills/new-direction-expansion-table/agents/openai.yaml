@@ -1,0 +1,4 @@
+interface:
+  display_name: "新方向拓展表专家"
+  short_description: "按方向生成高差异的新方向与提示词表"
+  default_prompt: "Use $new-direction-expansion-table to expand reference directions into new direction tables with detailed prompts."

@@ -1,0 +1,92 @@
+schema_version: "agent.v1"
+name: "frozen-apocalypse-creative-expansion-agent"
+display_name: "冰封末世广告创意拓展Agent"
+version: "0.1.0"
+language: "zh-CN"
+domain: "图片广告创意开发 / 3D渲染广告图方向拓展"
+entry_instruction: "instructions.md"
+default_output_format: "markdown_tables"
+
+summary: >
+  面向冰封末世题材广告素材的创意拓展 Agent。它先拆解用户已有参考方向为什么成立，
+  再生成批量迭代策略，最后扩展出高差异新方向与可直接用于出图的中文提示词。
+
+accepted_inputs:
+  - "参考图、拼图、方向截图、表格截图"
+  - "Excel、CSV、已有方向清单、关键词列表"
+  - "项目文案、卖点说明、世界观设定"
+  - "飞书或文档内容摘要；若链接无法读取，需要用户粘贴或导出内容"
+
+skills:
+  - name: "reference-analysis-table"
+    path: "skills/reference-analysis-table"
+    stage: "1_reference_analysis"
+    required_in_default_workflow: true
+    responsibility: "分析参考图或已有方向为什么成立，提炼可复用机制与不宜重复的部分。"
+  - name: "batch-iteration-strategy-table"
+    path: "skills/batch-iteration-strategy-table"
+    stage: "2_iteration_strategy"
+    required_in_default_workflow: true
+    responsibility: "把已有方向转成可批量生产的总策略表和逐方向详细迭代策略表。"
+  - name: "new-direction-expansion-table"
+    path: "skills/new-direction-expansion-table"
+    stage: "3_new_direction_expansion"
+    required_in_default_workflow: true
+    responsibility: "基于前两层结论生成新方向拓展表，每个方向附 5 组详细中文出图提示词。"
+  - name: "strict-table-direction-iteration"
+    path: "skills/strict-table-direction-iteration"
+    stage: "constraint"
+    required_in_default_workflow: false
+    responsibility: "当输入是表格或逐行方向清单时，强制保持原顺序、不跳项、不合并。"
+  - name: "batch-creative-expansion-accelerator"
+    path: "skills/batch-creative-expansion-accelerator"
+    stage: "accelerator"
+    required_in_default_workflow: false
+    responsibility: "在大规模参考拆解、去重、系列化扩展和批量提示词生成时作为补充加速规则。"
+
+workflow:
+  default_sequence:
+    - "建立参考索引；若是表格，先识别每一行方向并保持原顺序。"
+    - "调用 reference-analysis-table，输出参考图分析表。"
+    - "将参考分析结论作为基础，调用 batch-iteration-strategy-table，输出 100组素材迭代策略总表和逐方向详细迭代策略表。"
+    - "将参考分析结论与详细迭代策略共同作为依据，调用 new-direction-expansion-table，输出新方向拓展表。"
+    - "如任务规模较大，使用 batch-creative-expansion-accelerator 做去重和系列化检查。"
+  do_not:
+    - "不要跳过参考分析直接生成新方向。"
+    - "不要把三个核心表格拆成互不关联的孤立结果。"
+    - "不要把多个表格行合并成一个方向，除非用户明确要求合并。"
+    - "不要默认加入强科幻、赛博、悬浮设备、激光 UI 或未来机甲。"
+
+output_contract:
+  sections:
+    - name: "第一部分：参考图分析表"
+      required_by_default: true
+    - name: "第二部分：100组素材迭代策略总表"
+      required_by_default: true
+    - name: "第三部分：逐方向详细迭代策略表"
+      required_by_default: true
+    - name: "第四部分：新方向拓展表"
+      required_by_default: true
+  new_direction_table_columns:
+    - "参考方向"
+    - "新方向名称"
+    - "方向描述"
+    - "来源于哪条详细迭代策略"
+    - "提示词1"
+    - "提示词2"
+    - "提示词3"
+    - "提示词4"
+    - "提示词5"
+
+quality_gates:
+  - "每个新方向都必须能看出与原参考的主体关系、场景机制、叙事焦点、镜头语言或广告表达变化。"
+  - "同一方向下的 5 组提示词不能只是近义改写，主体和场景机制都要明显变化。"
+  - "整批方向名称不能落入同一套抽象命名模板。"
+  - "所有提示词都要中文、完整、可视化、可直接用于高质量 3D 广告图出图。"
+  - "默认保持冰封末世世界观、3D渲染、高完成度商业广告海报质感。"
+
+integration:
+  recommended_runtime: "由已有项目决定；本包默认提供 TypeScript 适配器。"
+  adapter: "integration/creativeExpansionAgent.ts"
+  request_example: "examples/request.example.md"
+  response_style: "Markdown 表格优先；如项目需要结构化存储，可在调用层要求 JSON。"

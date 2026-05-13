@@ -1,0 +1,4 @@
+interface:
+  display_name: "严格表格逐项迭代"
+  short_description: "按表格逐行分析并逐项扩展方向，不跳项不合并"
+  default_prompt: "Use $strict-table-direction-iteration to process user-provided tables row by row, preserving row order and generating one-by-one direction iterations without skipping, merging, or summarizing away entries."

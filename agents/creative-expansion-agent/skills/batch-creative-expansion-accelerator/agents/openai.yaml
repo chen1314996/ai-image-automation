@@ -1,0 +1,4 @@
+interface:
+  display_name: "批量创意扩展加速器"
+  short_description: "加速参考图拆解、去重扩展与批量提示词生成"
+  default_prompt: "Use $batch-creative-expansion-accelerator to analyze references, deduplicate directions, and expand them into scalable Chinese ad-creative outputs."

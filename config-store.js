@@ -9,7 +9,7 @@ function readConfig() {
             return {};
         }
 
-        const raw = fs.readFileSync(CONFIG_PATH, 'utf8');
+        const raw = fs.readFileSync(CONFIG_PATH, 'utf8').replace(/^\uFEFF/, '');
         if (!raw.trim()) {
             return {};
         }

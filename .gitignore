@@ -11,6 +11,7 @@ storage_state.json
 failed_images.log
 automation-config.json
 automation-secrets.json
+creative_agent_outputs/
 .env
 .env.local
 .env.*

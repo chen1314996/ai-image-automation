@@ -11,7 +11,7 @@ function readSecrets() {
             return {};
         }
 
-        const raw = fs.readFileSync(SECRETS_PATH, 'utf8');
+        const raw = fs.readFileSync(SECRETS_PATH, 'utf8').replace(/^\uFEFF/, '');
         if (!raw.trim()) {
             return {};
         }

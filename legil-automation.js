@@ -317,11 +317,19 @@ class LegilAutomation {
         try {
             throwIfAborted(options);
 
+            const useHeadlessBrowser = options.headless === true;
+            const browserReady = await browserController.ensureBrowserMode(useHeadlessBrowser);
+            if (!browserReady) {
+                throw new Error('无法启动 Legil 自动化浏览器');
+            }
+
             // 第1步：获取 Legil 页面
             let page = browserController.getPage('legil');
             if (!page || page.isClosed()) {
                 logger.warn('Legil 页面未打开，正在打开...');
-                const opened = await browserController.openWebsite('legil', LEGIL_IMAGE_TO_IMAGE_URL);
+                const opened = await browserController.openWebsite('legil', LEGIL_IMAGE_TO_IMAGE_URL, {
+                    headless: useHeadlessBrowser
+                });
                 if (!opened) {
                     throw new Error('无法打开 Legil 页面');
                 }

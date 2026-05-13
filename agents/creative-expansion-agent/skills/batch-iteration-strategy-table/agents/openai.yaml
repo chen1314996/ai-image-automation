@@ -1,0 +1,4 @@
+interface:
+  display_name: "批量迭代策略专家"
+  short_description: "为大批量创意扩展制定详细迭代策略"
+  default_prompt: "Use $batch-iteration-strategy-table to build a detailed batch iteration strategy table for scalable creative expansion."
