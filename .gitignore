@@ -4,6 +4,7 @@ node_modules/
 # Browser/login state and local caches
 browser_data/
 browser_data_backup_*/
+browser_data_before_restore_*/
 storage_state.json
 
 # Runtime logs
@@ -12,6 +13,7 @@ failed_images.log
 automation-config.json
 automation-secrets.json
 creative_agent_outputs/
+runtime/
 .env
 .env.local
 .env.*

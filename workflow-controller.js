@@ -51,6 +51,13 @@ class WorkflowController {
         this.currentImagePath = '';
         this.nextResumeImageIndex = 0;
         this.nextResumePromptIndex = 0;
+        this.browserMode = 'headless';
+        this.headless = true;
+        this.consecutiveLegilFailures = 0;
+        this.pauseOnConsecutiveFailures = true;
+        this.consecutiveFailureThreshold = 3;
+        this.autoRecoveryEnabled = true;
+        this.captureErrorScreenshot = true;
     }
 
     /**
@@ -157,6 +164,13 @@ class WorkflowController {
         };
     }
 
+    normalizeBrowserMode(value, fallback = 'headless') {
+        if (value === 'headless' || value === 'headed') {
+            return value;
+        }
+        return fallback === 'headed' ? 'headed' : 'headless';
+    }
+
     buildResumeSnapshot() {
         if (!this.totalImages || !Array.isArray(this.imageFiles) || this.imageFiles.length === 0) {
             return null;
@@ -190,6 +204,8 @@ class WorkflowController {
             inputFolder: this.inputFolder,
             outputFolder: this.outputFolder,
             legilReferenceFolder: this.legilReferenceFolder,
+            browserMode: this.browserMode,
+            headless: this.headless,
             imageFiles: [...this.imageFiles],
             totalImages: this.totalImages,
             imageIndex,
@@ -215,6 +231,7 @@ class WorkflowController {
             inputFolder: snapshot.inputFolder,
             outputFolder: snapshot.outputFolder,
             legilReferenceFolder: snapshot.legilReferenceFolder,
+            browserMode: snapshot.browserMode || 'headless',
             imageIndex: snapshot.imageIndex + 1,
             totalImages: snapshot.totalImages || snapshot.imageFiles.length,
             imageName: imagePath ? path.basename(imagePath) : '',
@@ -263,6 +280,19 @@ class WorkflowController {
         this.inputFolder = validation.inputFolder;
         this.outputFolder = validation.outputFolder;
         this.legilReferenceFolder = validation.legilReferenceFolder;
+        const requestedBrowserMode = options && typeof options.browserMode === 'string'
+            ? options.browserMode
+            : (typeof options.headless === 'boolean' ? (options.headless ? 'headless' : 'headed') : '');
+        this.browserMode = this.normalizeBrowserMode(
+            requestedBrowserMode || (resumeSnapshot && resumeSnapshot.browserMode) || this.browserMode,
+            'headless'
+        );
+        this.headless = this.browserMode === 'headless';
+        this.consecutiveLegilFailures = 0;
+        this.pauseOnConsecutiveFailures = options.pauseOnConsecutiveFailures !== false;
+        this.consecutiveFailureThreshold = Math.max(1, Math.min(20, Number(options.consecutiveFailureThreshold) || 3));
+        this.autoRecoveryEnabled = options.autoRecoveryEnabled !== false;
+        this.captureErrorScreenshot = options.captureErrorScreenshot !== false;
         this.stats = resumeSnapshot && resumeSnapshot.stats
             ? { processed: 0, failed: 0, totalGenerated: 0, ...resumeSnapshot.stats }
             : { processed: 0, failed: 0, totalGenerated: 0 };
@@ -286,6 +316,7 @@ class WorkflowController {
             currentImageName: '',
             currentPromptIndex: 0,
             totalPrompts: 5,
+            browserMode: this.browserMode,
             currentAction: '正在初始化工作流...',
             error: null
         });
@@ -295,6 +326,7 @@ class WorkflowController {
         logger.info('========================================');
         logger.info(`输入文件夹: ${this.inputFolder}`);
         logger.info(`输出文件夹: ${this.outputFolder}`);
+        logger.info(`运行模式: ${this.headless ? '无头模式' : '有头模式'}`);
 
         try {
             // 第1步：获取所有参考图
@@ -354,9 +386,10 @@ class WorkflowController {
                     const processOptions = resumeSnapshot && i === startImageIndex
                         ? {
                             startPromptIndex: Number(resumeSnapshot.promptIndex) || 0,
-                            prompts: Array.isArray(resumeSnapshot.prompts) ? resumeSnapshot.prompts : []
+                            prompts: Array.isArray(resumeSnapshot.prompts) ? resumeSnapshot.prompts : [],
+                            headless: this.headless
                         }
-                        : {};
+                        : { headless: this.headless };
                     await this.processSingleImage(imagePath, i + 1, this.totalImages, processOptions);
                     this.stats.processed++;
 
@@ -588,6 +621,7 @@ class WorkflowController {
             const legilResult = await legilAutomation.generateImage(promptText, i + 1, {
                 saveFolder: this.outputFolder,
                 referenceFolder: this.legilReferenceFolder,
+                headless: options.headless === true || this.headless === true,
                 outputSequence: nextOutputSequence,
                 outputTotal: totalImages * prompts.length * legilOutputQuantity,
                 runId: this.currentRunId,
@@ -596,10 +630,14 @@ class WorkflowController {
                 referenceImageName: imageName,
                 promptIndexWithinImage: i + 1,
                 totalPromptsForImage: prompts.length,
+                taskType: '量产工作流',
+                autoRecoveryEnabled: this.autoRecoveryEnabled,
+                captureErrorScreenshot: this.captureErrorScreenshot,
                 ...this.getCancellationOptions()
             });
 
             if (legilResult.success) {
+                this.consecutiveLegilFailures = 0;
                 const savedCount = Number(legilResult.savedCount) || 1;
                 this.stats.totalGenerated += savedCount;
                 this.nextResumePromptIndex = i + 1;
@@ -618,6 +656,18 @@ class WorkflowController {
                     break;
                 }
                 logger.error(`❌ 图片 ${i + 1}/5 生成失败: ${legilResult.message}`);
+                this.consecutiveLegilFailures += 1;
+                if (this.pauseOnConsecutiveFailures && this.consecutiveLegilFailures >= this.consecutiveFailureThreshold) {
+                    this.resumeSnapshot = this.buildResumeSnapshot();
+                    this.updateStatus({
+                        phase: 'stopped',
+                        currentAction: `Legil 连续失败 ${this.consecutiveLegilFailures} 次，工作流已暂停等待确认`,
+                        error: legilResult.message
+                    });
+                    logger.warn(`Legil 连续失败 ${this.consecutiveLegilFailures} 次，工作流已暂停等待确认。`);
+                    this.isRunning = false;
+                    throw new Error(`Legil 连续失败 ${this.consecutiveLegilFailures} 次，工作流已暂停等待确认`);
+                }
             }
 
             // 每张图片之间等待5秒
@@ -675,6 +725,7 @@ class WorkflowController {
             currentIndex: this.currentIndex,
             totalImages: this.totalImages,
             currentImage: this.imageFiles[this.currentIndex] || null,
+            browserMode: this.browserMode,
             stats: this.stats,
             progress,
             lastExtractedPrompts: this.lastExtractedPrompts || null,
@@ -720,7 +771,7 @@ class WorkflowController {
         return { success: false, message: '工作流未运行' };
     }
 
-    async resumeWorkflow() {
+    async resumeWorkflow(options = {}) {
         if (this.isRunning) {
             return {
                 success: false,
@@ -741,7 +792,10 @@ class WorkflowController {
             snapshot.inputFolder,
             snapshot.outputFolder,
             snapshot.legilReferenceFolder,
-            { resumeSnapshot: snapshot }
+            {
+                ...options,
+                resumeSnapshot: snapshot
+            }
         );
     }
 

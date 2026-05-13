@@ -12,7 +12,10 @@ class Logger {
     constructor() {
         // 存储所有连接的客户端（前端页面）
         this.clients = new Set();
+        this.clients = this.clients || new Set();
         this.heartbeats = new Map();
+        this.history = [];
+        this.maxHistory = 200;
     }
 
     /**
@@ -105,6 +108,11 @@ class Logger {
             timestamp: new Date().toISOString()
         };
 
+        this.history.push(logData);
+        if (this.history.length > this.maxHistory) {
+            this.history.splice(0, this.history.length - this.maxHistory);
+        }
+
         // 发送给所有连接的客户端
         for (const client of Array.from(this.clients)) {
             try {
@@ -154,6 +162,11 @@ class Logger {
      */
     browser(message) {
         this.log(message, 'browser');
+    }
+
+    getRecentLogs(limit = 50) {
+        const safeLimit = Math.max(1, Math.min(200, Number(limit) || 50));
+        return this.history.slice(-safeLimit);
     }
 }
 

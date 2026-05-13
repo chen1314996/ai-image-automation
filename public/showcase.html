@@ -1,0 +1,1149 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI生图自动化平台 | 项目展示</title>
+    <style>
+        :root {
+            --bg: #0d1014;
+            --bg-2: #121720;
+            --panel: rgba(22, 28, 36, 0.78);
+            --panel-strong: rgba(29, 36, 46, 0.94);
+            --line: rgba(174, 190, 210, 0.14);
+            --line-strong: rgba(174, 190, 210, 0.24);
+            --text: #edf2f4;
+            --muted: #a9b5c3;
+            --soft: #738092;
+            --blue: #4f8cff;
+            --cyan: #4ad8d8;
+            --gold: #c9a66b;
+            --green: #68c28f;
+            --red: #df735f;
+            --radius: 10px;
+            --shadow: 0 24px 70px rgba(0, 0, 0, 0.34);
+            --font-display: "Microsoft YaHei UI", "HarmonyOS Sans SC", "PingFang SC", "Noto Sans CJK SC", sans-serif;
+            --font-body: "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        html {
+            scroll-behavior: smooth;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            color: var(--text);
+            background:
+                linear-gradient(115deg, rgba(79, 140, 255, 0.08), transparent 30%),
+                linear-gradient(245deg, rgba(201, 166, 107, 0.08), transparent 26%),
+                radial-gradient(circle at 50% -20%, rgba(74, 216, 216, 0.08), transparent 42%),
+                var(--bg);
+            font-family: var(--font-body);
+            letter-spacing: 0;
+            overflow-x: hidden;
+        }
+
+        body::before {
+            content: "";
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            opacity: 0.28;
+            background-image:
+                linear-gradient(rgba(255,255,255,0.04) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255,255,255,0.035) 1px, transparent 1px);
+            background-size: 48px 48px;
+            mask-image: linear-gradient(to bottom, black, transparent 78%);
+            z-index: -2;
+        }
+
+        body::after {
+            content: "";
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            opacity: 0.1;
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 160 160' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='.5'/%3E%3C/svg%3E");
+            z-index: -1;
+        }
+
+        a {
+            color: inherit;
+            text-decoration: none;
+        }
+
+        .shell {
+            width: min(1180px, calc(100% - 40px));
+            margin: 0 auto;
+        }
+
+        .nav {
+            position: sticky;
+            top: 0;
+            z-index: 20;
+            backdrop-filter: blur(18px);
+            background: rgba(13, 16, 20, 0.76);
+            border-bottom: 1px solid var(--line);
+        }
+
+        .nav-inner {
+            height: 68px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 20px;
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            min-width: 0;
+        }
+
+        .brand-mark {
+            width: 34px;
+            height: 34px;
+            border: 1px solid rgba(255,255,255,0.18);
+            border-radius: 8px;
+            background:
+                linear-gradient(135deg, rgba(79, 140, 255, 0.85), rgba(74, 216, 216, 0.45)),
+                #151b24;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.3), 0 12px 30px rgba(79,140,255,0.22);
+            position: relative;
+        }
+
+        .brand-mark::before,
+        .brand-mark::after {
+            content: "";
+            position: absolute;
+            background: rgba(255,255,255,0.76);
+            border-radius: 999px;
+        }
+
+        .brand-mark::before {
+            width: 18px;
+            height: 2px;
+            left: 8px;
+            top: 12px;
+        }
+
+        .brand-mark::after {
+            width: 10px;
+            height: 2px;
+            left: 8px;
+            top: 20px;
+        }
+
+        .brand-title {
+            font-family: var(--font-display);
+            font-weight: 700;
+            font-size: 15px;
+            white-space: nowrap;
+        }
+
+        .nav-links {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            color: var(--muted);
+            font-size: 13px;
+        }
+
+        .nav-links a {
+            padding: 9px 11px;
+            border-radius: 8px;
+            transition: color .2s ease, background .2s ease;
+        }
+
+        .nav-links a:hover {
+            color: var(--text);
+            background: rgba(255,255,255,0.06);
+        }
+
+        .hero {
+            min-height: calc(100vh - 68px);
+            display: grid;
+            align-items: center;
+            padding: 72px 0 56px;
+            position: relative;
+        }
+
+        .hero-layout {
+            display: grid;
+            grid-template-columns: minmax(0, 0.93fr) minmax(420px, 1.07fr);
+            gap: 42px;
+            align-items: center;
+        }
+
+        .eyebrow {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            color: var(--muted);
+            font-size: 13px;
+            padding: 8px 11px;
+            border: 1px solid var(--line);
+            border-radius: 999px;
+            background: rgba(255,255,255,0.04);
+        }
+
+        .pulse {
+            width: 7px;
+            height: 7px;
+            border-radius: 999px;
+            background: var(--green);
+            box-shadow: 0 0 0 5px rgba(104, 194, 143, 0.12);
+        }
+
+        h1 {
+            margin: 24px 0 0;
+            font-family: var(--font-display);
+            font-size: clamp(42px, 7vw, 88px);
+            line-height: 0.98;
+            letter-spacing: 0;
+            max-width: 760px;
+        }
+
+        .hero-copy {
+            color: var(--muted);
+            font-size: clamp(16px, 1.7vw, 20px);
+            line-height: 1.8;
+            margin: 26px 0 0;
+            max-width: 650px;
+        }
+
+        .hero-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin-top: 34px;
+        }
+
+        .btn {
+            border: 1px solid var(--line-strong);
+            border-radius: 8px;
+            padding: 12px 16px;
+            min-height: 44px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            font-size: 14px;
+            color: var(--text);
+            background: rgba(255,255,255,0.06);
+            transition: transform .2s ease, border-color .2s ease, background .2s ease;
+        }
+
+        .btn.primary {
+            background: #2f6ee8;
+            border-color: rgba(123, 168, 255, 0.46);
+            box-shadow: 0 18px 40px rgba(47, 110, 232, 0.22);
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            border-color: rgba(255,255,255,0.34);
+            background: rgba(255,255,255,0.09);
+        }
+
+        .btn.primary:hover {
+            background: #3778f5;
+        }
+
+        .metrics {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 12px;
+            margin-top: 36px;
+            max-width: 680px;
+        }
+
+        .metric {
+            border: 1px solid var(--line);
+            background: rgba(18, 23, 32, 0.62);
+            border-radius: var(--radius);
+            padding: 16px;
+        }
+
+        .metric strong {
+            display: block;
+            font-size: 24px;
+            line-height: 1;
+        }
+
+        .metric span {
+            color: var(--soft);
+            font-size: 12px;
+            display: block;
+            margin-top: 8px;
+        }
+
+        .stage {
+            position: relative;
+            min-height: 560px;
+        }
+
+        .stage-canvas {
+            position: absolute;
+            inset: -18px;
+            width: calc(100% + 36px);
+            height: calc(100% + 36px);
+            opacity: 0.65;
+            filter: saturate(0.86);
+        }
+
+        .console {
+            position: relative;
+            width: 100%;
+            border: 1px solid rgba(255,255,255,0.16);
+            border-radius: 14px;
+            background: linear-gradient(180deg, rgba(27, 33, 43, 0.88), rgba(14, 18, 24, 0.88));
+            box-shadow: var(--shadow);
+            overflow: hidden;
+        }
+
+        .console-bar {
+            height: 44px;
+            border-bottom: 1px solid var(--line);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 14px;
+            color: var(--soft);
+            font-size: 12px;
+            background: rgba(255,255,255,0.04);
+        }
+
+        .dots {
+            display: flex;
+            gap: 7px;
+        }
+
+        .dot {
+            width: 9px;
+            height: 9px;
+            border-radius: 999px;
+            background: var(--soft);
+        }
+
+        .dot:nth-child(1) { background: var(--red); }
+        .dot:nth-child(2) { background: var(--gold); }
+        .dot:nth-child(3) { background: var(--green); }
+
+        .console-body {
+            padding: 18px;
+            display: grid;
+            gap: 16px;
+        }
+
+        .preview-grid {
+            display: grid;
+            grid-template-columns: 0.9fr 1.1fr;
+            gap: 14px;
+            min-height: 360px;
+        }
+
+        .upload-panel,
+        .output-panel,
+        .log-panel {
+            border: 1px solid var(--line);
+            border-radius: var(--radius);
+            background: rgba(7, 10, 14, 0.4);
+        }
+
+        .upload-panel {
+            padding: 14px;
+            display: grid;
+            grid-template-rows: auto 1fr auto;
+            gap: 14px;
+        }
+
+        .panel-title {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        .image-stack {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+            align-content: center;
+        }
+
+        .thumb {
+            aspect-ratio: 1 / 1;
+            border-radius: 8px;
+            border: 1px solid rgba(255,255,255,0.12);
+            background:
+                linear-gradient(140deg, rgba(79,140,255,0.26), transparent 45%),
+                linear-gradient(40deg, rgba(201,166,107,0.22), transparent 48%),
+                #151a21;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .thumb::before {
+            content: "";
+            position: absolute;
+            inset: 18% 12% 14%;
+            border-radius: 6px;
+            background:
+                linear-gradient(150deg, rgba(255,255,255,0.18), transparent 48%),
+                linear-gradient(0deg, rgba(0,0,0,0.18), transparent),
+                #26313d;
+            transform: skewY(-4deg);
+        }
+
+        .thumb.wide {
+            aspect-ratio: 16 / 9;
+            align-self: center;
+            grid-column: span 2;
+        }
+
+        .mini-status {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            font-size: 12px;
+            color: var(--soft);
+        }
+
+        .output-panel {
+            padding: 14px;
+            display: grid;
+            gap: 12px;
+        }
+
+        .model-row {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 8px;
+        }
+
+        .chip {
+            height: 32px;
+            border-radius: 7px;
+            border: 1px solid var(--line);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--muted);
+            font-size: 12px;
+            background: rgba(255,255,255,0.04);
+        }
+
+        .chip.active {
+            color: white;
+            border-color: rgba(79,140,255,0.58);
+            background: rgba(79,140,255,0.22);
+        }
+
+        .result-strip {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+        }
+
+        .result {
+            aspect-ratio: 4 / 5;
+            border-radius: 8px;
+            background: #07090c;
+            border: 1px solid rgba(255,255,255,0.12);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .result::before {
+            content: "";
+            position: absolute;
+            inset: 10%;
+            border-radius: 6px;
+            background:
+                linear-gradient(155deg, rgba(74,216,216,0.34), transparent 36%),
+                linear-gradient(30deg, rgba(201,166,107,0.28), transparent 52%),
+                linear-gradient(180deg, rgba(255,255,255,0.09), transparent),
+                #18202a;
+        }
+
+        .result::after {
+            content: attr(data-tag);
+            position: absolute;
+            left: 10px;
+            bottom: 10px;
+            color: rgba(255,255,255,0.82);
+            font-size: 11px;
+            padding: 5px 7px;
+            border-radius: 6px;
+            background: rgba(0,0,0,0.42);
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .log-panel {
+            padding: 12px 14px;
+            display: grid;
+            gap: 7px;
+            font-size: 12px;
+            color: var(--muted);
+        }
+
+        .log-line {
+            display: flex;
+            gap: 8px;
+            align-items: baseline;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .time {
+            color: var(--soft);
+            font-variant-numeric: tabular-nums;
+        }
+
+        section {
+            padding: 82px 0;
+            border-top: 1px solid rgba(255,255,255,0.06);
+        }
+
+        .section-head {
+            display: grid;
+            grid-template-columns: minmax(0, 0.8fr) minmax(300px, 0.52fr);
+            gap: 40px;
+            align-items: end;
+            margin-bottom: 34px;
+        }
+
+        .section-kicker {
+            color: var(--gold);
+            font-size: 13px;
+            margin-bottom: 12px;
+        }
+
+        h2 {
+            margin: 0;
+            font-family: var(--font-display);
+            font-size: clamp(30px, 4vw, 54px);
+            line-height: 1.08;
+        }
+
+        .section-copy {
+            color: var(--muted);
+            line-height: 1.8;
+            margin: 0;
+            font-size: 15px;
+        }
+
+        .feature-grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 14px;
+        }
+
+        .feature {
+            min-height: 210px;
+            border: 1px solid var(--line);
+            border-radius: var(--radius);
+            background: rgba(18, 23, 32, 0.68);
+            padding: 20px;
+            transition: transform .24s ease, border-color .24s ease, background .24s ease;
+        }
+
+        .feature:hover {
+            transform: translateY(-5px);
+            border-color: rgba(255,255,255,0.28);
+            background: rgba(24, 31, 42, 0.82);
+        }
+
+        .feature-icon {
+            width: 34px;
+            height: 34px;
+            border-radius: 8px;
+            border: 1px solid var(--line-strong);
+            display: grid;
+            place-items: center;
+            margin-bottom: 22px;
+            color: var(--cyan);
+            font-weight: 700;
+        }
+
+        .feature h3 {
+            margin: 0;
+            font-size: 18px;
+            line-height: 1.35;
+        }
+
+        .feature p {
+            margin: 12px 0 0;
+            color: var(--muted);
+            font-size: 14px;
+            line-height: 1.75;
+        }
+
+        .flow {
+            display: grid;
+            grid-template-columns: repeat(5, minmax(0, 1fr));
+            gap: 10px;
+            counter-reset: step;
+        }
+
+        .step {
+            border: 1px solid var(--line);
+            border-radius: var(--radius);
+            background: rgba(18, 23, 32, 0.62);
+            padding: 18px;
+            min-height: 168px;
+            position: relative;
+        }
+
+        .step::before {
+            counter-increment: step;
+            content: "0" counter(step);
+            display: inline-flex;
+            width: 28px;
+            height: 28px;
+            align-items: center;
+            justify-content: center;
+            border-radius: 999px;
+            background: rgba(79,140,255,0.18);
+            color: #b8d0ff;
+            border: 1px solid rgba(79,140,255,0.32);
+            font-size: 11px;
+            margin-bottom: 18px;
+        }
+
+        .step h3 {
+            margin: 0;
+            font-size: 16px;
+        }
+
+        .step p {
+            margin: 10px 0 0;
+            color: var(--muted);
+            font-size: 13px;
+            line-height: 1.7;
+        }
+
+        .split {
+            display: grid;
+            grid-template-columns: minmax(0, 0.95fr) minmax(360px, 1.05fr);
+            gap: 24px;
+            align-items: stretch;
+        }
+
+        .brief {
+            border: 1px solid var(--line);
+            border-radius: var(--radius);
+            background: rgba(18, 23, 32, 0.66);
+            padding: 24px;
+        }
+
+        .brief h3 {
+            margin: 0 0 18px;
+            font-size: 22px;
+        }
+
+        .brief-list {
+            display: grid;
+            gap: 14px;
+        }
+
+        .brief-item {
+            display: grid;
+            grid-template-columns: 96px minmax(0, 1fr);
+            gap: 16px;
+            padding-top: 14px;
+            border-top: 1px solid var(--line);
+        }
+
+        .brief-item:first-child {
+            border-top: 0;
+            padding-top: 0;
+        }
+
+        .brief-item strong {
+            color: var(--text);
+            font-size: 14px;
+        }
+
+        .brief-item span {
+            color: var(--muted);
+            font-size: 14px;
+            line-height: 1.7;
+        }
+
+        .terminal {
+            border: 1px solid var(--line);
+            border-radius: var(--radius);
+            background: rgba(6, 9, 13, 0.82);
+            overflow: hidden;
+            box-shadow: var(--shadow);
+        }
+
+        .terminal-head {
+            height: 42px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 14px;
+            border-bottom: 1px solid var(--line);
+            color: var(--soft);
+            font-size: 12px;
+        }
+
+        .terminal pre {
+            margin: 0;
+            padding: 18px;
+            color: #c9d5df;
+            font-size: 13px;
+            line-height: 1.8;
+            overflow-x: auto;
+            font-family: "Cascadia Code", "Consolas", monospace;
+        }
+
+        .accent-blue { color: #9dbdff; }
+        .accent-green { color: #92ddb0; }
+        .accent-gold { color: #e2c68d; }
+        .accent-red { color: #ef9b88; }
+
+        .footer {
+            padding: 38px 0 52px;
+            color: var(--soft);
+            border-top: 1px solid rgba(255,255,255,0.06);
+            font-size: 13px;
+        }
+
+        .footer-inner {
+            display: flex;
+            justify-content: space-between;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+
+        @media (max-width: 980px) {
+            .hero-layout,
+            .section-head,
+            .split {
+                grid-template-columns: 1fr;
+            }
+
+            .stage {
+                min-height: 520px;
+            }
+
+            .feature-grid {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+
+            .flow {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+        }
+
+        @media (max-width: 640px) {
+            .shell {
+                width: min(100% - 24px, 1180px);
+            }
+
+            .nav-inner {
+                height: auto;
+                min-height: 64px;
+                align-items: flex-start;
+                padding: 12px 0;
+                flex-direction: column;
+            }
+
+            .nav-links {
+                width: 100%;
+                overflow-x: auto;
+                padding-bottom: 2px;
+            }
+
+            .hero {
+                padding: 48px 0 42px;
+            }
+
+            .metrics,
+            .feature-grid,
+            .flow,
+            .preview-grid,
+            .result-strip,
+            .model-row {
+                grid-template-columns: 1fr;
+            }
+
+            .stage {
+                min-height: auto;
+            }
+
+            .console-body {
+                padding: 12px;
+            }
+
+            .brief-item {
+                grid-template-columns: 1fr;
+                gap: 6px;
+            }
+
+            .hero-actions {
+                flex-direction: column;
+            }
+
+            .btn {
+                width: 100%;
+            }
+
+            section {
+                padding: 58px 0;
+            }
+        }
+
+        @media (prefers-reduced-motion: no-preference) {
+            .reveal {
+                opacity: 0;
+                transform: translateY(18px);
+                animation: reveal .7s ease forwards;
+            }
+
+            .reveal:nth-child(2) { animation-delay: .08s; }
+            .reveal:nth-child(3) { animation-delay: .16s; }
+            .reveal:nth-child(4) { animation-delay: .24s; }
+
+            @keyframes reveal {
+                to {
+                    opacity: 1;
+                    transform: translateY(0);
+                }
+            }
+        }
+    </style>
+</head>
+<body>
+    <nav class="nav">
+        <div class="shell nav-inner">
+            <a class="brand" href="#top" aria-label="AI生图自动化平台">
+                <span class="brand-mark" aria-hidden="true"></span>
+                <span class="brand-title">AI生图自动化平台</span>
+            </a>
+            <div class="nav-links" aria-label="页面导航">
+                <a href="#features">能力</a>
+                <a href="#workflow">流程</a>
+                <a href="#resize">改尺寸</a>
+                <a href="#deploy">部署</a>
+            </div>
+        </div>
+    </nav>
+
+    <main id="top">
+        <header class="hero">
+            <div class="shell hero-layout">
+                <div>
+                    <div class="eyebrow reveal"><span class="pulse"></span> 本地自动化 · 豆包 API · Legil 批量生成</div>
+                    <h1 class="reveal">把参考图变成稳定可追踪的批量生图流水线</h1>
+                    <p class="hero-copy reveal">
+                        从本地参考图读取、豆包大模型生成五组提示词，到 Legil 图生图、保存输出和批量改尺寸，整套流程集中在一个可视化控制台里完成。
+                    </p>
+                    <div class="hero-actions reveal">
+                        <a class="btn primary" href="index.html">打开自动化平台</a>
+                        <a class="btn" href="#workflow">查看工作流</a>
+                    </div>
+                    <div class="metrics reveal" aria-label="平台指标">
+                        <div class="metric">
+                            <strong>5组</strong>
+                            <span>每张参考图生成提示词</span>
+                        </div>
+                        <div class="metric">
+                            <strong>2页</strong>
+                            <span>量产与改尺寸分流</span>
+                        </div>
+                        <div class="metric">
+                            <strong>3066</strong>
+                            <span>本地服务默认端口</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="stage reveal" aria-label="平台界面预览">
+                    <canvas class="stage-canvas" id="stageCanvas" aria-hidden="true"></canvas>
+                    <div class="console">
+                        <div class="console-bar">
+                            <div class="dots" aria-hidden="true">
+                                <span class="dot"></span>
+                                <span class="dot"></span>
+                                <span class="dot"></span>
+                            </div>
+                            <span>production-run / live</span>
+                        </div>
+                        <div class="console-body">
+                            <div class="preview-grid">
+                                <div class="upload-panel">
+                                    <div class="panel-title">
+                                        <span>参考图输入</span>
+                                        <span>3 files</span>
+                                    </div>
+                                    <div class="image-stack" aria-hidden="true">
+                                        <div class="thumb"></div>
+                                        <div class="thumb"></div>
+                                        <div class="thumb wide"></div>
+                                    </div>
+                                    <div class="mini-status">
+                                        <span>自然排序</span>
+                                        <span class="accent-green">ready</span>
+                                    </div>
+                                </div>
+                                <div class="output-panel">
+                                    <div class="panel-title">
+                                        <span>Legil 参数</span>
+                                        <span class="accent-blue">Nano Banana 2</span>
+                                    </div>
+                                    <div class="model-row">
+                                        <div class="chip active">1:1</div>
+                                        <div class="chip">9:16</div>
+                                        <div class="chip">1K</div>
+                                        <div class="chip">4张</div>
+                                    </div>
+                                    <div class="result-strip" aria-hidden="true">
+                                        <div class="result" data-tag="prompt 01"></div>
+                                        <div class="result" data-tag="prompt 02"></div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="log-panel" aria-label="运行日志预览">
+                                <div class="log-line"><span class="time">22:31:48</span><span>等待图片生成中...</span></div>
+                                <div class="log-line"><span class="time">22:31:51</span><span class="accent-blue">检测到 3/3 张候选新图，正在二次确认生成状态</span></div>
+                                <div class="log-line"><span class="time">22:31:54</span><span class="accent-green">图片保存成功，输出文件已按生成顺序命名</span></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <section id="features">
+            <div class="shell">
+                <div class="section-head">
+                    <div>
+                        <div class="section-kicker">核心能力</div>
+                        <h2>把重复操作收束成可控、可停、可追踪的生产流程</h2>
+                    </div>
+                    <p class="section-copy">
+                        平台面向需要大量生成素材的创作流程：减少网页反复操作、减少手工保存、减少顺序混乱，让每一次批量输出都能回溯到参考图和提示词。
+                    </p>
+                </div>
+
+                <div class="feature-grid">
+                    <article class="feature">
+                        <div class="feature-icon">A</div>
+                        <h3>豆包 API 提示词</h3>
+                        <p>不再依赖豆包网页，直接通过大模型 API 基于参考图生成五组规整提示词。</p>
+                    </article>
+                    <article class="feature">
+                        <div class="feature-icon">L</div>
+                        <h3>Legil 自动生图</h3>
+                        <p>自动上传参考图、填入提示词、应用模型参数、等待生成并保存输出。</p>
+                    </article>
+                    <article class="feature">
+                        <div class="feature-icon">R</div>
+                        <h3>批量改尺寸</h3>
+                        <p>独立分页面控制 Legil，支持固定提示词、独立参数和独立输入输出目录。</p>
+                    </article>
+                    <article class="feature">
+                        <div class="feature-icon">S</div>
+                        <h3>稳定保存链路</h3>
+                        <p>优先保存原图，直链失败后尝试浏览器响应、页面下载，最后才截图兜底。</p>
+                    </article>
+                </div>
+            </div>
+        </section>
+
+        <section id="workflow">
+            <div class="shell">
+                <div class="section-head">
+                    <div>
+                        <div class="section-kicker">量产流程</div>
+                        <h2>从文件夹到最终图片，按名称排序、按序号输出</h2>
+                    </div>
+                    <p class="section-copy">
+                        输入图按名称自然排序处理，输出文件名携带运行 ID、参考图序号、提示词序号和变体序号，打开文件夹就能看懂生成先后。
+                    </p>
+                </div>
+
+                <div class="flow">
+                    <article class="step">
+                        <h3>读取参考图</h3>
+                        <p>扫描输入文件夹，过滤支持的图片格式，按文件名自然排序。</p>
+                    </article>
+                    <article class="step">
+                        <h3>生成提示词</h3>
+                        <p>调用豆包图文大模型 API，返回五组不同画面描述。</p>
+                    </article>
+                    <article class="step">
+                        <h3>应用参数</h3>
+                        <p>在 Legil 图生图页面应用模型、比例、分辨率和输出数量。</p>
+                    </article>
+                    <article class="step">
+                        <h3>等待完成</h3>
+                        <p>识别当前生成行，支持横版、竖版、方版和失败图跳过。</p>
+                    </article>
+                    <article class="step">
+                        <h3>保存输出</h3>
+                        <p>打开大图后尽量保存原图，兜底截图，文件名保持可追踪。</p>
+                    </article>
+                </div>
+            </div>
+        </section>
+
+        <section id="resize">
+            <div class="shell split">
+                <div class="brief">
+                    <div class="section-kicker">改尺寸分页面</div>
+                    <h3>不走豆包，只控制 Legil 做批量比例调整</h3>
+                    <div class="brief-list">
+                        <div class="brief-item">
+                            <strong>输入目录</strong>
+                            <span>D:\工作\自动化工作流1\Legil批量改尺寸\输入</span>
+                        </div>
+                        <div class="brief-item">
+                            <strong>输出目录</strong>
+                            <span>D:\工作\自动化工作流1\Legil批量改尺寸\输出</span>
+                        </div>
+                        <div class="brief-item">
+                            <strong>独立参数</strong>
+                            <span>模型、宽高比、分辨率、输出数量均与量产页面隔离。</span>
+                        </div>
+                        <div class="brief-item">
+                            <strong>固定提示词</strong>
+                            <span>可自由编辑发送给 Legil 的固定文字，例如保持主体不变、调整布局比例。</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="terminal" aria-label="改尺寸流程日志示例">
+                    <div class="terminal-head">
+                        <span>resize-batch.log</span>
+                        <span>stable</span>
+                    </div>
+                    <pre><span class="accent-blue">[步骤1/6]</span> 正在应用 Legil 生成参数
+模型 Nano Banana 2，宽高比 9:16，分辨率 1K，输出数量 2
+
+<span class="accent-blue">[步骤2/6]</span> 上传改尺寸输入图
+已选择参考图文件：sample_001.png
+
+<span class="accent-blue">[步骤5/6]</span> 等待图片生成完成
+检测到 2/2 张新生成图片，状态稳定结束
+
+<span class="accent-green">[步骤6/6]</span> 保存生成图片
+优先保存大图，失败时自动切换兜底方案</pre>
+                </div>
+            </div>
+        </section>
+
+        <section id="deploy">
+            <div class="shell split">
+                <div>
+                    <div class="section-kicker">本地部署</div>
+                    <h2>双击启动，窗口常驻，按 Ctrl+C 停止</h2>
+                    <p class="section-copy" style="margin-top: 18px;">
+                        Windows 启动脚本会检查依赖、启动服务器并打开自动化平台。浏览器登录态保存在本地 `browser_data`，Legil 登录一次后可复用。
+                    </p>
+                </div>
+                <div class="terminal" aria-label="启动命令示例">
+                    <div class="terminal-head">
+                        <span>Windows_start.cmd</span>
+                        <span>port 3066</span>
+                    </div>
+                    <pre><span class="accent-gold">1.</span> 双击 Windows_start.cmd
+<span class="accent-gold">2.</span> 自动检查并安装依赖
+<span class="accent-gold">3.</span> 启动 Node.js 服务
+<span class="accent-gold">4.</span> 打开 http://localhost:3066/
+<span class="accent-gold">5.</span> 在终端按 Ctrl+C 停止服务器</pre>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer class="footer">
+        <div class="shell footer-inner">
+            <span>AI生图自动化平台展示页</span>
+            <span>本页面为静态前端文件，不包含密钥和后端逻辑。</span>
+        </div>
+    </footer>
+
+    <script>
+        const canvas = document.getElementById('stageCanvas');
+        const ctx = canvas.getContext('2d');
+        let width = 0;
+        let height = 0;
+        let rafId = 0;
+
+        function resizeCanvas() {
+            const rect = canvas.getBoundingClientRect();
+            const dpr = Math.min(window.devicePixelRatio || 1, 2);
+            width = Math.max(1, Math.floor(rect.width * dpr));
+            height = Math.max(1, Math.floor(rect.height * dpr));
+            canvas.width = width;
+            canvas.height = height;
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            width = rect.width;
+            height = rect.height;
+        }
+
+        function draw(time) {
+            ctx.clearRect(0, 0, width, height);
+            ctx.lineWidth = 1;
+
+            const rows = 9;
+            const cols = 9;
+            const gapX = width / cols;
+            const gapY = height / rows;
+
+            for (let y = 0; y <= rows; y++) {
+                ctx.beginPath();
+                for (let x = 0; x <= cols; x++) {
+                    const px = x * gapX;
+                    const py = y * gapY + Math.sin(time * 0.0012 + x * 0.7 + y * 0.4) * 6;
+                    if (x === 0) ctx.moveTo(px, py);
+                    else ctx.lineTo(px, py);
+                }
+                ctx.strokeStyle = 'rgba(122, 150, 184, 0.14)';
+                ctx.stroke();
+            }
+
+            for (let x = 0; x <= cols; x++) {
+                ctx.beginPath();
+                for (let y = 0; y <= rows; y++) {
+                    const px = x * gapX + Math.cos(time * 0.001 + y * 0.8) * 5;
+                    const py = y * gapY;
+                    if (y === 0) ctx.moveTo(px, py);
+                    else ctx.lineTo(px, py);
+                }
+                ctx.strokeStyle = 'rgba(122, 150, 184, 0.1)';
+                ctx.stroke();
+            }
+
+            const sweep = (time * 0.035) % (width + 260) - 130;
+            const gradient = ctx.createLinearGradient(sweep - 140, 0, sweep + 140, height);
+            gradient.addColorStop(0, 'rgba(79, 140, 255, 0)');
+            gradient.addColorStop(0.5, 'rgba(79, 140, 255, 0.18)');
+            gradient.addColorStop(1, 'rgba(74, 216, 216, 0)');
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, width, height);
+
+            rafId = requestAnimationFrame(draw);
+        }
+
+        resizeCanvas();
+        draw(0);
+        window.addEventListener('resize', resizeCanvas);
+        window.addEventListener('beforeunload', () => cancelAnimationFrame(rafId));
+    </script>
+</body>
+</html>

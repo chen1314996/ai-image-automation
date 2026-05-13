@@ -128,6 +128,8 @@
         }
 
         input[type="text"],
+        input[type="number"],
+        input[type="password"],
         textarea {
             width: 100%;
             padding: 12px 16px;
@@ -146,6 +148,8 @@
         }
 
         input[type="text"]:focus,
+        input[type="number"]:focus,
+        input[type="password"]:focus,
         textarea:focus {
             outline: none;
             border-color: var(--primary);
@@ -205,6 +209,57 @@
             border-color: var(--primary);
             background: #eef2ff;
             color: var(--primary-dark);
+        }
+
+        .notification-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+            margin-bottom: 16px;
+        }
+
+        .notification-grid-secondary {
+            margin-top: 6px;
+        }
+
+        .notification-toggle {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            min-height: 46px;
+            padding: 10px 12px;
+            border: 2px solid var(--gray-200);
+            border-radius: 12px;
+            background: var(--gray-50);
+            color: var(--gray-800);
+            font-size: 13px;
+            font-weight: 700;
+            cursor: pointer;
+        }
+
+        .notification-toggle input {
+            width: 18px;
+            height: 18px;
+            accent-color: var(--primary);
+            flex: 0 0 auto;
+        }
+
+        .notification-number-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 16px;
+        }
+
+        .notification-status-box .info-box {
+            margin-top: 0;
+            min-height: 44px;
+        }
+
+        @media (max-width: 720px) {
+            .notification-grid,
+            .notification-number-grid {
+                grid-template-columns: 1fr;
+            }
         }
 
         .model-options {
@@ -4816,6 +4871,100 @@
             line-height: 1.5;
         }
 
+        .creative-agent-task-panel {
+            display: none;
+            margin-top: 12px;
+            padding: 12px;
+            border: 1px solid rgba(39, 169, 242, 0.22);
+            border-radius: var(--ui-radius);
+            background: rgba(12, 24, 30, 0.72);
+        }
+
+        .creative-agent-task-panel.active {
+            display: block;
+        }
+
+        .creative-agent-task-row {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            color: var(--ui-muted);
+            font-size: 13px;
+            line-height: 1.5;
+        }
+
+        .creative-agent-task-row strong {
+            color: var(--ui-text);
+            font-weight: 700;
+        }
+
+        .creative-agent-quality {
+            display: none;
+            margin-top: 10px;
+            padding: 10px 12px;
+            border-radius: var(--ui-radius);
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            color: var(--ui-muted);
+            font-size: 13px;
+            line-height: 1.55;
+        }
+
+        .creative-agent-quality.active {
+            display: block;
+        }
+
+        .creative-agent-quality.ok {
+            border-color: rgba(34, 197, 94, 0.28);
+            background: rgba(34, 197, 94, 0.08);
+        }
+
+        .creative-agent-quality.warn {
+            border-color: rgba(245, 158, 11, 0.30);
+            background: rgba(245, 158, 11, 0.08);
+        }
+
+        .creative-agent-quality.error {
+            border-color: rgba(239, 68, 68, 0.34);
+            background: rgba(239, 68, 68, 0.08);
+        }
+
+        .creative-agent-preview {
+            display: none;
+            margin-top: 10px;
+            max-height: 260px;
+            overflow: auto;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: var(--ui-radius);
+            background: rgba(9, 14, 17, 0.62);
+        }
+
+        .creative-agent-preview.active {
+            display: block;
+        }
+
+        .creative-agent-preview-item {
+            padding: 10px 12px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+        }
+
+        .creative-agent-preview-item:last-child {
+            border-bottom: 0;
+        }
+
+        .creative-agent-preview-title {
+            color: var(--ui-text);
+            font-weight: 700;
+            font-size: 13px;
+            margin-bottom: 4px;
+        }
+
+        .creative-agent-preview-text {
+            color: var(--ui-muted);
+            font-size: 12px;
+            line-height: 1.55;
+        }
+
         .resize-start-panel .btn,
         .creative-start-panel .btn {
             width: 100%;
@@ -5268,6 +5417,80 @@
                 </div>
                 <div class="info-box" id="legilGenerationConfigInfo"></div>
             </details>
+
+            <details class="card card-wide collapsible-card compact-config-card" open>
+                <summary class="card-title">
+                    <span class="icon icon-green icon-link" aria-hidden="true"></span>
+                    飞书通知与异常监控
+                </summary>
+
+                <div class="notification-grid">
+                    <label class="notification-toggle">
+                        <input type="checkbox" id="notifyFeishuEnabled">
+                        <span>启用飞书异常通知</span>
+                    </label>
+                    <label class="notification-toggle">
+                        <input type="checkbox" id="notifyTaskCompletionEnabled">
+                        <span>启用任务完成通知</span>
+                    </label>
+                    <label class="notification-toggle">
+                        <input type="checkbox" id="notifyServerStartupEnabled">
+                        <span>启用服务器启动通知</span>
+                    </label>
+                    <label class="notification-toggle">
+                        <input type="checkbox" id="notifyStaleProgressEnabled">
+                        <span>启用长时间无进展通知</span>
+                    </label>
+                </div>
+
+                <div class="notification-number-grid">
+                    <div class="form-group">
+                        <label for="notifyStaleThresholdMinutes">无进展阈值（分钟）</label>
+                        <input type="number" id="notifyStaleThresholdMinutes" min="1" max="1440" step="1" value="15">
+                    </div>
+                    <div class="form-group">
+                        <label for="notifyCooldownMinutes">通知冷却时间（分钟）</label>
+                        <input type="number" id="notifyCooldownMinutes" min="0" max="1440" step="1" value="10">
+                    </div>
+                </div>
+
+                <div class="notification-grid notification-grid-secondary">
+                    <label class="notification-toggle">
+                        <input type="checkbox" id="notifyLegilScreenshotEnabled">
+                        <span>Legil异常自动截图并发送</span>
+                    </label>
+                    <label class="notification-toggle">
+                        <input type="checkbox" id="notifyAutoRecoveryEnabled">
+                        <span>启用自动恢复策略</span>
+                    </label>
+                    <label class="notification-toggle">
+                        <input type="checkbox" id="notifyPauseOnFailuresEnabled">
+                        <span>连续失败后暂停等待确认</span>
+                    </label>
+                    <label class="notification-toggle">
+                        <input type="checkbox" id="notifyWatchdogRestartEnabled">
+                        <span>Watchdog掉线自动重启服务</span>
+                    </label>
+                </div>
+
+                <div class="notification-number-grid">
+                    <div class="form-group">
+                        <label for="notifyFailureThreshold">连续失败阈值（次）</label>
+                        <input type="number" id="notifyFailureThreshold" min="1" max="20" step="1" value="3">
+                    </div>
+                    <div class="form-group notification-status-box">
+                        <label>Watchdog状态</label>
+                        <div class="info-box" id="watchdogStatusInfo">等待读取...</div>
+                    </div>
+                </div>
+
+                <div class="input-actions">
+                    <button class="btn btn-primary" onclick="saveNotificationConfig()">保存通知配置</button>
+                    <button class="btn btn-secondary" onclick="loadNotificationConfig()">刷新配置</button>
+                    <button class="btn btn-secondary" onclick="refreshWatchdogStatus()">刷新Watchdog</button>
+                </div>
+                <div class="info-box" id="notificationConfigInfo"></div>
+            </details>
         </div>
 
         <!-- Workflow Section -->
@@ -5297,6 +5520,20 @@
                 <div class="step">
                     <span class="step-number">5</span>
                     <span>循环下一张</span>
+                </div>
+            </div>
+
+            <div class="setting-group workflow-mode-setting">
+                <label>运行模式</label>
+                <div class="model-options workflow-browser-mode-options" id="workflowBrowserModeOptions">
+                    <button type="button" class="model-option" data-workflow-browser-mode="headless" onclick="setWorkflowBrowserMode('headless')">
+                        <span class="model-option-title">无头模式</span>
+                        <span class="model-option-desc">后台运行不显示窗口</span>
+                    </button>
+                    <button type="button" class="model-option" data-workflow-browser-mode="headed" onclick="setWorkflowBrowserMode('headed')">
+                        <span class="model-option-title">有头模式</span>
+                        <span class="model-option-desc">显示浏览器窗口</span>
+                    </button>
                 </div>
             </div>
 
@@ -5427,6 +5664,20 @@
                         <span class="icon icon-purple icon-image" aria-hidden="true"></span>
                         Legil生成参数
                     </summary>
+
+                    <div class="setting-group">
+                        <label>运行模式</label>
+                        <div class="model-options resize-browser-mode-options" id="resizeBrowserModeOptions">
+                            <button type="button" class="model-option" data-resize-browser-mode="headless" onclick="setResizeBrowserMode('headless')">
+                                <span class="model-option-title">无头模式</span>
+                                <span class="model-option-desc">后台运行不显示窗口</span>
+                            </button>
+                            <button type="button" class="model-option" data-resize-browser-mode="headed" onclick="setResizeBrowserMode('headed')">
+                                <span class="model-option-title">有头模式</span>
+                                <span class="model-option-desc">显示浏览器窗口</span>
+                            </button>
+                        </div>
+                    </div>
 
                     <div class="setting-group">
                         <label>图生图模型</label>
@@ -5717,15 +5968,28 @@
             </div>
 
             <div class="info-box" id="creativeAgentInfo">等待输入指令或添加资料。</div>
+            <div class="creative-agent-task-panel" id="creativeAgentTaskPanel">
+                <div class="creative-agent-task-row">
+                    <span>任务状态</span>
+                    <strong id="creativeAgentTaskPhase">未启动</strong>
+                </div>
+                <div class="creative-agent-task-row">
+                    <span>当前动作</span>
+                    <strong id="creativeAgentTaskAction">等待运行</strong>
+                </div>
+            </div>
             <div class="creative-agent-result" id="creativeAgentResult">
                 <div class="creative-agent-result-actions">
                     <button class="btn btn-primary" id="creativeAgentDownloadBtn" onclick="downloadCreativeAgentTable()" disabled>下载表格</button>
                     <button class="btn btn-success" id="creativeAgentExtractBtn" onclick="extractCreativeAgentPrompts()" disabled>提取提示词</button>
                 </div>
+                <div class="creative-agent-quality" id="creativeAgentQuality"></div>
+                <div class="creative-agent-preview" id="creativeAgentPreview"></div>
             </div>
 
             <div class="modal-actions" style="margin-top: 16px;">
                 <button class="btn btn-primary" id="creativeAgentRunBtn" onclick="runCreativeAgent()">运行Agent</button>
+                <button class="btn btn-secondary" id="creativeAgentCancelBtn" onclick="cancelCreativeAgentRun()" hidden disabled>取消运行</button>
                 <button class="btn btn-secondary" onclick="closeCreativeAgentDialog()">关闭</button>
             </div>
         </div>
@@ -5744,8 +6008,10 @@
             saveFolder: 'D:\\工作\\自动化工作流1\\批量产图\\输出',
             legilUrl: 'https://lumos.diandian.info/legil/image-ai/image-to-image',
             legilReferenceFolder: 'D:\\工作\\自动化工作流1\\批量产图\\参考图',
+            workflowBrowserMode: 'headless',
             resizeInputFolder: 'D:\\工作\\自动化工作流1\\Legil批量改尺寸\\输入',
             resizeOutputFolder: 'D:\\工作\\自动化工作流1\\Legil批量改尺寸\\输出',
+            resizeBrowserMode: 'headless',
             creativeOutputFolder: 'D:\\工作\\自动化工作流1\\创意拓展\\输出',
             creativeReferenceFolder: '',
             creativeBrowserMode: 'headed',
@@ -5771,6 +6037,19 @@
                 aspectRatio: '1:1',
                 resolution: '1K',
                 outputQuantity: 1
+            },
+            notifications: {
+                feishuEnabled: true,
+                taskCompletionEnabled: true,
+                serverStartupEnabled: true,
+                staleProgressEnabled: true,
+                staleThresholdMinutes: 15,
+                notificationCooldownMinutes: 10,
+                legilScreenshotEnabled: true,
+                autoRecoveryEnabled: true,
+                pauseOnConsecutiveFailures: true,
+                consecutiveFailureThreshold: 3,
+                watchdogAutoRestartEnabled: true
             }
         };
 
@@ -5797,6 +6076,8 @@
         let creativeAgentFiles = [];
         let creativeAgentLastResult = null;
         let creativeAgentServerStatus = null;
+        let creativeAgentCurrentRunId = '';
+        let creativeAgentStatusInterval = null;
         let workflowResumeInfo = null;
         const maxLogEntries = 1000;
 
@@ -5807,6 +6088,8 @@
             connectLogStream();
             checkBrowserStatus();
             loadLegilRefFolderConfig();
+            loadWorkflowConfig();
+            loadNotificationConfig();
             loadDoubaoConfig();
             loadLegilGenerationConfig();
             loadResizeConfig();
@@ -6325,6 +6608,194 @@
             }
         }
 
+        function normalizeBrowserMode(mode, fallback = 'headless') {
+            if (mode === 'headless' || mode === 'headed') {
+                return mode;
+            }
+            return fallback === 'headed' ? 'headed' : 'headless';
+        }
+
+        function getBrowserModeLabel(mode) {
+            return normalizeBrowserMode(mode) === 'headless' ? '无头模式' : '有头模式';
+        }
+
+        function getBrowserModeNote(mode) {
+            return normalizeBrowserMode(mode) === 'headless'
+                ? '后台运行，不弹出浏览器窗口'
+                : '显示浏览器窗口，便于观察流程';
+        }
+
+        function setWorkflowBrowserMode(mode) {
+            config.workflowBrowserMode = normalizeBrowserMode(mode, 'headless');
+            updateWorkflowBrowserModeActiveState();
+            saveWorkflowConfig({ silent: true });
+        }
+
+        function updateWorkflowBrowserModeActiveState() {
+            document.querySelectorAll('[data-workflow-browser-mode]').forEach(button => {
+                button.classList.toggle('active', button.dataset.workflowBrowserMode === config.workflowBrowserMode);
+            });
+        }
+
+        async function loadWorkflowConfig() {
+            try {
+                const res = await fetch('/api/config/workflow');
+                const data = await readJsonResponse(res, '读取量产配置失败，请重启服务器后刷新页面');
+                if (!data.success || !data.config) return;
+                config.workflowBrowserMode = normalizeBrowserMode(data.config.browserMode || config.workflowBrowserMode, 'headless');
+                updateWorkflowBrowserModeActiveState();
+            } catch (e) {
+                updateWorkflowBrowserModeActiveState();
+            }
+        }
+
+        async function saveWorkflowConfig(options = {}) {
+            const silent = options.silent === true;
+            try {
+                const res = await fetch('/api/config/workflow', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        browserMode: config.workflowBrowserMode
+                    })
+                });
+                const data = await readJsonResponse(res, '保存量产配置失败，请重启服务器后刷新页面');
+                if (!data.success || !data.config) {
+                    throw new Error(data.message || '保存失败');
+                }
+                config.workflowBrowserMode = normalizeBrowserMode(data.config.browserMode || config.workflowBrowserMode, 'headless');
+                updateWorkflowBrowserModeActiveState();
+                return true;
+            } catch (e) {
+                if (!silent) showToast(e.message || '保存量产配置失败', 'error');
+                return false;
+            }
+        }
+
+        function readNotificationConfigFromForm() {
+            const readChecked = (id, fallback) => {
+                const el = document.getElementById(id);
+                return el ? el.checked : fallback;
+            };
+            const readNumber = (id, fallback, min, max) => {
+                const el = document.getElementById(id);
+                const value = Number(el?.value);
+                if (!Number.isFinite(value)) return fallback;
+                return Math.max(min, Math.min(max, Math.round(value)));
+            };
+
+            return {
+                feishuEnabled: readChecked('notifyFeishuEnabled', true),
+                taskCompletionEnabled: readChecked('notifyTaskCompletionEnabled', true),
+                serverStartupEnabled: readChecked('notifyServerStartupEnabled', true),
+                staleProgressEnabled: readChecked('notifyStaleProgressEnabled', true),
+                staleThresholdMinutes: readNumber('notifyStaleThresholdMinutes', 15, 1, 1440),
+                notificationCooldownMinutes: readNumber('notifyCooldownMinutes', 10, 0, 1440),
+                legilScreenshotEnabled: readChecked('notifyLegilScreenshotEnabled', true),
+                autoRecoveryEnabled: readChecked('notifyAutoRecoveryEnabled', true),
+                pauseOnConsecutiveFailures: readChecked('notifyPauseOnFailuresEnabled', true),
+                consecutiveFailureThreshold: readNumber('notifyFailureThreshold', 3, 1, 20),
+                watchdogAutoRestartEnabled: readChecked('notifyWatchdogRestartEnabled', true)
+            };
+        }
+
+        function renderNotificationConfig(nextConfig = {}) {
+            config.notifications = {
+                ...config.notifications,
+                ...(nextConfig && typeof nextConfig === 'object' ? nextConfig : {})
+            };
+            const boolMap = {
+                notifyFeishuEnabled: 'feishuEnabled',
+                notifyTaskCompletionEnabled: 'taskCompletionEnabled',
+                notifyServerStartupEnabled: 'serverStartupEnabled',
+                notifyStaleProgressEnabled: 'staleProgressEnabled',
+                notifyLegilScreenshotEnabled: 'legilScreenshotEnabled',
+                notifyAutoRecoveryEnabled: 'autoRecoveryEnabled',
+                notifyPauseOnFailuresEnabled: 'pauseOnConsecutiveFailures',
+                notifyWatchdogRestartEnabled: 'watchdogAutoRestartEnabled'
+            };
+            Object.entries(boolMap).forEach(([id, key]) => {
+                const el = document.getElementById(id);
+                if (el) el.checked = config.notifications[key] !== false;
+            });
+            const stale = document.getElementById('notifyStaleThresholdMinutes');
+            const cooldown = document.getElementById('notifyCooldownMinutes');
+            const failures = document.getElementById('notifyFailureThreshold');
+            if (stale) stale.value = config.notifications.staleThresholdMinutes || 15;
+            if (cooldown) cooldown.value = config.notifications.notificationCooldownMinutes ?? 10;
+            if (failures) failures.value = config.notifications.consecutiveFailureThreshold || 3;
+        }
+
+        async function loadNotificationConfig() {
+            try {
+                const res = await fetch('/api/config/notifications');
+                const data = await readJsonResponse(res, '读取通知配置失败，请重启服务器后刷新页面');
+                if (data.success && data.config) {
+                    renderNotificationConfig(data.config);
+                    await refreshWatchdogStatus();
+                }
+            } catch (e) {
+                renderNotificationConfig(config.notifications);
+            }
+        }
+
+        async function saveNotificationConfig(options = {}) {
+            const silent = options.silent === true;
+            const infoBox = document.getElementById('notificationConfigInfo');
+            const nextConfig = readNotificationConfigFromForm();
+            try {
+                const res = await fetch('/api/config/notifications', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(nextConfig)
+                });
+                const data = await readJsonResponse(res, '保存通知配置失败，请重启服务器后刷新页面');
+                if (!data.success || !data.config) {
+                    throw new Error(data.message || '保存失败');
+                }
+                renderNotificationConfig(data.config);
+                if (infoBox && !silent) {
+                    infoBox.className = 'info-box success';
+                    infoBox.textContent = `✅ 通知配置已保存：无进展 ${data.config.staleThresholdMinutes} 分钟，冷却 ${data.config.notificationCooldownMinutes} 分钟`;
+                }
+                await refreshWatchdogStatus();
+                if (!silent) showToast('通知配置已保存');
+                return true;
+            } catch (e) {
+                if (infoBox && !silent) {
+                    infoBox.className = 'info-box error';
+                    infoBox.textContent = '❌ ' + e.message;
+                }
+                if (!silent) showToast(e.message || '保存通知配置失败', 'error');
+                return false;
+            }
+        }
+
+        async function refreshWatchdogStatus() {
+            const infoBox = document.getElementById('watchdogStatusInfo');
+            if (infoBox) {
+                infoBox.className = 'info-box loading';
+                infoBox.textContent = '读取中...';
+            }
+            try {
+                const res = await fetch('/api/watchdog/status');
+                const data = await readJsonResponse(res, '读取Watchdog状态失败');
+                const watchdog = data.watchdog || {};
+                if (infoBox) {
+                    infoBox.className = watchdog.running ? 'info-box success' : 'info-box error';
+                    const downText = watchdog.serverDown ? '服务掉线' : '服务正常';
+                    infoBox.textContent = watchdog.running
+                        ? `✅ 运行中 PID ${watchdog.pid || '-'}，${downText}`
+                        : `❌ 未运行：${watchdog.message || '未启动'}`;
+                }
+            } catch (e) {
+                if (infoBox) {
+                    infoBox.className = 'info-box error';
+                    infoBox.textContent = '❌ ' + e.message;
+                }
+            }
+        }
+
         async function loadResizeConfig() {
             try {
                 const res = await fetch('/api/config/resize');
@@ -6333,8 +6804,10 @@
 
                 config.resizeInputFolder = data.config.inputFolder || config.resizeInputFolder;
                 config.resizeOutputFolder = data.config.outputFolder || config.resizeOutputFolder;
+                config.resizeBrowserMode = normalizeBrowserMode(data.config.browserMode || config.resizeBrowserMode, 'headless');
                 config.resizePromptTemplate = data.config.promptTemplate || '';
                 renderResizeLegilGenerationConfig(data.config);
+                updateResizeBrowserModeActiveState();
 
                 const input = document.getElementById('resizeInputFolder');
                 const output = document.getElementById('resizeOutputFolder');
@@ -6363,6 +6836,7 @@
                     body: JSON.stringify({
                         inputFolder,
                         outputFolder,
+                        browserMode: config.resizeBrowserMode,
                         promptTemplate,
                         generationSettings: config.resizeLegilGeneration
                     })
@@ -6374,7 +6848,9 @@
 
                 config.resizeInputFolder = data.config.inputFolder;
                 config.resizeOutputFolder = data.config.outputFolder;
+                config.resizeBrowserMode = normalizeBrowserMode(data.config.browserMode || config.resizeBrowserMode, 'headless');
                 config.resizePromptTemplate = data.config.promptTemplate || '';
+                updateResizeBrowserModeActiveState();
                 if (data.config.generationSettings) {
                     config.resizeLegilGeneration = {
                         imageModel: data.config.generationSettings.imageModel || config.resizeLegilGeneration.imageModel,
@@ -6410,9 +6886,23 @@
             infoBox.textContent = text;
         }
 
+        function setResizeBrowserMode(mode) {
+            config.resizeBrowserMode = normalizeBrowserMode(mode, 'headless');
+            updateResizeBrowserModeActiveState();
+            refreshResizeLegilGenerationSummary();
+            saveResizeConfig({ silent: true });
+        }
+
+        function updateResizeBrowserModeActiveState() {
+            document.querySelectorAll('[data-resize-browser-mode]').forEach(button => {
+                button.classList.toggle('active', button.dataset.resizeBrowserMode === config.resizeBrowserMode);
+            });
+        }
+
         function setResizeLegilGenerationValue(key, value) {
             config.resizeLegilGeneration[key] = key === 'outputQuantity' ? Number(value) : value;
             updateResizeLegilGenerationActiveStates();
+            refreshResizeLegilGenerationSummary();
         }
 
         function updateResizeLegilGenerationActiveStates() {
@@ -6486,6 +6976,7 @@
         function renderResizeLegilGenerationConfig(dataConfig) {
             const settings = dataConfig.generationSettings || dataConfig.defaultGenerationSettings || {};
             const options = dataConfig.generationOptions || {};
+            config.resizeBrowserMode = normalizeBrowserMode(dataConfig.browserMode || config.resizeBrowserMode, 'headless');
             config.resizeLegilGeneration = {
                 imageModel: settings.imageModel || 'nano-banana-2',
                 aspectRatio: settings.aspectRatio || '16:9',
@@ -6497,12 +6988,17 @@
             renderResizeLegilSettingOptions('aspectRatio', options.aspectRatios || []);
             renderResizeLegilSettingOptions('resolution', options.resolutions || []);
             renderResizeLegilSettingOptions('outputQuantity', options.outputQuantities || []);
+            updateResizeBrowserModeActiveState();
             updateResizeLegilGenerationActiveStates();
 
-            const modelLabel = getLegilImageModelLabel(config.resizeLegilGeneration.imageModel, options.imageModels);
+            refreshResizeLegilGenerationSummary(options.imageModels);
+        }
+
+        function refreshResizeLegilGenerationSummary(imageModelOptions) {
+            const modelLabel = getLegilImageModelLabel(config.resizeLegilGeneration.imageModel, imageModelOptions);
             setResizeLegilGenerationInfo(
                 'info-box success',
-                `✅ 改尺寸参数：${modelLabel} / ${config.resizeLegilGeneration.aspectRatio} / ${config.resizeLegilGeneration.resolution} / ${config.resizeLegilGeneration.outputQuantity}张`
+                `✅ 改尺寸参数：${getBrowserModeLabel(config.resizeBrowserMode)} / ${modelLabel} / ${config.resizeLegilGeneration.aspectRatio} / ${config.resizeLegilGeneration.resolution} / ${config.resizeLegilGeneration.outputQuantity}张`
             );
         }
 
@@ -6514,11 +7010,11 @@
         }
 
         function normalizeCreativeBrowserMode(mode) {
-            return mode === 'headless' ? 'headless' : 'headed';
+            return normalizeBrowserMode(mode, 'headed');
         }
 
         function getCreativeBrowserModeLabel(mode) {
-            return normalizeCreativeBrowserMode(mode) === 'headless' ? '无头模式' : '有头模式';
+            return getBrowserModeLabel(normalizeCreativeBrowserMode(mode));
         }
 
         function getCreativeCurrentModelLabel() {
@@ -6739,6 +7235,154 @@
             infoBox.textContent = text;
         }
 
+        function getCreativeAgentPhaseLabel(phase) {
+            const labels = {
+                queued: '排队中',
+                running: '运行中',
+                completed: '已完成',
+                failed: '失败',
+                cancelled: '已取消'
+            };
+            return labels[String(phase || '')] || '未启动';
+        }
+
+        function setCreativeAgentTaskPanel(task) {
+            const panel = document.getElementById('creativeAgentTaskPanel');
+            const phaseEl = document.getElementById('creativeAgentTaskPhase');
+            const actionEl = document.getElementById('creativeAgentTaskAction');
+            if (!panel) return;
+
+            if (!task) {
+                panel.classList.remove('active');
+                if (phaseEl) phaseEl.textContent = '未启动';
+                if (actionEl) actionEl.textContent = '等待运行';
+                return;
+            }
+
+            panel.classList.add('active');
+            if (phaseEl) phaseEl.textContent = getCreativeAgentPhaseLabel(task.phase);
+            if (actionEl) actionEl.textContent = task.currentAction || task.message || '任务处理中...';
+        }
+
+        function stopCreativeAgentPolling() {
+            if (creativeAgentStatusInterval) {
+                clearInterval(creativeAgentStatusInterval);
+                creativeAgentStatusInterval = null;
+            }
+        }
+
+        function setCreativeAgentRunningState(running) {
+            const runBtn = document.getElementById('creativeAgentRunBtn');
+            const cancelBtn = document.getElementById('creativeAgentCancelBtn');
+            if (runBtn) {
+                runBtn.disabled = running === true;
+                runBtn.textContent = running === true ? '运行中...' : '运行Agent';
+            }
+            if (cancelBtn) {
+                cancelBtn.hidden = running !== true;
+                cancelBtn.disabled = running !== true;
+                cancelBtn.textContent = '取消运行';
+            }
+        }
+
+        function renderCreativeAgentQuality(report) {
+            const box = document.getElementById('creativeAgentQuality');
+            if (!box) return;
+            box.textContent = '';
+
+            if (!report || !Number.isFinite(Number(report.totalPrompts))) {
+                box.className = 'creative-agent-quality';
+                return;
+            }
+
+            const errorCount = Array.isArray(report.errors) ? report.errors.length : 0;
+            const warningCount = Array.isArray(report.warnings) ? report.warnings.length : 0;
+            box.className = `creative-agent-quality active ${errorCount > 0 ? 'error' : (warningCount > 0 ? 'warn' : 'ok')}`;
+
+            const summary = document.createElement('div');
+            summary.textContent = `${report.summary || '质检完成'}；方向 ${report.directionCount || 0} 个，提示词 ${report.totalPrompts || 0} 组。`;
+            box.appendChild(summary);
+
+            const issues = [
+                ...(Array.isArray(report.errors) ? report.errors : []),
+                ...(Array.isArray(report.warnings) ? report.warnings : [])
+            ].slice(0, 6);
+            issues.forEach(issue => {
+                const row = document.createElement('div');
+                row.textContent = `· ${issue.severity === 'error' ? '严重' : '提醒'}：${issue.direction || `第${issue.index || ''}组`} / ${issue.promptTitle || ''} - ${issue.message || ''}`;
+                box.appendChild(row);
+            });
+            if (errorCount + warningCount > issues.length) {
+                const more = document.createElement('div');
+                more.textContent = `· 还有 ${errorCount + warningCount - issues.length} 条问题未显示，可下载表格后逐项检查。`;
+                box.appendChild(more);
+            }
+        }
+
+        function renderCreativeAgentPreview(prompts) {
+            const box = document.getElementById('creativeAgentPreview');
+            if (!box) return;
+            box.textContent = '';
+
+            const safePrompts = Array.isArray(prompts) ? prompts : [];
+            if (safePrompts.length === 0) {
+                box.classList.remove('active');
+                return;
+            }
+
+            const groups = getCreativePromptGroups(safePrompts);
+            groups.slice(0, 8).forEach((group, index) => {
+                const item = document.createElement('div');
+                item.className = 'creative-agent-preview-item';
+
+                const title = document.createElement('div');
+                title.className = 'creative-agent-preview-title';
+                title.textContent = `#${index + 1} ${group.title}（${group.prompts.length}组）`;
+
+                const text = document.createElement('div');
+                text.className = 'creative-agent-preview-text';
+                const firstPrompt = String(group.prompts[0]?.prompt || '').trim();
+                text.textContent = firstPrompt.length > 180 ? `${firstPrompt.slice(0, 180)}...` : firstPrompt;
+
+                item.appendChild(title);
+                item.appendChild(text);
+                box.appendChild(item);
+            });
+
+            if (groups.length > 8) {
+                const more = document.createElement('div');
+                more.className = 'creative-agent-preview-item creative-agent-preview-text';
+                more.textContent = `还有 ${groups.length - 8} 个方向未显示，提取后可在主页面完整选择。`;
+                box.appendChild(more);
+            }
+
+            box.classList.add('active');
+        }
+
+        function applyCreativeAgentResult(data) {
+            creativeAgentLastResult = data;
+            document.getElementById('creativeAgentResult')?.classList.add('active');
+            const downloadBtn = document.getElementById('creativeAgentDownloadBtn');
+            const extractBtn = document.getElementById('creativeAgentExtractBtn');
+            const promptCount = Array.isArray(data.prompts) ? data.prompts.length : 0;
+            if (downloadBtn) downloadBtn.disabled = !data.downloadUrl;
+            if (extractBtn) extractBtn.disabled = promptCount === 0;
+            renderCreativeAgentQuality(data.qualityReport);
+            renderCreativeAgentPreview(data.prompts);
+
+            const qualityHasErrors = Array.isArray(data.qualityReport?.errors) && data.qualityReport.errors.length > 0;
+            setCreativeAgentInfo(
+                qualityHasErrors ? 'info-box error' : 'info-box success',
+                qualityHasErrors
+                    ? `⚠️ Agent已生成表格：${data.fileName || 'creative_agent.xlsx'}；提取到 ${promptCount} 组提示词，但质检发现严重问题`
+                    : `✅ Agent已生成表格：${data.fileName || 'creative_agent.xlsx'}；可提取 ${promptCount} 组提示词`
+            );
+
+            if (promptCount > 0 && (!Array.isArray(config.creativePrompts) || config.creativePrompts.length === 0)) {
+                applyCreativeAgentPromptsToCreativePage({ silent: true });
+            }
+        }
+
         async function loadCreativeAgentStatus() {
             try {
                 const res = await fetch('/api/creative-agent/status');
@@ -6846,11 +7490,72 @@
 
         function resetCreativeAgentResult() {
             creativeAgentLastResult = null;
+            creativeAgentCurrentRunId = '';
+            stopCreativeAgentPolling();
             document.getElementById('creativeAgentResult')?.classList.remove('active');
             const downloadBtn = document.getElementById('creativeAgentDownloadBtn');
             const extractBtn = document.getElementById('creativeAgentExtractBtn');
             if (downloadBtn) downloadBtn.disabled = true;
             if (extractBtn) extractBtn.disabled = true;
+            renderCreativeAgentQuality(null);
+            renderCreativeAgentPreview([]);
+            setCreativeAgentTaskPanel(null);
+            setCreativeAgentRunningState(false);
+        }
+
+        async function loadCreativeAgentResult(runId) {
+            const data = await fetchJsonWithTimeout(
+                `/api/creative-agent/result/${encodeURIComponent(runId)}`,
+                { method: 'GET' },
+                30000,
+                '读取创意拓展Agent结果失败'
+            );
+            if (!data.success) {
+                throw new Error(data.message || 'Agent结果不可用');
+            }
+            applyCreativeAgentResult(data);
+            addLog(`✅ 创意拓展Agent生成完成：${data.fileName || ''}，提示词 ${Array.isArray(data.prompts) ? data.prompts.length : 0} 组`, 'success');
+            showToast('Agent表格已生成');
+        }
+
+        async function checkCreativeAgentTaskStatus() {
+            if (!creativeAgentCurrentRunId) return;
+            try {
+                const data = await fetchJsonWithTimeout(
+                    `/api/creative-agent/task-status/${encodeURIComponent(creativeAgentCurrentRunId)}`,
+                    { method: 'GET' },
+                    15000,
+                    '读取创意拓展Agent状态失败'
+                );
+                if (!data.success || !data.task) return;
+                setCreativeAgentTaskPanel(data.task);
+
+                if (data.task.phase === 'completed') {
+                    const runId = creativeAgentCurrentRunId;
+                    stopCreativeAgentPolling();
+                    setCreativeAgentRunningState(false);
+                    await loadCreativeAgentResult(runId);
+                } else if (data.task.phase === 'failed' || data.task.phase === 'cancelled') {
+                    stopCreativeAgentPolling();
+                    setCreativeAgentRunningState(false);
+                    const message = data.task.error || data.task.message || 'Agent运行失败';
+                    setCreativeAgentInfo(data.task.phase === 'cancelled' ? 'info-box' : 'info-box error', data.task.phase === 'cancelled' ? '已取消创意拓展Agent任务' : '❌ ' + message);
+                    if (data.task.phase === 'failed') {
+                        showToast(message, 'error');
+                    }
+                }
+            } catch (e) {
+                setCreativeAgentInfo('info-box error', '❌ ' + (e.message || '读取Agent状态失败'));
+                stopCreativeAgentPolling();
+                setCreativeAgentRunningState(false);
+            }
+        }
+
+        function startCreativeAgentStatusPolling(runId) {
+            creativeAgentCurrentRunId = runId;
+            stopCreativeAgentPolling();
+            checkCreativeAgentTaskStatus();
+            creativeAgentStatusInterval = setInterval(checkCreativeAgentTaskStatus, 2000);
         }
 
         async function runCreativeAgent() {
@@ -6868,10 +7573,7 @@
             }
 
             resetCreativeAgentResult();
-            if (runBtn) {
-                runBtn.disabled = true;
-                runBtn.textContent = '运行中...';
-            }
+            setCreativeAgentRunningState(true);
             setCreativeAgentInfo('info-box loading', '正在读取资料并调用创意拓展Agent...');
 
             try {
@@ -6888,34 +7590,55 @@
                         targetCount: targetCountValue ? Number(targetCountValue) : null,
                         attachments
                     })
-                }, 45 * 60 * 1000, '创意拓展Agent运行失败，请检查 Winky API 配置');
+                }, 30000, '创意拓展Agent启动失败，请检查 Winky API 配置');
 
                 if (!data.success) {
-                    throw new Error(data.message || 'Agent运行失败');
+                    throw new Error(data.message || 'Agent启动失败');
                 }
 
-                creativeAgentLastResult = data;
-                document.getElementById('creativeAgentResult')?.classList.add('active');
-                const downloadBtn = document.getElementById('creativeAgentDownloadBtn');
-                const extractBtn = document.getElementById('creativeAgentExtractBtn');
-                if (downloadBtn) downloadBtn.disabled = !data.downloadUrl;
-                if (extractBtn) extractBtn.disabled = !(Array.isArray(data.prompts) && data.prompts.length > 0);
-
-                const promptCount = Array.isArray(data.prompts) ? data.prompts.length : 0;
-                setCreativeAgentInfo(
-                    'info-box success',
-                    `✅ Agent已生成表格：${data.fileName || 'creative_agent.xlsx'}；可提取 ${promptCount} 组提示词`
-                );
-                addLog(`✅ 创意拓展Agent生成完成：${data.fileName || ''}，提示词 ${promptCount} 组`, 'success');
-                showToast('Agent表格已生成');
+                if (data.runId) {
+                    setCreativeAgentTaskPanel(data.task || { phase: 'queued', currentAction: data.message });
+                    setCreativeAgentInfo('info-box loading', 'Agent任务已启动，正在后台生成表格...');
+                    addLog(`创意拓展Agent任务已启动：${data.runId}`, 'system');
+                    startCreativeAgentStatusPolling(data.runId);
+                } else {
+                    applyCreativeAgentResult(data);
+                }
             } catch (e) {
                 setCreativeAgentInfo('info-box error', '❌ ' + (e.message || 'Agent运行失败'));
                 showToast(e.message || 'Agent运行失败', 'error');
-            } finally {
-                if (runBtn) {
-                    runBtn.disabled = false;
-                    runBtn.textContent = '运行Agent';
+                setCreativeAgentRunningState(false);
+            }
+        }
+
+        async function cancelCreativeAgentRun() {
+            if (!creativeAgentCurrentRunId) return;
+            const cancelBtn = document.getElementById('creativeAgentCancelBtn');
+            if (cancelBtn) {
+                cancelBtn.disabled = true;
+                cancelBtn.textContent = '取消中...';
+            }
+            try {
+                const data = await fetchJsonWithTimeout(
+                    `/api/creative-agent/cancel/${encodeURIComponent(creativeAgentCurrentRunId)}`,
+                    { method: 'POST' },
+                    15000,
+                    '取消创意拓展Agent失败'
+                );
+                if (!data.success) {
+                    throw new Error(data.message || '取消失败');
                 }
+                stopCreativeAgentPolling();
+                setCreativeAgentTaskPanel(data.task || { phase: 'cancelled', currentAction: data.message });
+                setCreativeAgentRunningState(false);
+                setCreativeAgentInfo('info-box', '已取消创意拓展Agent任务');
+                showToast('已取消Agent任务');
+            } catch (e) {
+                if (cancelBtn) {
+                    cancelBtn.disabled = false;
+                    cancelBtn.textContent = '取消运行';
+                }
+                showToast(e.message || '取消失败', 'error');
             }
         }
 
@@ -6927,13 +7650,13 @@
             window.location.href = creativeAgentLastResult.downloadUrl;
         }
 
-        function extractCreativeAgentPrompts() {
+        function applyCreativeAgentPromptsToCreativePage(options = {}) {
             const prompts = Array.isArray(creativeAgentLastResult?.prompts)
                 ? creativeAgentLastResult.prompts
                 : [];
             if (prompts.length === 0) {
-                showToast('生成表格中没有可提取的提示词', 'error');
-                return;
+                if (!options.silent) showToast('生成表格中没有可提取的提示词', 'error');
+                return false;
             }
 
             config.creativePrompts = prompts.map((item, index) => ({
@@ -6950,7 +7673,12 @@
                 infoBox.textContent = `✅ 已从Agent生成表格提取 ${config.creativePrompts.length} 组提示词`;
             }
             addLog(`✅ 已提取Agent生成表格提示词：${config.creativePrompts.length} 组`, 'success');
-            showToast(`已提取 ${config.creativePrompts.length} 组提示词`);
+            if (!options.silent) showToast(`已提取 ${config.creativePrompts.length} 组提示词`);
+            return true;
+        }
+
+        function extractCreativeAgentPrompts() {
+            applyCreativeAgentPromptsToCreativePage({ silent: false });
         }
 
         async function handleCreativeTableFileChange() {
@@ -7056,8 +7784,13 @@
                 renderCreativePromptPreview(config.creativePrompts);
 
                 if (infoBox) {
+                    const qualityErrors = Array.isArray(data.qualityReport?.errors) ? data.qualityReport.errors.length : 0;
+                    const qualityWarnings = Array.isArray(data.qualityReport?.warnings) ? data.qualityReport.warnings.length : 0;
+                    const qualityNote = qualityErrors > 0
+                        ? `，质检发现 ${qualityErrors} 个严重问题`
+                        : (qualityWarnings > 0 ? `，质检提醒 ${qualityWarnings} 条` : '');
                     infoBox.className = 'info-box success';
-                    infoBox.textContent = `✅ 已从 ${config.creativeTableFileName} / ${data.sheetName || '首个工作表'} 提取 ${config.creativePrompts.length} 组提示词`;
+                    infoBox.textContent = `✅ 已从 ${config.creativeTableFileName} / ${data.sheetName || '首个工作表'} 提取 ${config.creativePrompts.length} 组提示词${qualityNote}`;
                 }
                 addLog(`✅ 创意拓展表格解析完成：${config.creativePrompts.length} 组提示词`, 'success');
                 showToast(`已提取 ${config.creativePrompts.length} 组提示词`);
@@ -7779,12 +8512,15 @@
         }
 
         async function startResizeBatchWithConfirm() {
+            const browserModeLabel = getBrowserModeLabel(config.resizeBrowserMode);
+            const browserModeNote = getBrowserModeNote(config.resizeBrowserMode);
             const confirmed = confirm(
                 '请确认以下事项：\n\n' +
                 '✅ 已在浏览器中登录 Legil 账号\n' +
                 '✅ 改尺寸输入文件夹路径正确\n' +
                 '✅ 改尺寸输出文件夹路径正确\n' +
-                '✅ 固定提示词内容已确认\n\n' +
+                '✅ 固定提示词内容已确认\n' +
+                `✅ 运行模式：${browserModeLabel}（${browserModeNote}）\n\n` +
                 '点击"确定"开始批量改尺寸。'
             );
             if (!confirmed) return;
@@ -7832,6 +8568,7 @@
                     body: JSON.stringify({
                         inputFolder,
                         outputFolder,
+                        browserMode: config.resizeBrowserMode,
                         promptTemplate,
                         generationSettings: config.resizeLegilGeneration
                     })
@@ -7987,7 +8724,10 @@
             }
 
             selectCreativePromptsByIndexes(creativeResumeIndexes);
-            await startCreativeBatchWithConfirm();
+            await startCreativeBatchWithConfirm({
+                resumeMode: true,
+                resumeRunId: creativeResumeInfo?.runId || ''
+            });
         }
 
         async function startCreativeNewTask() {
@@ -7999,6 +8739,7 @@
             setAllCreativePromptsSelected(true);
             creativeLastRunIndexes = [];
             creativeResumeIndexes = [];
+            await clearCreativeResumeOnServer();
 
             const startBtn = document.getElementById('creativeStartBtn');
             if (startBtn) {
@@ -8006,10 +8747,12 @@
                 startBtn.textContent = '开始创意拓展';
             }
 
-            await startCreativeBatchWithConfirm();
+            await startCreativeBatchWithConfirm({
+                resumeMode: false
+            });
         }
 
-        async function startCreativeBatchWithConfirm() {
+        async function startCreativeBatchWithConfirm(options = {}) {
             const browserModeLabel = getCreativeBrowserModeLabel(config.creativeBrowserMode);
             const browserModeNote = config.creativeBrowserMode === 'headless'
                 ? '使用已保存的登录状态后台运行'
@@ -8025,10 +8768,10 @@
             );
             if (!confirmed) return;
 
-            await startCreativeBatch();
+            await startCreativeBatch(options);
         }
 
-        async function startCreativeBatch() {
+        async function startCreativeBatch(options = {}) {
             const outputFolder = document.getElementById('creativeOutputFolder')?.value.trim();
             const referenceFolder = document.getElementById('creativeReferenceFolder')?.value.trim() || '';
             const infoBox = document.getElementById('creativeBatchInfo');
@@ -8078,7 +8821,9 @@
                         prompts: selectedPrompts,
                         tableFileName: config.creativeTableFileName || '',
                         browserMode: config.creativeBrowserMode,
-                        generationSettings: config.creativeLegilGeneration
+                        generationSettings: config.creativeLegilGeneration,
+                        resumeMode: options.resumeMode === true,
+                        resumeRunId: options.resumeRunId || ''
                     })
                 }, 30000, '启动创意拓展失败，请重启服务器后刷新页面');
 
@@ -8270,12 +9015,15 @@
 
         // Workflow
         async function startWorkflowWithConfirm() {
+            const browserModeLabel = getBrowserModeLabel(config.workflowBrowserMode);
+            const browserModeNote = getBrowserModeNote(config.workflowBrowserMode);
             const confirmed = confirm(
                 '请确认以下事项：\n\n' +
                 '✅ 已配置火山方舟 API Key 和模型 ID\n' +
                 '✅ 已在浏览器中登录Legil账号\n' +
                 '✅ 参考图文件夹路径正确\n' +
-                '✅ 输出文件夹路径正确\n\n' +
+                '✅ 输出文件夹路径正确\n' +
+                `✅ 运行模式：${browserModeLabel}（${browserModeNote}）\n\n` +
                 '点击"确定"开始自动化流程。'
             );
             if (!confirmed) return;
@@ -8402,11 +9150,17 @@
                     return;
                 }
 
+                await saveWorkflowConfig({ silent: true });
                 addLog('正在提交工作流启动请求...', 'system');
                 const data = await fetchJsonWithTimeout('/api/workflow/start', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ inputFolder, outputFolder, legilReferenceFolder: legilRefFolder })
+                    body: JSON.stringify({
+                        inputFolder,
+                        outputFolder,
+                        legilReferenceFolder: legilRefFolder,
+                        browserMode: config.workflowBrowserMode
+                    })
                 }, 30000, '启动工作流失败，请重启服务器后刷新页面');
                 if (data.success) {
                     addLog(`✅ 工作流已提交：将处理 ${data.totalImages || 0} 张参考图`, 'success');

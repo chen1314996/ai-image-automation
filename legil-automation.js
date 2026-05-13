@@ -18,6 +18,7 @@ const logger = require('./logger');
 // 引入文件系统模块
 const fs = require('fs');
 const path = require('path');
+const EventEmitter = require('events');
 const {
     formatDateTimeForFile,
     padNumber,
@@ -113,9 +114,11 @@ const LEGIL_RESOLUTIONS = ['512px', '1K', '2K', '4K'];
 const LEGIL_OUTPUT_QUANTITIES = [1, 2, 3, 4];
 const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp', '.bmp', '.gif'];
 const LEGIL_IMAGE_TO_IMAGE_URL = 'https://lumos.diandian.info/legil/image-ai/image-to-image';
+const LEGIL_ERROR_SCREENSHOT_DIR = path.join(__dirname, 'runtime', 'legil-error-screenshots');
 
-class LegilAutomation {
+class LegilAutomation extends EventEmitter {
     constructor() {
+        super();
         // 保存路径（默认输出文件夹）
         this.saveFolder = 'D:\\工作\\自动化工作流1\\输出';
         // 参考图文件夹路径
@@ -235,6 +238,60 @@ class LegilAutomation {
         };
     }
 
+    async captureErrorScreenshot(page, error, options = {}) {
+        if (options.captureErrorScreenshot === false || !page || page.isClosed()) {
+            return '';
+        }
+
+        try {
+            fs.mkdirSync(LEGIL_ERROR_SCREENSHOT_DIR, { recursive: true });
+            const timestamp = formatDateTimeForFile();
+            const promptPart = padNumber(Number(options.promptIndexWithinImage || options.promptIndex || 0) || 0, 2);
+            const runPart = sanitizeFileNamePart(options.runId || 'legil_error', 40);
+            const fileName = `${runPart}_prompt${promptPart}_${timestamp}.png`;
+            const screenshotPath = path.join(LEGIL_ERROR_SCREENSHOT_DIR, fileName);
+            await page.screenshot({
+                path: screenshotPath,
+                fullPage: true,
+                timeout: 10000
+            });
+            logger.warn(`已保存 Legil 异常截图: ${screenshotPath}`);
+            this.emit('legil-exception', {
+                screenshotPath,
+                message: error && error.message ? error.message : String(error || '未知错误'),
+                promptIndex: options.promptIndexWithinImage || options.promptIndex,
+                runId: options.runId || '',
+                referenceImageName: options.referenceImageName || '',
+                taskType: options.taskType || '',
+                stage: options.stage || ''
+            });
+            return screenshotPath;
+        } catch (screenshotError) {
+            logger.warn(`保存 Legil 异常截图失败: ${screenshotError.message}`);
+            return '';
+        }
+    }
+
+    async refreshLegilPageOnce(page, options = {}) {
+        if (!page || page.isClosed()) {
+            return false;
+        }
+
+        try {
+            logger.warn('Legil 可能卡住，正在自动刷新页面并重试一次...');
+            await page.reload({
+                waitUntil: 'domcontentloaded',
+                timeout: 30000
+            });
+            await interruptibleSleep(8000, options);
+            await this.ensureLegilImageToImagePage(page, options);
+            return true;
+        } catch (error) {
+            logger.warn(`Legil 自动刷新失败: ${error.message}`);
+            return false;
+        }
+    }
+
     /**
      * 扫描参考图文件夹中的所有图片
      */
@@ -313,6 +370,7 @@ class LegilAutomation {
         }
 
         const generationSettings = this.normalizeGenerationSettings(options.generationSettings);
+        let page = null;
 
         try {
             throwIfAborted(options);
@@ -324,7 +382,7 @@ class LegilAutomation {
             }
 
             // 第1步：获取 Legil 页面
-            let page = browserController.getPage('legil');
+            page = browserController.getPage('legil');
             if (!page || page.isClosed()) {
                 logger.warn('Legil 页面未打开，正在打开...');
                 const opened = await browserController.openWebsite('legil', LEGIL_IMAGE_TO_IMAGE_URL, {
@@ -392,10 +450,26 @@ class LegilAutomation {
                 expectedOutputCount: appliedGenerationSettings.outputQuantity
             });
             if (!generateSuccess) {
+                const timeoutError = new Error('等待图片生成超时');
+                const screenshotPath = await this.captureErrorScreenshot(page, timeoutError, {
+                    ...options,
+                    promptIndex: safePromptIndex,
+                    stage: 'wait_timeout'
+                });
                 await this.cleanupTimedOutGeneration(page, options).catch(cleanupError => {
                     logger.warn(`清理超时生成任务失败，将继续后续流程: ${cleanupError.message}`);
                 });
-                throw new Error('等待图片生成超时');
+                if (options.autoRefreshOnStuck !== false && options.autoRecoveryEnabled !== false && options._legilRefreshRetried !== true) {
+                    const refreshed = await this.refreshLegilPageOnce(page, options);
+                    if (refreshed) {
+                        return this.generateImage(promptText, safePromptIndex, {
+                            ...options,
+                            _legilRefreshRetried: true
+                        });
+                    }
+                }
+                timeoutError.screenshotPath = screenshotPath;
+                throw timeoutError;
             }
 
             // 第6步：保存生成的图片
@@ -423,10 +497,16 @@ class LegilAutomation {
             };
 
         } catch (error) {
+            const screenshotPath = error.screenshotPath || await this.captureErrorScreenshot(page, error, {
+                ...options,
+                promptIndex: safePromptIndex,
+                stage: options._legilRefreshRetried ? 'retry_failed' : 'failed'
+            });
             logger.error(`❌ Legil 自动化失败: ${error.message}`);
             return {
                 success: false,
                 savePath: null,
+                screenshotPath,
                 message: error.message
             };
         }
