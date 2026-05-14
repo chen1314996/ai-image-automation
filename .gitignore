@@ -24,6 +24,11 @@ test-cycle/screenshots/
 test-cycle/reports/
 test-cycle/status-checks/
 test-reports/
+tests/artifacts/
+tests/cycle/screenshots/
+tests/cycle/reports/
+tests/cycle/status-checks/
+tests/reports/
 test-api-workflow-input/
 test-api-workflow-output/
 

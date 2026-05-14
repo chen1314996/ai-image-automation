@@ -75,10 +75,11 @@ class BrowserController {
             const contextOptions = {
                 headless: useHeadless,           // 是否无头模式
                 slowMo: 100,                     // 增加操作延迟，更自然
-                viewport: { width: 1280, height: 800 },
+                viewport: useHeadless ? { width: 1600, height: 950 } : null,
+                screen: { width: 1600, height: 950 },
                 acceptDownloads: true,
                 args: [
-                    '--window-size=1280,800',
+                    '--window-size=1600,950',
                     '--no-sandbox',                  // 禁用沙箱（Windows 更稳定）
                     '--disable-setuid-sandbox',
                     '--disable-dev-shm-usage',
@@ -272,6 +273,12 @@ class BrowserController {
                 await this.sleep(5000);
             }
 
+            if (name === 'legil') {
+                await this.applyLegilWindowFit(page).catch(error => {
+                    logger.warn(`Legil 窗口自适应设置失败: ${error.message}`);
+                });
+            }
+
             // 保存页面实例
             this.pages[name] = page;
 
@@ -365,6 +372,57 @@ class BrowserController {
         }
 
         return page;
+    }
+
+    async applyLegilWindowFit(page) {
+        if (!page || page.isClosed()) {
+            return false;
+        }
+
+        await page.evaluate(() => {
+            const DESIGN_WIDTH = 1600;
+            const DESIGN_HEIGHT = 900;
+            const MIN_SCALE = 0.6;
+            const MAX_SCALE = 1.25;
+
+            const applyFit = () => {
+                const viewportWidth = Math.max(
+                    1,
+                    Math.floor(window.visualViewport?.width || window.innerWidth || document.documentElement.clientWidth || DESIGN_WIDTH)
+                );
+                const viewportHeight = Math.max(
+                    1,
+                    Math.floor(window.visualViewport?.height || window.innerHeight || document.documentElement.clientHeight || DESIGN_HEIGHT)
+                );
+                const scale = Math.max(
+                    MIN_SCALE,
+                    Math.min(MAX_SCALE, Math.min(viewportWidth / DESIGN_WIDTH, viewportHeight / DESIGN_HEIGHT))
+                );
+
+                document.documentElement.dataset.legilWindowFit = 'enabled';
+                document.documentElement.style.setProperty('--legil-window-fit-scale', String(scale));
+                document.documentElement.style.overflow = 'auto';
+                document.body.style.transformOrigin = '0 0';
+                document.body.style.zoom = String(scale);
+                document.body.style.minWidth = `${DESIGN_WIDTH}px`;
+                document.body.style.minHeight = `${Math.max(DESIGN_HEIGHT, Math.ceil(viewportHeight / scale))}px`;
+            };
+
+            if (!window.__legilWindowFitInstalled) {
+                window.__legilWindowFitInstalled = true;
+                window.__legilWindowFitApply = applyFit;
+                window.addEventListener('resize', applyFit, { passive: true });
+                if (window.visualViewport) {
+                    window.visualViewport.addEventListener('resize', applyFit, { passive: true });
+                }
+            } else {
+                window.__legilWindowFitApply = applyFit;
+            }
+
+            applyFit();
+        });
+
+        return true;
     }
 
     /**

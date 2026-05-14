@@ -1,0 +1,350 @@
+/* 批量产图工作流、进度面板和提示词管理区。 */
+        /* Workflow Section */
+        .workflow-section {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 24px;
+            padding: 32px;
+            color: white;
+            margin-bottom: 24px;
+        }
+
+        .workflow-header {
+            text-align: center;
+            margin-bottom: 28px;
+        }
+
+        .workflow-header h2 {
+            font-size: 28px;
+            font-weight: 800;
+            margin-bottom: 8px;
+        }
+
+        .workflow-header p {
+            opacity: 0.9;
+            font-size: 15px;
+        }
+
+        .workflow-steps {
+            display: flex;
+            justify-content: center;
+            gap: 16px;
+            margin-bottom: 28px;
+            flex-wrap: wrap;
+        }
+
+        .step {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 18px;
+            background: rgba(255,255,255,0.15);
+            border-radius: 12px;
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        .step-number {
+            width: 24px;
+            height: 24px;
+            background: rgba(255,255,255,0.3);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            font-weight: 700;
+        }
+
+        .workflow-actions {
+            text-align: center;
+        }
+
+        .workflow-actions .btn {
+            background: white;
+            color: #764ba2;
+            font-size: 18px;
+            padding: 18px 48px;
+            border-radius: 16px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+
+        .workflow-actions .btn:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 20px 40px rgba(0,0,0,0.3);
+        }
+
+        /* Progress Panel */
+        .progress-panel {
+            background: white;
+            border-radius: 20px;
+            padding: 28px;
+            margin-top: 20px;
+            display: none;
+        }
+
+        .progress-panel.active {
+            display: block;
+            animation: slideDown 0.3s ease;
+        }
+
+        @keyframes slideDown {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .progress-header {
+            font-size: 16px;
+            font-weight: 700;
+            margin-bottom: 20px;
+            color: var(--gray-900);
+        }
+
+        .progress-item {
+            margin-bottom: 20px;
+        }
+
+        .progress-label {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+
+        .progress-bar {
+            height: 10px;
+            background: var(--gray-100);
+            border-radius: 5px;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--primary), var(--secondary));
+            border-radius: 5px;
+            transition: width 0.5s ease;
+        }
+
+        .progress-fill.success {
+            background: linear-gradient(90deg, var(--success), #34d399);
+        }
+
+        .status-text {
+            padding: 14px;
+            background: var(--gray-50);
+            border-radius: 12px;
+            margin-top: 16px;
+            font-size: 14px;
+            color: var(--gray-600);
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+            margin-top: 16px;
+        }
+
+        .stat-item {
+            text-align: center;
+            padding: 16px;
+            background: var(--gray-50);
+            border-radius: 12px;
+        }
+
+        .stat-value {
+            font-size: 24px;
+            font-weight: 800;
+            color: var(--primary);
+        }
+
+        .stat-label {
+            font-size: 12px;
+            color: var(--gray-600);
+            margin-top: 4px;
+        }
+
+        /* Prompts Section */
+        .prompts-section {
+            background: white;
+            border-radius: 20px;
+            padding: 28px;
+            margin-bottom: 24px;
+        }
+
+        .prompts-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+
+        .prompts-title {
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--gray-900);
+        }
+
+        .prompts-actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .prompts-container {
+            min-height: 200px;
+        }
+
+        .prompts-empty {
+            text-align: center;
+            padding: 40px 20px;
+            color: var(--gray-500);
+        }
+
+        .empty-icon {
+            font-size: 48px;
+            margin-bottom: 12px;
+        }
+
+        .empty-text {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+
+        .empty-hint {
+            font-size: 13px;
+            color: var(--gray-400);
+        }
+
+        .prompts-list {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .prompt-card {
+            background: var(--gray-50);
+            border-radius: 12px;
+            padding: 16px;
+            border-left: 4px solid var(--primary);
+            transition: all 0.3s ease;
+        }
+
+        .prompt-card:hover {
+            background: #f3f4f6;
+            transform: translateX(4px);
+        }
+
+        .prompt-card.sent {
+            border-left-color: var(--success);
+            opacity: 0.7;
+        }
+
+        .prompt-card.sending {
+            border-left-color: var(--warning);
+        }
+
+        .prompt-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .prompt-number {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .prompt-badge {
+            background: var(--primary);
+            color: white;
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            font-weight: 700;
+        }
+
+        .prompt-badge.sent {
+            background: var(--success);
+        }
+
+        .prompt-badge.sending {
+            background: var(--warning);
+        }
+
+        .prompt-title-text {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--gray-700);
+        }
+
+        .prompt-status {
+            font-size: 12px;
+            color: var(--gray-500);
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .prompt-content {
+            background: white;
+            border-radius: 8px;
+            padding: 12px;
+            font-size: 13px;
+            line-height: 1.6;
+            color: var(--gray-700);
+            max-height: 120px;
+            overflow-y: auto;
+            margin-bottom: 12px;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .prompt-actions {
+            display: flex;
+            gap: 8px;
+            justify-content: flex-end;
+        }
+
+        .btn-small {
+            padding: 6px 12px;
+            font-size: 12px;
+            border-radius: 6px;
+            border: none;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            transition: all 0.2s;
+        }
+
+        .btn-copy {
+            background: var(--gray-200);
+            color: var(--gray-700);
+        }
+
+        .btn-copy:hover {
+            background: var(--gray-300);
+        }
+
+        .btn-send {
+            background: var(--primary);
+            color: white;
+        }
+
+        .btn-send:hover {
+            background: var(--primary-dark);
+        }
+
+        .btn-send:disabled {
+            background: var(--gray-300);
+            cursor: not-allowed;
+        }

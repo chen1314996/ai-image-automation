@@ -53,6 +53,9 @@ class WorkflowController {
         this.nextResumePromptIndex = 0;
         this.browserMode = 'headless';
         this.headless = true;
+        this.generationSettings = {
+            ...legilAutomation.getConfig().settings
+        };
         this.consecutiveLegilFailures = 0;
         this.pauseOnConsecutiveFailures = true;
         this.consecutiveFailureThreshold = 3;
@@ -206,6 +209,9 @@ class WorkflowController {
             legilReferenceFolder: this.legilReferenceFolder,
             browserMode: this.browserMode,
             headless: this.headless,
+            generationSettings: {
+                ...this.generationSettings
+            },
             imageFiles: [...this.imageFiles],
             totalImages: this.totalImages,
             imageIndex,
@@ -232,6 +238,9 @@ class WorkflowController {
             outputFolder: snapshot.outputFolder,
             legilReferenceFolder: snapshot.legilReferenceFolder,
             browserMode: snapshot.browserMode || 'headless',
+            generationSettings: snapshot.generationSettings && typeof snapshot.generationSettings === 'object'
+                ? { ...snapshot.generationSettings }
+                : { ...legilAutomation.getConfig().settings },
             imageIndex: snapshot.imageIndex + 1,
             totalImages: snapshot.totalImages || snapshot.imageFiles.length,
             imageName: imagePath ? path.basename(imagePath) : '',
@@ -240,6 +249,66 @@ class WorkflowController {
             stats: snapshot.stats || {},
             savedAt: snapshot.savedAt || ''
         };
+    }
+
+    buildPromptTitleForFile(promptText) {
+        const raw = String(promptText || '').replace(/\r/g, '\n').trim();
+        if (!raw) {
+            return '';
+        }
+
+        const cleanTitle = (value) => {
+            let text = String(value || '')
+                .replace(/^[\s"'“”‘’《》【】\[\]（）()]+|[\s"'“”‘’《》【】\[\]（）()]+$/g, '')
+                .replace(/^第\s*\d+\s*[组条]\s*/i, '')
+                .replace(/^\d+\s*[.、):：-]\s*/, '')
+                .replace(/^(标题|主题|方向|创意方向|画面标题|场景标题|提示词|画面提示词|生图提示词|图片提示词|prompt|title)\s*\d*\s*[:：-]\s*/i, '')
+                .replace(/\s+/g, ' ')
+                .trim();
+
+            text = text.split(/[。！？!?；;，,\n]/)[0].trim();
+
+            if (!text || /^(提示词|画面提示词|生图提示词|图片提示词|prompt|imageprompt)\s*\d*$/i.test(text)) {
+                return '';
+            }
+
+            return text.slice(0, 24);
+        };
+
+        const lines = raw
+            .split('\n')
+            .map(line => line.trim())
+            .filter(Boolean)
+            .slice(0, 8);
+        const candidates = [];
+
+        for (const line of lines) {
+            const explicitTitle = line.match(/(?:^|[\s【\[(（])(?:标题|主题|方向|创意方向|画面标题|场景标题|title)\s*[:：]\s*([^。！？!?；;，,\n]{2,40})/i);
+            if (explicitTitle) {
+                candidates.push(explicitTitle[1]);
+            }
+
+            const leadingTitle = line.match(/^[\s"'“”‘’《》【\[\(（]*([^"'“”‘’《》【】\[\]（）()。！？!?；;，,\n:：]{2,30})[\s"'“”‘’》】\]\)）]*[:：]/);
+            if (leadingTitle) {
+                candidates.push(leadingTitle[1]);
+            }
+        }
+
+        const quotedTitle = raw.match(/[《【“"]([^》】”"]{2,30})[》】”"]/);
+        if (quotedTitle) {
+            candidates.push(quotedTitle[1]);
+        }
+
+        candidates.push(lines[0] || raw);
+
+        for (const candidate of candidates) {
+            const title = cleanTitle(candidate);
+            if (title) {
+                return title;
+            }
+        }
+
+        return '';
     }
 
     clearResume() {
@@ -288,6 +357,12 @@ class WorkflowController {
             'headless'
         );
         this.headless = this.browserMode === 'headless';
+        const requestedGenerationSettings = options && options.generationSettings && typeof options.generationSettings === 'object'
+            ? options.generationSettings
+            : null;
+        this.generationSettings = legilAutomation.normalizeGenerationSettings(
+            requestedGenerationSettings || (resumeSnapshot && resumeSnapshot.generationSettings) || this.generationSettings
+        );
         this.consecutiveLegilFailures = 0;
         this.pauseOnConsecutiveFailures = options.pauseOnConsecutiveFailures !== false;
         this.consecutiveFailureThreshold = Math.max(1, Math.min(20, Number(options.consecutiveFailureThreshold) || 3));
@@ -593,6 +668,11 @@ class WorkflowController {
         for (let i = startPromptIndex; i < prompts.length; i++) {
             const promptData = prompts[i];
             const promptText = typeof promptData === 'string' ? promptData : promptData.content;
+            const promptTitleName = this.buildPromptTitleForFile(
+                promptData && typeof promptData === 'object'
+                    ? (promptData.title || promptData.promptTitle || promptData.name || promptText)
+                    : promptText
+            );
 
             if (!promptText || typeof promptText !== 'string') {
                 logger.warn(`提示词 ${i + 1}/5 为空，跳过`);
@@ -616,21 +696,24 @@ class WorkflowController {
             logger.info(`│ ${promptText.substring(0, 50)}...`);
             logger.info(`└────────────────────────────────────────────────────────────┘`);
 
-            const legilOutputQuantity = legilAutomation.getConfig().settings.outputQuantity || 1;
+            const legilOutputQuantity = Number(this.generationSettings.outputQuantity) || 1;
             const nextOutputSequence = this.stats.totalGenerated + 1;
             const legilResult = await legilAutomation.generateImage(promptText, i + 1, {
                 saveFolder: this.outputFolder,
                 referenceFolder: this.legilReferenceFolder,
                 headless: options.headless === true || this.headless === true,
+                generationSettings: this.generationSettings,
                 outputSequence: nextOutputSequence,
                 outputTotal: totalImages * prompts.length * legilOutputQuantity,
                 runId: this.currentRunId,
                 referenceImageIndex: imageIndex,
                 totalReferenceImages: totalImages,
                 referenceImageName: imageName,
+                promptTitleName,
                 promptIndexWithinImage: i + 1,
                 totalPromptsForImage: prompts.length,
                 taskType: '量产工作流',
+                acceptStablePartialOutputs: true,
                 autoRecoveryEnabled: this.autoRecoveryEnabled,
                 captureErrorScreenshot: this.captureErrorScreenshot,
                 ...this.getCancellationOptions()

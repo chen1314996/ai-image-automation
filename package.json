@@ -7,6 +7,9 @@
     "start": "node server.js",
     "watchdog": "node feishu-watchdog.js",
     "watchdog:task": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/register-watchdog-task.ps1",
+    "test:quick": "node tests/suite/quick-test.js",
+    "test:suite": "node tests/suite/run-all-tests.js",
+    "test:qa": "node tests/qa/qa-test-runner.js",
     "test:feishu": "node scripts/test-feishu-command-router.js",
     "test:creative-agent": "node scripts/test-creative-agent-parser-quality.js"
   },
