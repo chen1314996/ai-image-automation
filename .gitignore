@@ -3,6 +3,7 @@ node_modules/
 
 # Browser/login state and local caches
 browser_data/
+browser_data_jimeng/
 browser_data_backup_*/
 browser_data_before_restore_*/
 storage_state.json

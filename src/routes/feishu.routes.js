@@ -121,6 +121,63 @@ module.exports = function registerFeishuRoutes(app, context) {
 
 
 
+    app.post('/api/feishu-cli/test-card-action', async (req, res) => {
+        if (!isLoopbackRequest(req)) {
+            return res.status(403).json({
+                success: false,
+                message: '该接口仅允许本机访问。'
+            });
+        }
+
+        const config = readFeishuCliConfig();
+        const action = typeof req.body?.action === 'string' && req.body.action.trim()
+            ? req.body.action.trim()
+            : 'progress';
+        const chatId = config.notifyChatId || config.allowedChatIds[0] || '';
+        const senderId = config.allowedUserIds[0] || '';
+
+        if (!chatId || !senderId || !config.cardActionToken) {
+            return res.json({
+                success: false,
+                message: '飞书卡片按钮测试缺少 chat_id、user_id 或 token 配置。'
+            });
+        }
+
+        try {
+            await feishuCliBridge.handleCardActionEvent({
+                context: {
+                    open_message_id: `om_local_test_${Date.now()}`,
+                    open_chat_id: chatId
+                },
+                operator: {
+                    open_id: senderId
+                },
+                action: {
+                    tag: 'button',
+                    value: {
+                        action,
+                        token: config.cardActionToken,
+                        chatId
+                    }
+                }
+            });
+
+            res.json({
+                success: true,
+                message: `飞书卡片按钮测试已执行：${action}`,
+                bridge: feishuCliBridge.getStatus()
+            });
+        } catch (error) {
+            res.status(500).json({
+                success: false,
+                message: '飞书卡片按钮测试失败：' + error.message,
+                bridge: feishuCliBridge.getStatus()
+            });
+        }
+    });
+
+
+
     app.post('/api/server/restart', (req, res) => {
         if (!isLoopbackRequest(req)) {
             return res.status(403).json({

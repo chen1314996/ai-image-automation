@@ -17,7 +17,7 @@
                 <button type="button" class="page-tab" id="renamePageTab" onclick="switchPage('rename')">重命名</button>
             </nav>
             <h1><span class="brand-icon" aria-hidden="true"></span><span>AI生图自动化平台</span></h1>
-            <p id="pageSubtitle">豆包API生成提示词 → Legil生成图片 → 全自动循环处理</p>
+            <p id="pageSubtitle">提示词模型生成提示词 → Legil生成图片 → 全自动循环处理</p>
         </header>
 
         <!-- Status Bar -->
@@ -28,7 +28,7 @@
             </div>
             <div class="status-item" id="doubaoStatusItem">
                 <span class="status-dot"></span>
-                <span id="doubaoStatusText">豆包API未配置</span>
+                <span id="doubaoStatusText">提示词模型未配置</span>
             </div>
             <div class="status-item" id="legilStatusItem">
                 <span class="status-dot"></span>
@@ -49,7 +49,7 @@
                 <div class="form-group folder-field">
                     <div class="folder-field-heading">
                         <label for="referenceFolder">参考图文件夹</label>
-                        <span class="folder-desc">豆包 API 会按文件名顺序读取这里的参考图</span>
+                        <span class="folder-desc">提示词模型会按文件名顺序读取这里的参考图</span>
                     </div>
                     <div class="folder-path-row">
                         <div class="folder-input-combo">
@@ -115,34 +115,94 @@
             <details class="card card-wide collapsible-card compact-config-card" open>
                 <summary class="card-title">
                     <span class="icon icon-green icon-chat" aria-hidden="true"></span>
-                    豆包API配置
+                    提示词生成模型配置
                 </summary>
 
-                <div class="form-group">
-                    <label>火山方舟 API Key</label>
-                    <input type="password" id="doubaoApiKey" placeholder="填写后仅保存在本机，不会在页面回显">
-                    <div class="field-meta">
-                        <span id="doubaoApiKeyStatus">未配置</span>
+                <div class="setting-group">
+                    <label>提示词生成方式</label>
+                    <div class="model-options workflow-browser-mode-options" id="promptProviderOptions">
+                        <button type="button" class="model-option" data-prompt-provider="doubao" onclick="setPromptProvider('doubao')">
+                            <span class="model-option-title">豆包 / 火山方舟</span>
+                            <span class="model-option-desc">保留现有量产提示词流程</span>
+                        </button>
+                        <button type="button" class="model-option" data-prompt-provider="lumos" onclick="setPromptProvider('lumos')">
+                            <span class="model-option-title">Lumos Winky</span>
+                            <span class="model-option-desc">使用后端安全密钥调用可用模型</span>
+                        </button>
                     </div>
                 </div>
 
-                <div class="form-group">
-                    <label>模型 ID / Endpoint ID</label>
-                    <input type="text" id="doubaoModelId" placeholder="填写 Doubao-Seed-2.0-pro 对应的模型ID或Endpoint ID">
+                <div id="doubaoPromptConfigPanel" data-prompt-provider-panel="doubao">
+                    <div class="form-group">
+                        <label>火山方舟 API Key</label>
+                        <input type="password" id="doubaoApiKey" placeholder="填写后仅保存在本机，不会在页面回显">
+                        <div class="field-meta">
+                            <span id="doubaoApiKeyStatus">未配置</span>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>模型 ID / Endpoint ID</label>
+                        <input type="text" id="doubaoModelId" placeholder="填写 Doubao-Seed-2.0-pro 对应的模型ID或Endpoint ID">
+                    </div>
+
+                    <div class="form-group">
+                        <label>发送给豆包API的固定文字指令</label>
+                        <textarea id="doubaoPromptTemplate" placeholder="请输入每次调用豆包API时使用的固定指令"></textarea>
+                        <div class="field-meta">
+                            <span id="doubaoPromptCount">0 字</span>
+                        </div>
+                    </div>
                 </div>
 
-                <div class="form-group">
-                    <label>发送给豆包API的固定文字指令</label>
-                    <textarea id="doubaoPromptTemplate" placeholder="请输入每次调用豆包API时使用的固定指令"></textarea>
-                    <div class="field-meta">
-                        <span id="doubaoPromptCount">0 字</span>
+                <div id="lumosPromptConfigPanel" data-prompt-provider-panel="lumos" hidden>
+                    <div class="form-group">
+                        <label>Lumos Winky API Key</label>
+                        <input type="text" id="lumosPromptApiKeyStatus" value="等待读取后端配置" readonly>
+                        <div class="field-meta">
+                            <span>密钥仅由后端读取，页面不会显示或保存明文</span>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="lumosPromptModelSelect">Lumos Winky GPT-5.5 模型</label>
+                        <select id="lumosPromptModelSelect" class="model-select" onchange="setLumosPromptModelFromSelect()">
+                            <option value="">正在自动读取 GPT-5.5 系列模型...</option>
+                        </select>
+                        <div class="field-meta">
+                            <span id="lumosPromptModelStatus">系统只展示 GPT-5.5 系列模型，你只需要选择</span>
+                        </div>
+                    </div>
+                    <input type="hidden" id="lumosPromptModel">
+
+                    <details class="compact-advanced-config">
+                        <summary>高级连接配置</summary>
+                        <div class="form-group">
+                            <label>Lumos Winky API URL</label>
+                            <input type="text" id="lumosPromptApiUrl" placeholder="留空则使用后端 WINKY_API_BASE_URL">
+                        </div>
+
+                        <div class="form-group">
+                            <label>Lumos Provider（可选）</label>
+                            <input type="text" id="lumosPromptProvider" placeholder="如 API 代理需要指定 provider，可在这里填写">
+                        </div>
+                    </details>
+
+                    <div class="form-group">
+                        <label>发送给 Lumos Winky 的固定文字指令</label>
+                        <textarea id="lumosPromptTemplate" placeholder="请输入每次调用 Lumos Winky 时使用的固定指令"></textarea>
+                        <div class="field-meta">
+                            <span id="lumosPromptCount">0 字</span>
+                        </div>
                     </div>
                 </div>
 
                 <div class="input-actions">
-                    <button class="btn btn-primary" onclick="saveDoubaoConfig()">保存豆包API配置</button>
+                    <button class="btn btn-primary" onclick="savePromptGenerationConfig()">保存提示词模型配置</button>
+                    <button class="btn btn-secondary" onclick="loadLumosPromptModels()">刷新Lumos模型</button>
+                    <button class="btn btn-secondary" onclick="testPromptGenerationConfig()">测试生成提示词</button>
                     <button class="btn btn-secondary" onclick="resetDoubaoPrompt()">恢复默认指令</button>
-                    <button class="btn btn-secondary" onclick="loadDoubaoConfig()">刷新配置</button>
+                    <button class="btn btn-secondary" onclick="refreshPromptGenerationConfig()">刷新配置</button>
                 </div>
                 <div class="info-box" id="doubaoConfigInfo"></div>
             </details>
@@ -273,13 +333,13 @@
         <div class="workflow-section">
             <div class="workflow-header">
                 <h2><span class="section-icon icon-run" aria-hidden="true"></span><span>一键启动完整工作流</span></h2>
-                <p>自动处理所有参考图：豆包API获取提示词 → Legil生成 → 循环处理</p>
+                <p>自动处理所有参考图：提示词模型获取提示词 → Legil生成 → 循环处理</p>
             </div>
 
             <div class="workflow-steps">
                 <div class="step">
                     <span class="step-number">1</span>
-                    <span>豆包API</span>
+                    <span>提示词模型</span>
                 </div>
                 <div class="step">
                     <span class="step-number">2</span>
@@ -326,7 +386,7 @@
                 <div class="progress-item">
                     <div class="progress-label">
                         <span>🎨 当前图片生成进度</span>
-                        <span id="promptProgressText">0 / 5</span>
+                        <span id="promptProgressText">0 / 0</span>
                     </div>
                     <div class="progress-bar">
                         <div class="progress-fill" id="promptProgressBar" style="width: 0%"></div>
@@ -387,11 +447,11 @@
                     <div class="form-group folder-field">
                         <div class="folder-field-heading">
                             <label for="resizeInputFolder">输入文件夹</label>
-                            <span class="folder-desc">Legil 会按文件名顺序读取这里的图片</span>
+                            <span class="folder-desc">当前选择的平台会按文件名顺序读取这里的图片</span>
                         </div>
                         <div class="folder-path-row">
                             <div class="folder-input-combo">
-                                <input type="text" id="resizeInputFolder" placeholder="默认：D:\工作\自动化工作流1\Legil批量改尺寸\输入" value="D:\工作\自动化工作流1\Legil批量改尺寸\输入">
+                                <input type="text" id="resizeInputFolder" placeholder="默认：D:\工作\自动化工作流1\即梦AI批量改尺寸\输入" value="D:\工作\自动化工作流1\即梦AI批量改尺寸\输入">
                                 <button type="button" class="folder-history-button" id="resizeInputFolderHistoryButton" onclick="toggleFolderHistory('resizeInputFolder')"><span class="history-caret">▼</span>历史</button>
                                 <div class="folder-history-menu" id="resizeInputFolderHistoryMenu"></div>
                             </div>
@@ -407,7 +467,7 @@
                         </div>
                         <div class="folder-path-row">
                             <div class="folder-input-combo">
-                                <input type="text" id="resizeOutputFolder" placeholder="默认：D:\工作\自动化工作流1\Legil批量改尺寸\输出" value="D:\工作\自动化工作流1\Legil批量改尺寸\输出">
+                                <input type="text" id="resizeOutputFolder" placeholder="默认：D:\工作\自动化工作流1\即梦AI批量改尺寸\输出" value="D:\工作\自动化工作流1\即梦AI批量改尺寸\输出">
                                 <button type="button" class="folder-history-button" id="resizeOutputFolderHistoryButton" onclick="toggleFolderHistory('resizeOutputFolder')"><span class="history-caret">▼</span>历史</button>
                                 <div class="folder-history-menu" id="resizeOutputFolderHistoryMenu"></div>
                             </div>
@@ -417,48 +477,83 @@
 
                     <div class="resize-quick-actions">
                         <button class="btn btn-secondary" onclick="openSingleWebsite('legil')">打开Legil</button>
-                        <button class="btn btn-secondary" onclick="closeBrowser()">关闭浏览器</button>
+                        <button class="btn btn-secondary" onclick="openJimengWebsite()">打开即梦AI</button>
+                        <button class="btn btn-secondary" onclick="checkJimengStatus()">检测即梦登录</button>
                     </div>
+                    <div class="info-box" id="resizeJimengCliStatusInfo">等待检测即梦浏览器登录状态。</div>
                 </div>
 
                 <details class="card collapsible-card compact-config-card" open>
                     <summary class="card-title">
                         <span class="icon icon-purple icon-image" aria-hidden="true"></span>
-                        Legil生成参数
+                        改尺寸生成参数
                     </summary>
 
                     <div class="setting-group">
-                        <label>运行模式</label>
-                        <div class="model-options resize-browser-mode-options" id="resizeBrowserModeOptions">
-                            <button type="button" class="model-option" data-resize-browser-mode="headless" onclick="setResizeBrowserMode('headless')">
-                                <span class="model-option-title">无头模式</span>
-                                <span class="model-option-desc">后台运行不显示窗口</span>
+                        <label>改尺寸平台</label>
+                        <div class="model-options workflow-browser-mode-options" id="resizeProviderOptions">
+                            <button type="button" class="model-option" data-resize-provider="jimeng" onclick="setResizeProvider('jimeng')">
+                                <span class="model-option-title">即梦 AI</span>
+                                <span class="model-option-desc">独立即梦浏览器，适合和 Legil 量产/创意拓展同时跑</span>
                             </button>
-                            <button type="button" class="model-option" data-resize-browser-mode="headed" onclick="setResizeBrowserMode('headed')">
-                                <span class="model-option-title">有头模式</span>
-                                <span class="model-option-desc">显示浏览器窗口</span>
+                            <button type="button" class="model-option" data-resize-provider="legil" onclick="setResizeProvider('legil')">
+                                <span class="model-option-title">Legil</span>
+                                <span class="model-option-desc">恢复原 Legil 改尺寸流程，占用同一个 Legil 自动化队列</span>
                             </button>
                         </div>
                     </div>
 
-                    <div class="setting-group">
-                        <label>图生图模型</label>
-                        <div class="model-options" id="resizeLegilImageModelOptions"></div>
+                    <div id="resizeLegilConfigPanel" data-resize-provider-panel="legil" hidden>
+                        <div class="setting-group">
+                            <label>Legil 图生图模型</label>
+                            <div class="model-options" id="resizeLegilImageModelOptions"></div>
+                        </div>
+
+                        <div class="setting-group">
+                            <label>Legil 宽高比</label>
+                            <div class="setting-options" id="resizeLegilAspectRatioOptions"></div>
+                        </div>
+
+                        <div class="setting-group">
+                            <label>Legil 分辨率</label>
+                            <div class="setting-options" id="resizeLegilResolutionOptions"></div>
+                        </div>
+
+                        <div class="setting-group">
+                            <label>Legil 输出数量</label>
+                            <div class="setting-options" id="resizeLegilOutputQuantityOptions"></div>
+                        </div>
+                    </div>
+
+                    <div id="resizeJimengConfigPanel" data-resize-provider-panel="jimeng">
+                        <div class="setting-group">
+                            <label>即梦图生图模型</label>
+                            <div class="model-options" id="resizeJimengImageModelOptions"></div>
+                        </div>
+
+                        <div class="setting-group">
+                            <label>即梦宽高比</label>
+                            <div class="setting-options" id="resizeJimengAspectRatioOptions"></div>
+                        </div>
+
+                        <div class="setting-group">
+                            <label>即梦分辨率</label>
+                            <div class="setting-options" id="resizeJimengResolutionOptions"></div>
+                        </div>
                     </div>
 
                     <div class="setting-group">
-                        <label>宽高比</label>
-                        <div class="setting-options" id="resizeLegilAspectRatioOptions"></div>
-                    </div>
-
-                    <div class="setting-group">
-                        <label>分辨率</label>
-                        <div class="setting-options" id="resizeLegilResolutionOptions"></div>
-                    </div>
-
-                    <div class="setting-group">
-                        <label>输出数量</label>
-                        <div class="setting-options" id="resizeLegilOutputQuantityOptions"></div>
+                        <label>运行模式</label>
+                        <div class="model-options workflow-browser-mode-options" id="resizeJimengBrowserModeOptions">
+                            <button type="button" class="model-option" data-resize-browser-mode="headless" onclick="setResizeBrowserMode('headless')">
+                                <span class="model-option-title">无头模式</span>
+                                <span class="model-option-desc">后台顺序生成</span>
+                            </button>
+                            <button type="button" class="model-option" data-resize-browser-mode="headed" onclick="setResizeBrowserMode('headed')">
+                                <span class="model-option-title">有头模式</span>
+                                <span class="model-option-desc">显示自动化窗口</span>
+                            </button>
+                        </div>
                     </div>
 
                     <div class="input-actions">
@@ -476,8 +571,8 @@
 
                     <div class="resize-prompt-layout">
                         <div class="form-group">
-                            <label for="resizePromptTemplate">发送给 Legil 的固定文字提示词</label>
-                            <textarea id="resizePromptTemplate" placeholder="请输入每张图片发送给 Legil 的固定提示词"></textarea>
+                            <label for="resizePromptTemplate" id="resizePromptTemplateLabel">发送给当前平台的固定文字提示词</label>
+                            <textarea id="resizePromptTemplate" placeholder="请输入每张图片发送给当前平台的固定提示词"></textarea>
                             <div class="field-meta">
                                 <span id="resizePromptCount">0 字</span>
                             </div>

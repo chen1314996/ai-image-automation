@@ -4,14 +4,14 @@
  * ============================================
  * 核心功能：
  * 1. 循环处理输入文件夹中的所有参考图
- * 2. 每张参考图：调用豆包大模型 API → 获取5组提示词 → Legil生成图片
- * 3. 单张图5组提示词处理完后，自动处理下一张
+ * 2. 每张参考图：调用提示词模型 API → 获取多组提示词 → Legil生成图片
+ * 3. 单张图提示词处理完后，自动处理下一张
  * 4. 直到所有参考图处理完毕
  */
 
 const fs = require('fs');
 const path = require('path');
-const doubaoAutomation = require('./doubao-automation');
+const promptGenerationService = require('./prompt-generation-service');
 const legilAutomation = require('./legil-automation');
 const logger = require('./logger');
 const { formatDateTimeForFile, sortNaturallyByName } = require('./file-utils');
@@ -38,7 +38,7 @@ class WorkflowController {
             totalImages: 0,
             currentImageName: '',
             currentPromptIndex: 0,
-            totalPrompts: 5,
+            totalPrompts: 0,
             currentAction: '', // 当前正在执行的动作描述
             error: null
         };
@@ -53,6 +53,7 @@ class WorkflowController {
         this.nextResumePromptIndex = 0;
         this.browserMode = 'headless';
         this.headless = true;
+        this.promptGenerationConfig = promptGenerationService.normalizeConfig({});
         this.generationSettings = {
             ...legilAutomation.getConfig().settings
         };
@@ -174,6 +175,11 @@ class WorkflowController {
         return fallback === 'headed' ? 'headed' : 'headless';
     }
 
+    setPromptGenerationConfig(config = {}) {
+        this.promptGenerationConfig = promptGenerationService.normalizeConfig(config, this.promptGenerationConfig);
+        return promptGenerationService.getPublicConfig(this.promptGenerationConfig);
+    }
+
     buildResumeSnapshot() {
         if (!this.totalImages || !Array.isArray(this.imageFiles) || this.imageFiles.length === 0) {
             return null;
@@ -187,9 +193,19 @@ class WorkflowController {
             : 0;
 
         imageIndex = Math.max(0, Math.min(imageIndex, this.imageFiles.length));
-        promptIndex = Math.max(0, Math.min(promptIndex, 5));
+        const imagePath = imageIndex < this.imageFiles.length ? this.imageFiles[imageIndex] : '';
+        const currentPromptTotal = this.currentImagePath === imagePath && Array.isArray(this.currentImagePrompts)
+            ? this.currentImagePrompts.length
+            : 0;
+        const promptLimit = currentPromptTotal > 0
+            ? currentPromptTotal
+            : Math.max(0, Number(this.currentStatus.totalPrompts) || 0);
 
-        if (promptIndex >= 5) {
+        promptIndex = promptLimit > 0
+            ? Math.max(0, Math.min(promptIndex, promptLimit))
+            : 0;
+
+        if (promptLimit > 0 && promptIndex >= promptLimit) {
             imageIndex += 1;
             promptIndex = 0;
         }
@@ -198,10 +214,9 @@ class WorkflowController {
             return null;
         }
 
-        const imagePath = this.imageFiles[imageIndex];
         const canReusePrompts = this.currentImagePath === imagePath &&
             Array.isArray(this.currentImagePrompts) &&
-            this.currentImagePrompts.length >= 5;
+            this.currentImagePrompts.length > 0;
 
         return {
             inputFolder: this.inputFolder,
@@ -209,6 +224,7 @@ class WorkflowController {
             legilReferenceFolder: this.legilReferenceFolder,
             browserMode: this.browserMode,
             headless: this.headless,
+            promptGeneration: promptGenerationService.normalizeConfig(this.promptGenerationConfig, this.promptGenerationConfig),
             generationSettings: {
                 ...this.generationSettings
             },
@@ -216,6 +232,7 @@ class WorkflowController {
             totalImages: this.totalImages,
             imageIndex,
             promptIndex,
+            totalPrompts: currentPromptTotal,
             prompts: canReusePrompts ? [...this.currentImagePrompts] : [],
             stats: { ...this.stats },
             runId: this.currentRunId || formatDateTimeForFile(),
@@ -238,14 +255,23 @@ class WorkflowController {
             outputFolder: snapshot.outputFolder,
             legilReferenceFolder: snapshot.legilReferenceFolder,
             browserMode: snapshot.browserMode || 'headless',
+            promptGeneration: promptGenerationService.getPublicConfig(snapshot.promptGeneration || this.promptGenerationConfig),
             generationSettings: snapshot.generationSettings && typeof snapshot.generationSettings === 'object'
                 ? { ...snapshot.generationSettings }
                 : { ...legilAutomation.getConfig().settings },
             imageIndex: snapshot.imageIndex + 1,
             totalImages: snapshot.totalImages || snapshot.imageFiles.length,
             imageName: imagePath ? path.basename(imagePath) : '',
-            promptIndex: (Number(snapshot.promptIndex) || 0) + 1,
-            totalPrompts: 5,
+            promptIndex: (() => {
+                const promptTotal = Array.isArray(snapshot.prompts) && snapshot.prompts.length > 0
+                    ? snapshot.prompts.length
+                    : Math.max(0, Number(snapshot.totalPrompts) || 0);
+                const promptIndex = Math.max(0, Number(snapshot.promptIndex) || 0);
+                return promptTotal > 0 ? Math.min(promptIndex + 1, promptTotal) : 0;
+            })(),
+            totalPrompts: Array.isArray(snapshot.prompts) && snapshot.prompts.length > 0
+                ? snapshot.prompts.length
+                : Math.max(0, Number(snapshot.totalPrompts) || 0),
             stats: snapshot.stats || {},
             savedAt: snapshot.savedAt || ''
         };
@@ -357,6 +383,10 @@ class WorkflowController {
             'headless'
         );
         this.headless = this.browserMode === 'headless';
+        this.promptGenerationConfig = promptGenerationService.normalizeConfig(
+            (options && options.promptGeneration) || (resumeSnapshot && resumeSnapshot.promptGeneration) || this.promptGenerationConfig,
+            (resumeSnapshot && resumeSnapshot.promptGeneration) || this.promptGenerationConfig
+        );
         const requestedGenerationSettings = options && options.generationSettings && typeof options.generationSettings === 'object'
             ? options.generationSettings
             : null;
@@ -390,7 +420,7 @@ class WorkflowController {
             totalImages: 0,
             currentImageName: '',
             currentPromptIndex: 0,
-            totalPrompts: 5,
+            totalPrompts: 0,
             browserMode: this.browserMode,
             currentAction: '正在初始化工作流...',
             error: null
@@ -402,6 +432,11 @@ class WorkflowController {
         logger.info(`输入文件夹: ${this.inputFolder}`);
         logger.info(`输出文件夹: ${this.outputFolder}`);
         logger.info(`运行模式: ${this.headless ? '无头模式' : '有头模式'}`);
+        const promptConfigForLog = promptGenerationService.getPublicConfig(this.promptGenerationConfig);
+        const promptProviderLabel = promptConfigForLog.provider === 'lumos'
+            ? `Lumos Winky / ${promptConfigForLog.lumos.model || '未填写模型'}`
+            : `豆包 / ${promptConfigForLog.doubao.modelLabel || '未填写模型'}`;
+        logger.info(`提示词生成模型: ${promptProviderLabel}`);
 
         try {
             // 第1步：获取所有参考图
@@ -447,6 +482,7 @@ class WorkflowController {
                     totalImages: this.totalImages,
                     currentImageName: imageName,
                     currentPromptIndex: 0,
+                    totalPrompts: 0,
                     currentAction: `正在处理第 ${i + 1}/${this.totalImages} 张参考图: ${imageName}`
                 });
 
@@ -535,10 +571,12 @@ class WorkflowController {
             // 第3步：完成总结
             this.isRunning = false;
             this.clearResume();
+            const finalPromptTotal = Math.max(0, Number(this.currentStatus.totalPrompts) || 0);
             this.updateStatus({
                 phase: 'completed',
                 currentAction: '工作流已完成',
-                currentPromptIndex: 5
+                currentPromptIndex: finalPromptTotal,
+                totalPrompts: finalPromptTotal
             });
 
             logger.info('');
@@ -582,62 +620,73 @@ class WorkflowController {
      * 处理单张参考图
      * =====================================================
      * 流程：
-     * 1. 调用豆包大模型 API 获取5组提示词
+     * 1. 调用提示词模型 API 获取多组提示词
      * 2. 每组提示词在Legil生成图片
      * 3. 本轮结束
      */
     async processSingleImage(imagePath, imageIndex, totalImages, options = {}) {
         const imageName = path.basename(imagePath);
-        const startPromptIndex = Math.max(0, Math.min(4, Number(options.startPromptIndex) || 0));
+        const startPromptIndex = Math.max(0, Math.floor(Number(options.startPromptIndex) || 0));
         const cachedPrompts = Array.isArray(options.prompts)
             ? options.prompts
                 .map(promptData => typeof promptData === 'string' ? promptData : promptData && promptData.content)
                 .filter(promptText => typeof promptText === 'string' && promptText.trim())
                 .map(promptText => promptText.trim())
-                .slice(0, 5)
             : [];
 
         logger.info('');
         logger.info('╔════════════════════════════════════════════════════════════╗');
         logger.info(`║ 📷 参考图 ${imageIndex}/${totalImages}: ${imageName}`);
         logger.info('╠════════════════════════════════════════════════════════════╣');
-        logger.info(cachedPrompts.length >= 5
-            ? '║ [步骤1] 使用停止前缓存的5组提示词继续...'
-            : '║ [步骤1] 豆包 API：读取参考图并获取5组提示词...');
+        logger.info(cachedPrompts.length > 0
+            ? `║ [步骤1] 使用停止前缓存的 ${cachedPrompts.length} 组提示词继续...`
+            : '║ [步骤1] 提示词模型：读取参考图并获取提示词...');
         logger.info('╚════════════════════════════════════════════════════════════╝');
 
         let prompts = cachedPrompts;
 
-        if (prompts.length < 5) {
-            // 更新状态 - 正在通过豆包 API 生成提示词。
+        if (prompts.length === 0) {
+            const publicPromptConfig = promptGenerationService.getPublicConfig(this.promptGenerationConfig);
+            const providerLabel = publicPromptConfig.provider === 'lumos'
+                ? `Lumos Winky / ${publicPromptConfig.lumos.model || '未填写模型'}`
+                : `豆包 / ${publicPromptConfig.doubao.modelLabel || '未填写模型'}`;
+
+            // 更新状态 - 正在通过提示词模型生成提示词。
             this.updateStatus({
                 phase: 'extracting_prompts',
-                currentAction: `正在调用豆包 API 生成提示词: ${imageName}`
+                currentAction: `正在调用${providerLabel}生成提示词: ${imageName}`,
+                promptProvider: publicPromptConfig.provider,
+                promptModel: publicPromptConfig.provider === 'lumos'
+                    ? publicPromptConfig.lumos.model
+                    : publicPromptConfig.doubao.modelLabel
             });
+            logger.info(`提示词生成模型: ${providerLabel}`);
 
-            const doubaoResult = await doubaoAutomation.fullAutomation(imagePath, {
+            const promptResult = await promptGenerationService.generatePromptsFromImage(imagePath, this.promptGenerationConfig, {
                 imageIndex,
                 totalImages,
                 ...this.getCancellationOptions()
             });
 
-            if (!doubaoResult.success || !Array.isArray(doubaoResult.prompts) || doubaoResult.prompts.length === 0) {
-                throw new Error('豆包生成提示词失败');
+            if (!promptResult.success || !Array.isArray(promptResult.prompts) || promptResult.prompts.length === 0) {
+                throw new Error(promptResult.message || '提示词模型生成失败');
             }
 
-            prompts = doubaoResult.prompts
+            prompts = promptResult.prompts
                 .map(promptData => typeof promptData === 'string' ? promptData : promptData && promptData.content)
                 .filter(promptText => typeof promptText === 'string' && promptText.trim())
-                .map(promptText => promptText.trim())
-                .slice(0, 5);
+                .map(promptText => promptText.trim());
         } else {
             logger.info(`✅ 已加载停止前缓存的 ${prompts.length} 组提示词`);
         }
 
-        if (prompts.length < 5) {
-            logger.error(`提取提示词失败: 豆包 API 只返回 ${prompts.length} 组有效提示词`);
-            throw new Error('豆包生成提示词失败');
+        if (prompts.length === 0) {
+            logger.error('提取提示词失败: 提示词模型未返回有效提示词');
+            throw new Error('提示词模型生成失败');
         }
+
+        const totalPrompts = prompts.length;
+        const effectiveStartPromptIndex = Math.min(startPromptIndex, totalPrompts);
 
         logger.info(`✅ 成功获取 ${prompts.length} 组提示词`);
 
@@ -646,26 +695,28 @@ class WorkflowController {
         this.currentImagePath = imagePath;
         this.currentImagePrompts = [...prompts];
         this.nextResumeImageIndex = imageIndex - 1;
-        this.nextResumePromptIndex = startPromptIndex;
+        this.nextResumePromptIndex = effectiveStartPromptIndex;
         logger.info('💾 提示词已缓存，可通过API获取');
 
         // 更新状态 - 正在提取提示词
         this.updateStatus({
             phase: 'extracting_prompts',
+            currentPromptIndex: effectiveStartPromptIndex,
+            totalPrompts,
             currentAction: `已提取 ${prompts.length} 组提示词`
         });
 
         // 步骤2：Legil生成 - 每组提示词生成1张图片
         logger.info('');
         logger.info('╔════════════════════════════════════════════════════════════╗');
-        logger.info('║ [步骤2] Legil：每组提示词生成1张图片（共5张）');
+        logger.info(`║ [步骤2] Legil：每组提示词生成1张图片（共 ${totalPrompts} 组）`);
         logger.info('╚════════════════════════════════════════════════════════════╝');
 
-        if (startPromptIndex > 0) {
-            logger.info(`↩️ 继续上次任务：从第 ${startPromptIndex + 1}/5 组提示词开始`);
+        if (effectiveStartPromptIndex > 0 && effectiveStartPromptIndex < totalPrompts) {
+            logger.info(`↩️ 继续上次任务：从第 ${effectiveStartPromptIndex + 1}/${totalPrompts} 组提示词开始`);
         }
 
-        for (let i = startPromptIndex; i < prompts.length; i++) {
+        for (let i = effectiveStartPromptIndex; i < prompts.length; i++) {
             const promptData = prompts[i];
             const promptText = typeof promptData === 'string' ? promptData : promptData.content;
             const promptTitleName = this.buildPromptTitleForFile(
@@ -675,7 +726,7 @@ class WorkflowController {
             );
 
             if (!promptText || typeof promptText !== 'string') {
-                logger.warn(`提示词 ${i + 1}/5 为空，跳过`);
+                logger.warn(`提示词 ${i + 1}/${totalPrompts} 为空，跳过`);
                 continue;
             }
 
@@ -686,12 +737,13 @@ class WorkflowController {
             this.updateStatus({
                 phase: 'generating_in_legil',
                 currentPromptIndex: i + 1,
-                currentAction: `正在Legil生成第 ${i + 1}/5 张图片`
+                totalPrompts,
+                currentAction: `正在Legil生成第 ${i + 1}/${totalPrompts} 组提示词`
             });
 
             logger.info('');
             logger.info(`┌────────────────────────────────────────────────────────────┐`);
-            logger.info(`│ 🎨 提示词 ${i + 1}/5`);
+            logger.info(`│ 🎨 提示词 ${i + 1}/${totalPrompts}`);
             logger.info(`├────────────────────────────────────────────────────────────┤`);
             logger.info(`│ ${promptText.substring(0, 50)}...`);
             logger.info(`└────────────────────────────────────────────────────────────┘`);
@@ -728,17 +780,18 @@ class WorkflowController {
                     this.nextResumeImageIndex = imageIndex;
                     this.nextResumePromptIndex = 0;
                 }
-                logger.info(`✅ 提示词 ${i + 1}/5 生成成功，保存 ${savedCount} 张图片`);
+                logger.info(`✅ 提示词 ${i + 1}/${totalPrompts} 生成成功，保存 ${savedCount} 张图片`);
                 // 更新状态 - 图片已保存
                 this.updateStatus({
-                    currentAction: `第 ${i + 1}/5 组已保存 ${savedCount} 张图片`
+                    totalPrompts,
+                    currentAction: `第 ${i + 1}/${totalPrompts} 组已保存 ${savedCount} 张图片`
                 });
             } else {
                 if (this.isAbortRequested()) {
                     logger.info('⏹️ 工作流已停止，中断 Legil 生成循环');
                     break;
                 }
-                logger.error(`❌ 图片 ${i + 1}/5 生成失败: ${legilResult.message}`);
+                logger.error(`❌ 提示词 ${i + 1}/${totalPrompts} 生成失败: ${legilResult.message}`);
                 this.consecutiveLegilFailures += 1;
                 if (this.pauseOnConsecutiveFailures && this.consecutiveLegilFailures >= this.consecutiveFailureThreshold) {
                     this.resumeSnapshot = this.buildResumeSnapshot();
@@ -767,7 +820,7 @@ class WorkflowController {
         logger.info('');
         logger.info('╔════════════════════════════════════════════════════════════╗');
         logger.info(`║ ✅ 参考图 ${imageIndex}/${totalImages} 处理完毕！`);
-        logger.info(`║    已生成5张图片，准备下一张...`);
+        logger.info(`║    已处理 ${totalPrompts} 组提示词，准备下一张...`);
         logger.info('╚════════════════════════════════════════════════════════════╝');
     }
 
@@ -809,6 +862,7 @@ class WorkflowController {
             totalImages: this.totalImages,
             currentImage: this.imageFiles[this.currentIndex] || null,
             browserMode: this.browserMode,
+            promptGeneration: promptGenerationService.getPublicConfig(this.promptGenerationConfig),
             stats: this.stats,
             progress,
             lastExtractedPrompts: this.lastExtractedPrompts || null,
@@ -894,7 +948,7 @@ class WorkflowController {
             totalImages: 0,
             currentImageName: '',
             currentPromptIndex: 0,
-            totalPrompts: 5,
+            totalPrompts: 0,
             currentAction: '',
             error: null
         };

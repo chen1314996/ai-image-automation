@@ -28,6 +28,7 @@ const logger = require('../../logger');
 
 // 引入豆包自动化模块（第五阶段新增）
 const doubaoAutomation = require('../../doubao-automation');
+const promptGenerationService = require('../../prompt-generation-service');
 
 // 引入 Legil 自动化模块（第七阶段新增）
 const legilAutomation = require('../../legil-automation');
@@ -38,6 +39,12 @@ const workflowController = require('../../workflow-controller');
 const { formatDateTimeForFile, sortNaturallyByName } = require('../../file-utils');
 const { readConfig, updateConfig } = require('../../config-store');
 const { readSecrets } = require('../../secrets-store');
+const {
+    createJimengBrowserService,
+    DEFAULT_JIMENG_RESIZE_CONFIG,
+    normalizeJimengResizeConfig,
+    getJimengGenerationOptions
+} = require('../services/jimeng-browser');
 const { parseCreativePromptWorkbook } = require('../../creative-table-parser');
 const { buildCreativeAgentQualityReport } = require('../../creative-agent-quality');
 const {
@@ -73,7 +80,11 @@ const DEFAULT_RESIZE_CONFIG = {
     }
 };
 const DEFAULT_WORKFLOW_CONFIG = {
-    browserMode: 'headless'
+    browserMode: 'headless',
+    promptGeneration: {
+        provider: 'doubao',
+        lumos: {}
+    }
 };
 const DEFAULT_NOTIFICATION_CONFIG = {
     feishuEnabled: true,
@@ -147,6 +158,15 @@ const appConfig = {
         ...DEFAULT_RESIZE_CONFIG,
         ...(persistedConfig.resize && typeof persistedConfig.resize === 'object' ? persistedConfig.resize : {})
     },
+    jimengResize: normalizeJimengResizeConfig(
+        persistedConfig.jimengResize && typeof persistedConfig.jimengResize === 'object'
+            ? persistedConfig.jimengResize
+            : {
+                inputFolder: persistedConfig.resize && persistedConfig.resize.inputFolder,
+                outputFolder: persistedConfig.resize && persistedConfig.resize.outputFolder
+            },
+        DEFAULT_JIMENG_RESIZE_CONFIG
+    ),
     creative: {
         ...DEFAULT_CREATIVE_CONFIG,
         ...(persistedConfig.creative && typeof persistedConfig.creative === 'object' ? persistedConfig.creative : {})
@@ -175,6 +195,15 @@ const automationState = {
     legilTaskType: null,
     legilTaskProgress: null
 };
+
+const jimengBrowserService = createJimengBrowserService({
+    ROOT_DIR,
+    fs,
+    path,
+    logger,
+    formatDateTimeForFile,
+    listImageFilesInFolder
+});
 
 const serverStartedAt = new Date().toISOString();
 const feishuNotifier = new FeishuNotificationService({
@@ -556,10 +585,15 @@ function normalizeBrowserMode(value, fallback = 'headless') {
 
 function normalizeWorkflowConfigPayload(payload = {}) {
     const fallbackSettings = appConfig.workflow?.generationSettings || legilAutomation.getConfig().settings || DEFAULT_WORKFLOW_CONFIG.generationSettings;
+    const fallbackPromptGeneration = appConfig.workflow?.promptGeneration || DEFAULT_WORKFLOW_CONFIG.promptGeneration;
     return {
         browserMode: normalizeBrowserMode(
             payload.browserMode,
             appConfig.workflow?.browserMode || DEFAULT_WORKFLOW_CONFIG.browserMode
+        ),
+        promptGeneration: promptGenerationService.normalizeConfig(
+            payload.promptGeneration,
+            fallbackPromptGeneration
         ),
         generationSettings: normalizeLegilGenerationSettings(
             payload.generationSettings,
@@ -1124,6 +1158,9 @@ function persistRuntimeConfig(extra = {}) {
         resize: {
             ...appConfig.resize
         },
+        jimengResize: {
+            ...appConfig.jimengResize
+        },
         workflow: {
             ...appConfig.workflow
         },
@@ -1563,6 +1600,8 @@ function buildPlatformStatusText() {
     const creativeResume = getCreativeResumeInfo(false);
     const creativeProgressSnapshot = getCreativeProgressSnapshot();
     const legilProgress = creativeProgressSnapshot.progress || automationState.legilTaskProgress || {};
+    const jimengStatus = jimengBrowserService.getTaskStatus();
+    const jimengProgress = jimengStatus.progress || {};
     const browserStatus = {
         running: !!browserController.browser,
         legil: browserController.isPageOpen('legil')
@@ -1576,6 +1615,8 @@ function buildPlatformStatusText() {
         `Legil任务：${automationState.legilTaskRunning ? '运行中' : '未运行'}${automationState.legilTaskType ? `（${automationState.legilTaskType}）` : ''}`,
         `Legil进度：${legilProgress.completed || 0}/${legilProgress.total || 0}，成功 ${legilProgress.success || 0}，失败 ${legilProgress.failed || 0}，已保存 ${legilProgress.saved || 0}`,
         `Legil动作：${legilProgress.currentAction || '暂无'}`,
+        `即梦改尺寸：${jimengStatus.running ? '运行中' : '未运行'}，进度 ${jimengProgress.completed || 0}/${jimengProgress.total || 0}，成功 ${jimengProgress.success || 0}，失败 ${jimengProgress.failed || 0}，已保存 ${jimengProgress.saved || 0}`,
+        `即梦动作：${jimengProgress.currentAction || '暂无'}`,
         `完整工作流可继续：${workflowResume.hasResume ? `是，第 ${workflowResume.imageIndex}/${workflowResume.totalImages} 张，提示词 ${workflowResume.promptIndex}/${workflowResume.totalPrompts}` : '否'}`,
         `创意拓展可继续：${creativeResume.hasResume ? `是，剩余 ${creativeResume.remainingCount}/${creativeResume.total} 组` : '否'}`,
         `浏览器：${browserStatus.running ? '运行中' : '未启动'}，Legil页面：${browserStatus.legil ? '已打开' : '未打开'}`
@@ -1612,23 +1653,24 @@ async function startWorkflowFromCurrentConfig(options = {}) {
         return validation;
     }
 
-    const doubaoConfig = doubaoAutomation.getConfig();
-    if (!doubaoConfig.apiKeyConfigured || !doubaoConfig.modelId) {
+    appConfig.workflow = normalizeWorkflowConfigPayload(appConfig.workflow);
+    const promptValidation = promptGenerationService.validateConfigForRun(appConfig.workflow.promptGeneration);
+    if (!promptValidation.success) {
         return {
             success: false,
-            message: '请先在豆包API配置中填写火山方舟 API Key 和模型 ID / Endpoint ID'
+            message: promptValidation.message
         };
     }
 
     setImmediate(async () => {
         try {
-            appConfig.workflow = normalizeWorkflowConfigPayload(appConfig.workflow);
             const result = await workflowController.startWorkflow(
                 validation.inputFolder,
                 validation.outputFolder,
                 validation.legilReferenceFolder,
                 {
                     browserMode: appConfig.workflow.browserMode,
+                    promptGeneration: appConfig.workflow.promptGeneration,
                     generationSettings: appConfig.workflow.generationSettings || legilAutomation.getConfig().settings,
                     ...getLegilRecoveryOptions()
                 }
@@ -2029,6 +2071,7 @@ function createRouteContext() {
         browserController,
         logger,
         doubaoAutomation,
+        promptGenerationService,
         legilAutomation,
         workflowController,
         formatDateTimeForFile,
@@ -2054,12 +2097,15 @@ function createRouteContext() {
         persistedConfig,
         IMAGE_EXTENSIONS,
         DEFAULT_RESIZE_CONFIG,
+        DEFAULT_JIMENG_RESIZE_CONFIG,
         DEFAULT_WORKFLOW_CONFIG,
         DEFAULT_NOTIFICATION_CONFIG,
         DEFAULT_CREATIVE_CONFIG,
+        getJimengGenerationOptions,
         normalizeNotificationConfig,
         appConfig,
         automationState,
+        jimengBrowserService,
         serverStartedAt,
         feishuNotifier,
         WATCHDOG_SCRIPT_PATH,
@@ -2083,6 +2129,7 @@ function createRouteContext() {
         normalizeBrowserMode,
         normalizeWorkflowConfigPayload,
         normalizeResizeConfigPayload,
+        normalizeJimengResizeConfig,
         normalizeCreativeBrowserMode,
         normalizeCreativeConfigPayload,
         normalizeLegilGenerationSettings,

@@ -90,6 +90,11 @@ class BrowserController {
                 ]
             };
 
+            if (useHeadless) {
+                // Use full Chromium instead of chrome-headless-shell.exe so Windows does not show a shell window.
+                contextOptions.channel = 'chromium';
+            }
+
             if (!fs.existsSync(USER_DATA_DIR)) {
                 fs.mkdirSync(USER_DATA_DIR, { recursive: true });
             }

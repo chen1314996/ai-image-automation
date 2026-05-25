@@ -54,13 +54,21 @@ function chooseLongestText(cells, minLength = 12) {
         .sort((a, b) => b.text.length - a.text.length)[0] || null;
 }
 
-function extractCreativePromptsFromRows(rows, sheetName = '') {
+function extractCreativePromptResultFromRows(rows, sheetName = '') {
     const cleanRows = rows
         .map(row => (Array.isArray(row) ? row : []).map(normalizeCellText))
         .filter(row => row.some(Boolean));
 
     if (cleanRows.length === 0) {
-        return [];
+        return {
+            prompts: [],
+            parseStats: {
+                totalPromptCount: 0,
+                dedupedPromptCount: 0,
+                duplicatePromptCount: 0,
+                duplicatePromptRows: []
+            }
+        };
     }
 
     const headerRowIndex = findHeaderRow(cleanRows);
@@ -81,7 +89,9 @@ function extractCreativePromptsFromRows(rows, sheetName = '') {
     }
 
     const prompts = [];
-    const seen = new Set();
+    const seen = new Map();
+    const duplicatePromptRows = [];
+    let totalPromptCount = 0;
 
     dataRows.forEach((row, rowOffset) => {
         const sourceRow = (hasHeader ? headerRowIndex + rowOffset + 2 : rowOffset + 1);
@@ -115,14 +125,32 @@ function extractCreativePromptsFromRows(rows, sheetName = '') {
                 return;
             }
 
-            const key = prompt.replace(/\s+/g, ' ').trim().toLowerCase();
-            if (seen.has(key)) {
-                return;
-            }
-            seen.add(key);
+            totalPromptCount += 1;
 
             const promptTitle = normalizeCellText(source.title) || `提示词${promptOffset + 1}`;
             const directionTitle = direction || `表格第${sourceRow}行`;
+            const promptColumn = Number.isFinite(Number(source.columnIndex)) ? Number(source.columnIndex) + 1 : null;
+            const key = prompt.replace(/\s+/g, ' ').trim().toLowerCase();
+            const duplicateOf = seen.get(key);
+            if (duplicateOf) {
+                duplicatePromptRows.push({
+                    sourceRow,
+                    duplicateOfRow: duplicateOf.sourceRow,
+                    promptColumn,
+                    duplicateOfPromptColumn: duplicateOf.promptColumn,
+                    direction: directionTitle.slice(0, 200),
+                    duplicateOfDirection: duplicateOf.direction,
+                    promptTitle: promptTitle.slice(0, 80),
+                    duplicateOfPromptTitle: duplicateOf.promptTitle
+                });
+                return;
+            }
+            seen.set(key, {
+                sourceRow,
+                promptColumn,
+                direction: directionTitle.slice(0, 200),
+                promptTitle: promptTitle.slice(0, 80)
+            });
 
             prompts.push({
                 index: prompts.length + 1,
@@ -130,14 +158,41 @@ function extractCreativePromptsFromRows(rows, sheetName = '') {
                 sheetName,
                 direction: directionTitle.slice(0, 200),
                 promptTitle: promptTitle.slice(0, 80),
-                promptColumn: Number.isFinite(Number(source.columnIndex)) ? Number(source.columnIndex) + 1 : null,
+                promptColumn,
                 prompt: prompt.slice(0, 10000),
                 selected: true
             });
         });
     });
 
-    return prompts;
+    const duplicateRowPairMap = new Map();
+    duplicatePromptRows.forEach(item => {
+        const key = `${item.sourceRow}::${item.duplicateOfRow}`;
+        const rowPair = duplicateRowPairMap.get(key) || {
+            sourceRow: item.sourceRow,
+            duplicateOfRow: item.duplicateOfRow,
+            direction: item.direction,
+            duplicateOfDirection: item.duplicateOfDirection,
+            duplicatePromptCount: 0
+        };
+        rowPair.duplicatePromptCount += 1;
+        duplicateRowPairMap.set(key, rowPair);
+    });
+
+    return {
+        prompts,
+        parseStats: {
+            totalPromptCount,
+            dedupedPromptCount: prompts.length,
+            duplicatePromptCount: duplicatePromptRows.length,
+            duplicateRowPairs: Array.from(duplicateRowPairMap.values()),
+            duplicatePromptRows
+        }
+    };
+}
+
+function extractCreativePromptsFromRows(rows, sheetName = '') {
+    return extractCreativePromptResultFromRows(rows, sheetName).prompts;
 }
 
 function countPromptColumnsInRows(rows) {
@@ -227,7 +282,8 @@ function parseCreativePromptWorkbook(fileName, base64Content) {
         defval: ''
     });
 
-    const prompts = extractCreativePromptsFromRows(rows, sheetName);
+    const parsedRows = extractCreativePromptResultFromRows(rows, sheetName);
+    const prompts = parsedRows.prompts;
     if (prompts.length === 0) {
         throw new Error('没有从表格中提取到有效画面提示词，请确认存在“画面提示词/提示词/prompt”等列');
     }
@@ -235,6 +291,7 @@ function parseCreativePromptWorkbook(fileName, base64Content) {
     return {
         fileName: path.basename(String(fileName || '表格文件')),
         sheetName,
+        parseStats: parsedRows.parseStats,
         prompts
     };
 }
@@ -243,6 +300,7 @@ module.exports = {
     normalizeCellText,
     isPromptHeader,
     extractCreativePromptsFromRows,
+    extractCreativePromptResultFromRows,
     chooseCreativePromptSheet,
     parseCreativePromptWorkbook
 };

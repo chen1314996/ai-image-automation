@@ -52,6 +52,9 @@
                     infoBox.className = 'info-box success';
                     infoBox.textContent = `✅ 豆包API配置已加载，模型ID：${data.config.modelLabel || '未填写'}`;
                 }
+                if (typeof updatePromptGenerationInfo === 'function') {
+                    updatePromptGenerationInfo();
+                }
             } catch (e) {
                 if (infoBox) {
                     infoBox.className = 'info-box error';
@@ -139,6 +142,9 @@
                     infoBox.className = 'info-box success';
                     infoBox.textContent = `✅ 豆包API配置已保存，模型ID：${data.config.modelLabel || '未填写'}`;
                 }
+                if (typeof updatePromptGenerationInfo === 'function') {
+                    updatePromptGenerationInfo();
+                }
                 if (!silent) {
                     showToast('豆包配置已保存');
                     addLog(`✅ 豆包API配置已保存，模型ID：${data.config.modelLabel || '未填写'}`, 'success');
@@ -173,6 +179,9 @@
                 if (infoBox) {
                     infoBox.className = 'info-box success';
                     infoBox.textContent = '✅ 已恢复默认指令';
+                }
+                if (typeof updatePromptGenerationInfo === 'function') {
+                    updatePromptGenerationInfo();
                 }
                 showToast('已恢复默认指令');
             } catch (e) {

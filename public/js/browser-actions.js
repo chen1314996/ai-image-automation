@@ -1,4 +1,21 @@
 // 浏览器操作按钮：打开 Legil、打开两个平台、关闭浏览器、刷新浏览器状态。
+        async function openJimengWebsite() {
+            addLog('正在打开即梦 AI 自动化浏览器...', 'browser');
+            try {
+                const res = await fetch('/api/jimeng/open', { method: 'POST' });
+                const data = await readJsonResponse(res, '打开即梦 AI 页面失败');
+                if (!data.success) {
+                    throw new Error(data.message || '打开失败');
+                }
+
+                addLog('即梦 AI 自动化浏览器已打开，请在该浏览器中完成登录', 'browser');
+                showToast(data.loggedIn ? '即梦 AI 已打开并检测到登录' : '即梦 AI 已打开，请完成登录', data.loggedIn ? 'success' : 'error');
+                await checkJimengStatus({ silent: true });
+            } catch (e) {
+                showToast(e.message || '打开即梦 AI 页面失败', 'error');
+            }
+        }
+
         async function openSingleWebsite(name) {
             if (name === 'doubao') {
                 showToast('豆包已改为API调用，无需打开网页');
@@ -70,7 +87,8 @@
                     const s = data.status;
                     if (s.browserRunning) updateStatus('browser', true, '浏览器运行中');
                     if (s.doubaoApiConfigured) updateStatus('doubao', true, '豆包API已配置');
-                    if (!s.doubaoApiConfigured) updateStatus('doubao', false, '豆包API未配置');
+                    if (!s.doubaoApiConfigured) updateStatus('doubao', false, '提示词模型待配置');
+                    if (typeof updatePromptGenerationInfo === 'function') updatePromptGenerationInfo();
                     if (s.pages.legil) updateStatus('legil', true, 'Legil已连接');
                 }
             } catch (e) {}

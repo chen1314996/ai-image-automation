@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const net = require('net');
 const { spawn } = require('child_process');
 const feishuCliBridge = require('./feishu-cli-bridge');
 
@@ -135,7 +136,43 @@ function isAutoRestartEnabled() {
     return config.watchdogAutoRestartEnabled !== false;
 }
 
-function restartServerProcess() {
+function getTargetAddress() {
+    try {
+        const url = new URL(TARGET_URL);
+        const port = Number(url.port || (url.protocol === 'https:' ? 443 : 80));
+        return {
+            host: url.hostname || '127.0.0.1',
+            port
+        };
+    } catch {
+        return {
+            host: '127.0.0.1',
+            port: 3066
+        };
+    }
+}
+
+function isTargetPortOpen(timeoutMs = 1200) {
+    const target = getTargetAddress();
+    return new Promise(resolve => {
+        const socket = new net.Socket();
+        let settled = false;
+        const finish = value => {
+            if (settled) return;
+            settled = true;
+            socket.destroy();
+            resolve(value);
+        };
+
+        socket.setTimeout(timeoutMs);
+        socket.once('connect', () => finish(true));
+        socket.once('timeout', () => finish(false));
+        socket.once('error', () => finish(false));
+        socket.connect(target.port, target.host);
+    });
+}
+
+async function restartServerProcess() {
     if (!isAutoRestartEnabled()) {
         return {
             success: false,
@@ -145,6 +182,16 @@ function restartServerProcess() {
     }
 
     try {
+        if (await isTargetPortOpen()) {
+            lastRestartAt = new Date().toISOString();
+            lastRestartResult = {
+                success: false,
+                skipped: true,
+                message: '目标端口仍在监听，已跳过重复启动 server.js'
+            };
+            return lastRestartResult;
+        }
+
         const child = spawn(process.execPath, ['server.js'], {
             cwd: PROJECT_DIR,
             detached: true,
@@ -299,7 +346,7 @@ async function tick() {
             }
         );
         lastNotifyResult = notifyResult;
-        const restartResult = restartServerProcess();
+        const restartResult = await restartServerProcess();
         writeStatus({
             lastDownAt,
             lastNotifyResult,

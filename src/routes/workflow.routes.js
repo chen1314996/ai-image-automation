@@ -7,7 +7,6 @@ module.exports = function registerWorkflowRoutes(app, context) {
         appConfig,
         automationState,
         compactProgress,
-        doubaoAutomation,
         getHealthSnapshot,
         getLegilRecoveryOptions,
         legilAutomation,
@@ -17,6 +16,7 @@ module.exports = function registerWorkflowRoutes(app, context) {
         notifyTaskEvent,
         notifyWorkflowResult,
         persistRuntimeConfig,
+        promptGenerationService,
         workflowController
     } = context;
 
@@ -46,6 +46,7 @@ module.exports = function registerWorkflowRoutes(app, context) {
         console.log('   输出文件夹:', outputFolder || '使用默认路径');
         console.log('   Legil参考图文件夹:', legilReferenceFolder || appConfig.legilReferenceFolder || '使用默认路径');
         console.log('   运行模式:', workflowConfig.browserMode);
+        console.log('   提示词模型:', workflowConfig.promptGeneration.provider);
         logger.system('收到完整工作流启动请求，正在校验文件夹和配置...');
 
         if (automationState.legilTaskRunning) {
@@ -66,12 +67,12 @@ module.exports = function registerWorkflowRoutes(app, context) {
             });
         }
 
-        const doubaoConfig = doubaoAutomation.getConfig();
-        if (!doubaoConfig.apiKeyConfigured || !doubaoConfig.modelId) {
-            logger.error('工作流启动失败：豆包 API Key 或模型 ID 未配置');
+        const promptValidation = promptGenerationService.validateConfigForRun(workflowConfig.promptGeneration);
+        if (!promptValidation.success) {
+            logger.error(`工作流启动失败：${promptValidation.message}`);
             return res.json({
                 success: false,
-                message: '请先在豆包API配置中填写火山方舟 API Key 和模型 ID / Endpoint ID'
+                message: promptValidation.message
             });
         }
 
@@ -96,6 +97,7 @@ module.exports = function registerWorkflowRoutes(app, context) {
                     validation.legilReferenceFolder,
                     {
                         browserMode: workflowConfig.browserMode,
+                        promptGeneration: workflowConfig.promptGeneration,
                         generationSettings: workflowGenerationSettings,
                         ...getLegilRecoveryOptions()
                     }
@@ -155,6 +157,7 @@ module.exports = function registerWorkflowRoutes(app, context) {
 
 
     app.post('/api/workflow/resume', async (req, res) => {
+        const body = req.body || {};
         console.log('\n↩️ 收到继续上次工作流请求');
 
         if (automationState.legilTaskRunning) {
@@ -172,11 +175,18 @@ module.exports = function registerWorkflowRoutes(app, context) {
             });
         }
 
-        const doubaoConfig = doubaoAutomation.getConfig();
-        if (!doubaoConfig.apiKeyConfigured || !doubaoConfig.modelId) {
+        const resumePromptGeneration = body.useCurrentPromptGeneration === true
+            ? normalizeWorkflowConfigPayload(appConfig.workflow).promptGeneration
+            : null;
+        const promptValidation = promptGenerationService.validateConfigForRun(
+            resumePromptGeneration || (resumeInfo.promptGeneration && resumeInfo.promptGeneration.provider
+                ? resumeInfo.promptGeneration
+                : normalizeWorkflowConfigPayload(appConfig.workflow).promptGeneration)
+        );
+        if (!promptValidation.success) {
             return res.json({
                 success: false,
-                message: '请先在豆包API配置中填写火山方舟 API Key 和模型 ID / Endpoint ID'
+                message: promptValidation.message
             });
         }
 
@@ -188,7 +198,10 @@ module.exports = function registerWorkflowRoutes(app, context) {
 
         (async () => {
             try {
-                const result = await workflowController.resumeWorkflow(getLegilRecoveryOptions());
+                const result = await workflowController.resumeWorkflow({
+                    ...(resumePromptGeneration ? { promptGeneration: resumePromptGeneration } : {}),
+                    ...getLegilRecoveryOptions()
+                });
                 if (result.success) {
                     console.log('\n✅ 继续工作流执行结果:', result.message);
                 } else {

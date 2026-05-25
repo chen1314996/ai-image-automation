@@ -103,7 +103,7 @@ module.exports = function registerLegilRoutes(app, context) {
 
     /**
      * ============================================
-     * 第七阶段：批量生成五张图片
+     * 第七阶段：批量生成多张图片
      * ============================================
      */
     app.post('/api/legil/batch-generate', async (req, res) => {

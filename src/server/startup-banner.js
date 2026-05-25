@@ -19,7 +19,7 @@ function printStartupBanner(PORT) {
     console.log('      - 服务器主动推送日志');
     console.log('   ✅ 豆包大模型 API（第五阶段）');
     console.log('      - 读取本地参考图并调用火山方舟 API');
-    console.log('      - 直接返回五组规整提示词');
+    console.log('      - 直接返回多组规整提示词');
     console.log('   ✅ API 提示词解析（第六阶段）');
     console.log('      - 不再打开豆包网页，不再等待网页回复');
     console.log('   ✅ Legil 平台自动化（第七阶段）');

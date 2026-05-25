@@ -9,6 +9,7 @@ const {
     ROOT_DIR,
     appConfig,
     browserController,
+    jimengBrowserService,
     logger,
     feishuNotifier,
     feishuCliBridge,
@@ -61,7 +62,8 @@ const gracefulShutdown = createGracefulShutdown({
     getHealthMonitor,
     feishuNotifier,
     feishuCliBridge,
-    browserController
+    browserController,
+    jimengBrowserService
 });
 
 process.on('SIGINT', () => {

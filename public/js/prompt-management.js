@@ -7,6 +7,7 @@
 
                 if (data.success && data.prompts && data.prompts.length > 0) {
                     currentPrompts = data.prompts;
+                    sentPromptIndices.clear();
                     displayPrompts(data.prompts);
                     showToast(`已获取 ${data.prompts.length} 组提示词`);
                     addLog(`✅ 已获取 ${data.prompts.length} 组提示词`, 'success');

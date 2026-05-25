@@ -159,7 +159,7 @@ class DoubaoAutomation {
         const rawResponse = await this.callDoubaoVisionApi(dataUrl, options);
 
         throwIfAborted(options);
-        logger.info('正在解析豆包 API 返回的 5 组提示词...');
+        logger.info('正在解析豆包 API 返回的提示词...');
 
         const prompts = this.parsePromptsFromApiText(rawResponse);
         this.lastExtractedPrompts = prompts;
@@ -229,7 +229,7 @@ class DoubaoAutomation {
         // 让模型只返回 JSON，避免再做网页时期那种复杂纯文本/代码块提取。
         return `${userInstruction}
 
-请严格只返回下面这个 JSON 对象，不要添加 Markdown、代码块、解释、寒暄或资料来源：
+请严格只返回下面这种 JSON 对象，不要添加 Markdown、代码块、解释、寒暄或资料来源。下面是默认 5 条示例；如果用户上方要求其他数量，请按该数量调整 prompts 数组长度：
 {
   "prompts": [
     "第1组完整生图提示词",
@@ -241,7 +241,7 @@ class DoubaoAutomation {
 }
 
 硬性要求：
-1. prompts 必须刚好 5 条。
+1. prompts 数量必须与用户上方指令要求的组数一致；如果用户没有明确数量，默认返回 5 条。
 2. 每条提示词都必须独立完整，适合直接发送到生图平台。
 3. 每条提示词可以是中文或中英混合，不要因为包含中文而省略。
 4. 不要把同一条提示词拆成多个数组项。`;
@@ -355,8 +355,8 @@ class DoubaoAutomation {
             try {
                 const parsed = JSON.parse(candidate);
                 const prompts = this.extractPromptsFromParsedJson(parsed);
-                if (prompts.length >= 5) {
-                    return prompts.slice(0, 5);
+                if (prompts.length > 0) {
+                    return prompts;
                 }
             } catch (error) {
                 // 继续尝试下一个候选 JSON。
@@ -366,13 +366,13 @@ class DoubaoAutomation {
         // 轻量兜底：如果模型偶尔没有遵守 JSON，只按常见编号切开。
         // 这不是旧网页提取逻辑，只是防止 API 偶发返回格式漂移导致整个工作流中断。
         const fallbackPrompts = this.extractNumberedPrompts(text);
-        if (fallbackPrompts.length >= 5) {
+        if (fallbackPrompts.length > 0) {
             logger.warn('⚠️ 豆包 API 未返回严格 JSON，已使用编号兜底解析');
-            return fallbackPrompts.slice(0, 5);
+            return fallbackPrompts;
         }
 
         logger.error(`豆包 API 原始返回预览: ${compactForLog(text, 800)}`);
-        throw new Error(`豆包 API 未返回 5 组规整提示词，只解析到 ${fallbackPrompts.length} 组`);
+        throw new Error(`豆包 API 未返回有效提示词，只解析到 ${fallbackPrompts.length} 组`);
     }
 
     getJsonCandidates(text) {
@@ -430,12 +430,12 @@ class DoubaoAutomation {
             .replace(/```$/i, '')
             .trim();
 
-        const pattern = /(?:^|\n)\s*(?:第\s*)?([1-5])\s*(?:组|条|\.|、|\)|）|:|：)\s*([\s\S]*?)(?=(?:\n\s*(?:第\s*)?[1-5]\s*(?:组|条|\.|、|\)|）|:|：)\s*)|$)/g;
+        const pattern = /(?:^|\n)\s*(?:(?:第\s*)?\d+\s*(?:组|条|[.、\)）:：])|\d+[ \t]+)\s*([\s\S]*?)(?=(?:\n\s*(?:(?:第\s*)?\d+\s*(?:组|条|[.、\)）:：])|\d+[ \t]+)\s*)|$)/g;
         const prompts = [];
         let match;
 
         while ((match = pattern.exec(normalized)) !== null) {
-            const prompt = normalizePromptText(match[2]);
+            const prompt = normalizePromptText(match[1]);
             if (prompt) {
                 prompts.push(prompt);
             }

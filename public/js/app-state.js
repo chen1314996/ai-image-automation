@@ -4,10 +4,12 @@
             referenceFolder: 'D:\\工作\\自动化工作流1\\批量产图\\输入',
             saveFolder: 'D:\\工作\\自动化工作流1\\批量产图\\输出',
             legilUrl: 'https://lumos.diandian.info/legil/image-ai/image-to-image',
+            jimengUrl: 'https://jimeng.jianying.com/ai-tool/generate?workspace=12721326029068&type=image',
             legilReferenceFolder: 'D:\\工作\\自动化工作流1\\批量产图\\参考图',
             workflowBrowserMode: 'headless',
-            resizeInputFolder: 'D:\\工作\\自动化工作流1\\Legil批量改尺寸\\输入',
-            resizeOutputFolder: 'D:\\工作\\自动化工作流1\\Legil批量改尺寸\\输出',
+            resizeInputFolder: 'D:\\工作\\自动化工作流1\\即梦AI批量改尺寸\\输入',
+            resizeOutputFolder: 'D:\\工作\\自动化工作流1\\即梦AI批量改尺寸\\输出',
+            resizeProvider: 'jimeng',
             resizeBrowserMode: 'headless',
             creativeOutputFolder: 'D:\\工作\\自动化工作流1\\创意拓展\\输出',
             creativeReferenceFolder: '',
@@ -28,11 +30,22 @@
             logoBatchFileName: '1-国内LOGO模板-800x800.png',
             packageBatchInputFolder: 'D:\\工作\\自动化工作流1\\重命名\\加LOGO',
             packageBatchOutputFolder: 'D:\\工作\\自动化工作流1\\重命名\\一键打包',
-            resizePromptTemplate: '',
+            resizePromptTemplate: '修改图片比例，可适当调整布局排版，不要产生拉伸。需要生成4张。',
             creativePrompts: [],
             creativeTableFileName: '',
             doubaoPromptTemplate: '',
             doubaoModelId: '',
+            workflowPromptGeneration: {
+                provider: 'doubao',
+                lumos: {
+                    model: '',
+                    baseUrl: '',
+                    provider: '',
+                    promptTemplate: '',
+                    apiKeyConfigured: false,
+                    apiKeySource: ''
+                }
+            },
             legilGeneration: {
                 imageModel: 'nano-banana-2',
                 aspectRatio: '1:1',
@@ -44,6 +57,14 @@
                 aspectRatio: '16:9',
                 resolution: '1K',
                 outputQuantity: 1
+            },
+            resizeJimengGeneration: {
+                imageModel: 'image-5-lite',
+                aspectRatio: '16:9',
+                resolution: '2k',
+                outputQuantity: 4,
+                concurrency: 1,
+                pollTimeoutSeconds: 900
             },
             creativeLegilGeneration: {
                 imageModel: 'nano-banana-2',
@@ -70,8 +91,8 @@
             referenceFolder: 'D:\\工作\\自动化工作流1\\批量产图\\输入',
             legilReferenceFolder: 'D:\\工作\\自动化工作流1\\批量产图\\参考图',
             saveFolder: 'D:\\工作\\自动化工作流1\\批量产图\\输出',
-            resizeInputFolder: 'D:\\工作\\自动化工作流1\\Legil批量改尺寸\\输入',
-            resizeOutputFolder: 'D:\\工作\\自动化工作流1\\Legil批量改尺寸\\输出',
+            resizeInputFolder: 'D:\\工作\\自动化工作流1\\即梦AI批量改尺寸\\输入',
+            resizeOutputFolder: 'D:\\工作\\自动化工作流1\\即梦AI批量改尺寸\\输出',
             creativeOutputFolder: 'D:\\工作\\自动化工作流1\\创意拓展\\输出',
             creativeReferenceFolder: '',
             renameInputFolder: 'D:\\工作\\自动化工作流1\\创意拓展\\输出',
@@ -114,12 +135,17 @@
             loadDoubaoConfig();
             loadLegilGenerationConfig();
             loadResizeConfig();
+            checkJimengStatus({ silent: true });
             loadCreativeConfig().finally(refreshCreativeResumeControls);
             loadCreativeAgentStatus();
             refreshWorkflowResumeControls();
             const promptTextarea = document.getElementById('doubaoPromptTemplate');
             if (promptTextarea) {
                 promptTextarea.addEventListener('input', updateDoubaoPromptCount);
+            }
+            const lumosPromptTextarea = document.getElementById('lumosPromptTemplate');
+            if (lumosPromptTextarea) {
+                lumosPromptTextarea.addEventListener('input', updateLumosPromptCount);
             }
             const resizePromptTextarea = document.getElementById('resizePromptTemplate');
             if (resizePromptTextarea) {

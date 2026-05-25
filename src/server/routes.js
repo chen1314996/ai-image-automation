@@ -6,6 +6,7 @@
 const registerBrowserRoutes = require('../routes/browser.routes');
 const registerConfigRoutes = require('../routes/config.routes');
 const registerDoubaoRoutes = require('../routes/doubao.routes');
+const registerJimengRoutes = require('../routes/jimeng.routes');
 const registerLegilRoutes = require('../routes/legil.routes');
 const registerWorkflowRoutes = require('../routes/workflow.routes');
 const registerCreativeAgentRoutes = require('../routes/creative-agent.routes');
@@ -18,6 +19,7 @@ function registerRoutes(app, context) {
     registerBrowserRoutes(app, context);
     registerConfigRoutes(app, context);
     registerDoubaoRoutes(app, context);
+    registerJimengRoutes(app, context);
     registerLegilRoutes(app, context);
     registerWorkflowRoutes(app, context);
     registerCreativeAgentRoutes(app, context);

@@ -16,7 +16,9 @@ module.exports = function registerConfigRoutes(app, context) {
         normalizeNotificationConfig,
         normalizeResizeConfigPayload,
         normalizeWorkflowConfigPayload,
-        persistRuntimeConfig
+        persistRuntimeConfig,
+        promptGenerationService,
+        workflowController
     } = context;
 
 
@@ -195,10 +197,12 @@ module.exports = function registerConfigRoutes(app, context) {
 
     app.get('/api/config/workflow', (req, res) => {
         appConfig.workflow = normalizeWorkflowConfigPayload(appConfig.workflow);
+        workflowController.setPromptGenerationConfig(appConfig.workflow.promptGeneration);
         res.json({
             success: true,
             config: {
-                ...appConfig.workflow
+                ...appConfig.workflow,
+                promptGeneration: promptGenerationService.getPublicConfig(appConfig.workflow.promptGeneration)
             },
             message: '获取量产配置成功'
         });
@@ -209,12 +213,14 @@ module.exports = function registerConfigRoutes(app, context) {
     app.post('/api/config/workflow', (req, res) => {
         try {
             appConfig.workflow = normalizeWorkflowConfigPayload(req.body || {});
+            workflowController.setPromptGenerationConfig(appConfig.workflow.promptGeneration);
             persistRuntimeConfig({ workflow: appConfig.workflow });
 
             res.json({
                 success: true,
                 config: {
-                    ...appConfig.workflow
+                    ...appConfig.workflow,
+                    promptGeneration: promptGenerationService.getPublicConfig(appConfig.workflow.promptGeneration)
                 },
                 message: '量产配置已保存'
             });
@@ -222,6 +228,83 @@ module.exports = function registerConfigRoutes(app, context) {
             res.json({
                 success: false,
                 message: '保存量产配置失败: ' + error.message
+            });
+        }
+    });
+
+
+
+    app.post('/api/config/prompt-generation/lumos-models', async (req, res) => {
+        try {
+            const workflowConfig = normalizeWorkflowConfigPayload({
+                ...appConfig.workflow,
+                promptGeneration: req.body && req.body.promptGeneration
+                    ? req.body.promptGeneration
+                    : appConfig.workflow.promptGeneration
+            });
+            const result = await promptGenerationService.listLumosModels(workflowConfig.promptGeneration);
+            res.json(result);
+        } catch (error) {
+            res.json({
+                success: false,
+                models: [],
+                message: error.message
+            });
+        }
+    });
+
+
+
+    app.post('/api/prompt-generation/test', async (req, res) => {
+        const body = req.body || {};
+        const promptGeneration = normalizeWorkflowConfigPayload({
+            ...appConfig.workflow,
+            promptGeneration: body.promptGeneration || appConfig.workflow.promptGeneration
+        }).promptGeneration;
+        const validation = promptGenerationService.validateConfigForRun(promptGeneration);
+
+        if (!validation.success) {
+            return res.json({
+                success: false,
+                prompts: [],
+                message: validation.message
+            });
+        }
+
+        try {
+            let imagePath = normalizeInputPath(body.imagePath);
+            if (!imagePath) {
+                const folder = normalizeInputPath(body.inputFolder) || workflowController.inputFolder;
+                const imageFiles = workflowController.getImageFiles(folder);
+                imagePath = imageFiles[0] || '';
+            }
+
+            if (!imagePath) {
+                return res.json({
+                    success: false,
+                    prompts: [],
+                    message: '没有找到可用于测试的参考图'
+                });
+            }
+
+            const result = await promptGenerationService.generatePromptsFromImage(imagePath, promptGeneration, {
+                imageIndex: 1,
+                totalImages: 1
+            });
+
+            res.json({
+                success: result.success,
+                provider: result.provider,
+                model: result.model,
+                prompts: result.prompts || [],
+                imagePath,
+                message: result.message
+            });
+        } catch (error) {
+            res.json({
+                success: false,
+                prompts: [],
+                message: error.message
             });
         }
     });

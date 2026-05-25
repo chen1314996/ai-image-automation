@@ -84,8 +84,8 @@
                     : (targetPage === 'rename'
                         ? '本地图片文件夹 → 提取中文题材 → 复制重命名输出'
                     : (targetPage === 'resize'
-                        ? 'Legil批量改尺寸 → 自动保存到输出文件夹'
-                        : '豆包API生成提示词 → Legil生成图片 → 全自动循环处理'));
+                        ? '即梦AI批量改尺寸 → 网页并发生成 → 自动保存到输出文件夹'
+                        : '提示词模型生成提示词 → Legil生成图片 → 全自动循环处理'));
             }
             closeFolderHistoryMenus();
         }

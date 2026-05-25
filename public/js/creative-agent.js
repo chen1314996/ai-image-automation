@@ -575,7 +575,32 @@
                     infoBox.className = 'info-box success';
                     infoBox.textContent = `✅ 已从 ${config.creativeTableFileName} / ${data.sheetName || '首个工作表'} 提取 ${config.creativePrompts.length} 组提示词${qualityNote}`;
                 }
-                addLog(`✅ 创意拓展表格解析完成：${config.creativePrompts.length} 组提示词`, 'success');
+                const parseStats = data.parseStats && typeof data.parseStats === 'object' ? data.parseStats : {};
+                const totalPromptCount = Number(parseStats.totalPromptCount) || config.creativePrompts.length;
+                const dedupedPromptCount = Number(parseStats.dedupedPromptCount) || config.creativePrompts.length;
+                const duplicatePromptCount = Number(parseStats.duplicatePromptCount) || Math.max(0, totalPromptCount - dedupedPromptCount);
+                const duplicateRows = Array.isArray(parseStats.duplicateRowPairs) && parseStats.duplicateRowPairs.length > 0
+                    ? parseStats.duplicateRowPairs
+                    : (Array.isArray(parseStats.duplicatePromptRows) ? parseStats.duplicatePromptRows : []);
+                const duplicateExamples = duplicateRows
+                    .slice(0, 5)
+                    .map(item => {
+                        const sourceRow = Number(item && item.sourceRow);
+                        const duplicateOfRow = Number(item && item.duplicateOfRow);
+                        return sourceRow > 0 && duplicateOfRow > 0
+                            ? `第${sourceRow}行与第${duplicateOfRow}行有重复提示词`
+                            : '';
+                    })
+                    .filter(Boolean);
+                const duplicateDetail = duplicatePromptCount > 0
+                    ? (duplicateExamples.length > 0
+                        ? `，发现${duplicatePromptCount}处重复提示词，重复行示例：${duplicateExamples.join('；')}`
+                        : `，发现 ${duplicatePromptCount} 处重复提示词`)
+                    : '';
+                const parseLogMessage = duplicatePromptCount > 0
+                    ? `✅ 创意拓展表格解析完成：共有${totalPromptCount} 组提示词，查重后解析出${dedupedPromptCount}组提示词${duplicateDetail}`
+                    : `✅ 创意拓展表格解析完成：${totalPromptCount} 组提示词`;
+                addLog(parseLogMessage, 'success');
                 showToast(`已提取 ${config.creativePrompts.length} 组提示词`);
                 return true;
             } catch (e) {

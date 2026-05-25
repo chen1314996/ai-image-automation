@@ -2,9 +2,10 @@
         async function startWorkflowWithConfirm() {
             const browserModeLabel = getBrowserModeLabel(config.workflowBrowserMode);
             const browserModeNote = getBrowserModeNote(config.workflowBrowserMode);
+            const promptProviderLabel = getPromptProviderLabel();
             const confirmed = confirm(
                 '请确认以下事项：\n\n' +
-                '✅ 已配置火山方舟 API Key 和模型 ID\n' +
+                `✅ 已配置提示词生成模型：${promptProviderLabel}\n` +
                 '✅ 已在浏览器中登录Legil账号\n' +
                 '✅ 参考图文件夹路径正确\n' +
                 '✅ 输出文件夹路径正确\n' +
@@ -48,6 +49,19 @@
                 return;
             }
 
+            const resumePromptGeneration = workflowResumeInfo.promptGeneration || null;
+            const currentPromptGeneration = getWorkflowPromptGenerationFromForm();
+            const resumeProvider = normalizePromptProvider(resumePromptGeneration?.provider);
+            const currentProvider = normalizePromptProvider(currentPromptGeneration.provider);
+            const resumeModel = resumeProvider === 'lumos'
+                ? (resumePromptGeneration?.lumos?.model || '')
+                : (resumePromptGeneration?.doubao?.modelLabel || resumePromptGeneration?.doubao?.modelId || config.doubaoModelId || '');
+            const currentModel = currentProvider === 'lumos'
+                ? (currentPromptGeneration.lumos?.model || '')
+                : (config.doubaoModelId || '');
+            const providerChanged = resumePromptGeneration &&
+                (resumeProvider !== currentProvider || String(resumeModel || '') !== String(currentModel || ''));
+            let useCurrentPromptGeneration = false;
             const confirmed = confirm(
                 `继续上次停止的任务？\n\n` +
                 `参考图：${workflowResumeInfo.imageIndex}/${workflowResumeInfo.totalImages} ${workflowResumeInfo.imageName || ''}\n` +
@@ -55,6 +69,15 @@
                 `点击"确定"后会从该位置继续。`
             );
             if (!confirmed) return;
+
+            if (providerChanged) {
+                useCurrentPromptGeneration = confirm(
+                    `检测到你当前选择的提示词模型和上次任务不同。\n\n` +
+                    `上次任务：${getPromptProviderLabel(resumeProvider)} ${resumeModel || ''}\n` +
+                    `当前选择：${getPromptProviderLabel(currentProvider)} ${currentModel || ''}\n\n` +
+                    `点击"确定"使用当前模型继续；点击"取消"沿用上次任务模型。`
+                );
+            }
 
             const resumeBtn = document.getElementById('resumeWorkflowBtn');
             if (resumeBtn) {
@@ -68,7 +91,23 @@
             addLog('↩️ 正在继续上次停止的工作流...', 'system');
 
             try {
-                const res = await fetch('/api/workflow/resume', { method: 'POST' });
+                if (useCurrentPromptGeneration) {
+                    const saved = await savePromptGenerationConfig({ silent: true });
+                    if (!saved) {
+                        showToast('当前提示词模型配置未保存，无法切换后继续', 'error');
+                        resetUI();
+                        await refreshWorkflowResumeControls();
+                        return;
+                    }
+                }
+
+                const res = await fetch('/api/workflow/resume', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        useCurrentPromptGeneration
+                    })
+                });
                 const data = await res.json();
                 if (data.success) {
                     showToast('已继续上次任务');
@@ -118,11 +157,11 @@
             addLog('🚀 启动工作流...', 'system');
 
             try {
-                addLog('正在保存豆包API配置...', 'system');
-                const configSaved = await saveDoubaoConfig({ silent: true });
+                addLog('正在保存提示词模型配置...', 'system');
+                const configSaved = await savePromptGenerationConfig({ silent: true });
                 if (!configSaved) {
-                    showToast('请先检查豆包配置', 'error');
-                    addLog('❌ 启动失败：豆包API配置保存失败', 'error');
+                    showToast('请先检查提示词模型配置', 'error');
+                    addLog('❌ 启动失败：提示词模型配置保存失败', 'error');
                     resetUI();
                     return;
                 }
@@ -145,6 +184,7 @@
                         outputFolder,
                         legilReferenceFolder: legilRefFolder,
                         browserMode: config.workflowBrowserMode,
+                        promptGeneration: getWorkflowPromptGenerationFromForm(),
                         generationSettings: config.legilGeneration
                     })
                 }, 30000, '启动工作流失败，请重启服务器后刷新页面');
@@ -193,10 +233,16 @@
                 document.getElementById('imageProgressText').textContent = `${currentImg} / ${totalImgs}`;
                 document.getElementById('imageProgressBar').style.width = `${imgPct}%`;
 
-                const currentPrompt = ds.currentPromptIndex || 0;
-                const promptPct = Math.round((currentPrompt / 5) * 100);
+                const totalPrompts = Math.max(0, Number(ds.totalPrompts) || 0);
+                const currentPromptRaw = Math.max(0, Number(ds.currentPromptIndex) || 0);
+                const currentPrompt = totalPrompts > 0
+                    ? Math.min(currentPromptRaw, totalPrompts)
+                    : currentPromptRaw;
+                const promptPct = totalPrompts > 0
+                    ? Math.min(100, Math.round((currentPrompt / totalPrompts) * 100))
+                    : 0;
 
-                document.getElementById('promptProgressText').textContent = `${currentPrompt} / 5`;
+                document.getElementById('promptProgressText').textContent = `${currentPrompt} / ${totalPrompts}`;
                 document.getElementById('promptProgressBar').style.width = `${promptPct}%`;
 
                 document.getElementById('currentStatusText').textContent = ds.currentAction || '处理中...';

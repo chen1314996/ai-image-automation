@@ -162,6 +162,34 @@ function execLarkCliAsync(config, args, options = {}) {
     return execFileAsync(invocation.command, [...invocation.argsPrefix, ...args], options);
 }
 
+function createSdkClientFromConfig(config) {
+    if (!Lark) {
+        return null;
+    }
+
+    const credentials = readLarkCliProfileCredentials(config.profile);
+    if (!credentials || !credentials.appId || !credentials.appSecret) {
+        return null;
+    }
+
+    return new Lark.Client({
+        appId: credentials.appId,
+        appSecret: credentials.appSecret,
+        domain: credentials.brand === 'lark' ? Lark.Domain.Lark : Lark.Domain.Feishu,
+        loggerLevel: Lark.LoggerLevel.warn
+    });
+}
+
+function getSdkErrorMessage(error) {
+    const responseData = error && error.response && error.response.data;
+    if (responseData) {
+        try {
+            return JSON.stringify(responseData);
+        } catch {}
+    }
+    return error && error.message ? error.message : String(error || '未知错误');
+}
+
 class FeishuCliBridge {
     constructor(options = {}) {
         this.configReader = options.configReader || readFeishuCliConfig;
@@ -611,6 +639,28 @@ class FeishuCliBridge {
             };
         }
 
+        const sdkClient = createSdkClientFromConfig(config);
+        if (sdkClient) {
+            try {
+                await sdkClient.im.v1.message.reply({
+                    path: { message_id: messageId },
+                    data: {
+                        msg_type: 'text',
+                        content: JSON.stringify({ text: String(text || '').slice(0, 12000) }),
+                        reply_in_thread: Boolean(config.replyInThread)
+                    }
+                });
+                this.lastReplyAt = new Date().toISOString();
+                return {
+                    success: true,
+                    message: '飞书消息已通过 SDK 回复'
+                };
+            } catch (error) {
+                this.lastError = getSdkErrorMessage(error);
+                logger.warn('飞书 SDK 回复失败，回退 lark-cli：' + this.lastError);
+            }
+        }
+
         const args = [
             '--profile', config.profile,
             'im', '+messages-reply',
@@ -661,6 +711,29 @@ class FeishuCliBridge {
             ...cardOptions,
             chatId: cardOptions.chatId || eventChatId
         }, config);
+
+        const sdkClient = createSdkClientFromConfig(config);
+        if (sdkClient) {
+            try {
+                await sdkClient.im.v1.message.reply({
+                    path: { message_id: messageId },
+                    data: {
+                        msg_type: 'interactive',
+                        content: JSON.stringify(card),
+                        reply_in_thread: Boolean(config.replyInThread)
+                    }
+                });
+                this.lastReplyAt = new Date().toISOString();
+                return {
+                    success: true,
+                    message: '飞书卡片已通过 SDK 回复'
+                };
+            } catch (error) {
+                this.lastError = getSdkErrorMessage(error);
+                logger.warn('飞书 SDK 回复卡片失败，回退 lark-cli：' + this.lastError);
+            }
+        }
+
         const args = [
             '--profile', config.profile,
             'im', '+messages-reply',
@@ -690,6 +763,29 @@ class FeishuCliBridge {
                 success: false,
                 message: '未配置飞书通知 chat_id'
             };
+        }
+
+        const sdkClient = createSdkClientFromConfig(config);
+        if (sdkClient) {
+            try {
+                await sdkClient.im.v1.message.create({
+                    params: { receive_id_type: 'chat_id' },
+                    data: {
+                        receive_id: chatId,
+                        msg_type: 'text',
+                        content: JSON.stringify({ text: String(text || '').slice(0, 12000) })
+                    }
+                });
+                this.lastReplyAt = new Date().toISOString();
+                return {
+                    success: true,
+                    message: '飞书消息已通过 SDK 发送',
+                    chatId
+                };
+            } catch (error) {
+                this.lastError = getSdkErrorMessage(error);
+                logger.warn('飞书 SDK 发送消息失败，回退 lark-cli：' + this.lastError);
+            }
         }
 
         const args = [
@@ -760,6 +856,30 @@ class FeishuCliBridge {
             ...options,
             chatId
         }, config);
+
+        const sdkClient = createSdkClientFromConfig(config);
+        if (sdkClient) {
+            try {
+                await sdkClient.im.v1.message.create({
+                    params: { receive_id_type: 'chat_id' },
+                    data: {
+                        receive_id: chatId,
+                        msg_type: 'interactive',
+                        content: JSON.stringify(card)
+                    }
+                });
+                this.lastReplyAt = new Date().toISOString();
+                return {
+                    success: true,
+                    message: '飞书卡片已通过 SDK 发送',
+                    chatId
+                };
+            } catch (error) {
+                this.lastError = getSdkErrorMessage(error);
+                logger.warn('飞书 SDK 发送卡片失败，回退 lark-cli：' + this.lastError);
+            }
+        }
+
         const args = [
             '--profile', config.profile,
             'im', '+messages-send',

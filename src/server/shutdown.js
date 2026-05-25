@@ -9,7 +9,8 @@ function createGracefulShutdown(deps) {
         getHealthMonitor,
         feishuNotifier,
         feishuCliBridge,
-        browserController
+        browserController,
+        jimengBrowserService
     } = deps;
 
     let shuttingDown = false;
@@ -51,6 +52,14 @@ function createGracefulShutdown(deps) {
             await browserController.closeBrowser();
         } catch (error) {
             console.error('关闭浏览器时出错:', error.message);
+        }
+
+        try {
+            if (jimengBrowserService && typeof jimengBrowserService.closeBrowser === 'function') {
+                await jimengBrowserService.closeBrowser();
+            }
+        } catch (error) {
+            console.error('关闭即梦浏览器时出错:', error.message);
         }
     
         server.close(() => {

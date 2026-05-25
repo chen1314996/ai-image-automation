@@ -34,8 +34,35 @@ function runParserTest() {
     const parsed = parseCreativePromptWorkbook('agent.xlsx', workbookToBase64(workbook));
     assert.strictEqual(parsed.sheetName, '新方向拓展表');
     assert.strictEqual(parsed.prompts.length, 2);
+    assert.strictEqual(parsed.parseStats.totalPromptCount, 2);
+    assert.strictEqual(parsed.parseStats.dedupedPromptCount, 2);
+    assert.strictEqual(parsed.parseStats.duplicatePromptCount, 0);
     assert.strictEqual(parsed.prompts[0].direction, '冰层补给站');
     assert.strictEqual(parsed.prompts[1].promptTitle, '提示词2');
+}
+
+function runDuplicatePromptDeduplicationTest() {
+    const promptA = 'prompt text A with enough detail for creative image generation';
+    const promptB = 'prompt text B with enough detail for creative image generation';
+    const workbook = createWorkbook([
+        ['title', 'prompt1', 'prompt2'],
+        ['direction one', promptA, promptB],
+        ['direction two', promptA, promptB]
+    ], 'prompt sheet');
+
+    const parsed = parseCreativePromptWorkbook('duplicate-prompts.xlsx', workbookToBase64(workbook));
+    assert.strictEqual(parsed.prompts.length, 2);
+    assert.strictEqual(parsed.parseStats.totalPromptCount, 4);
+    assert.strictEqual(parsed.parseStats.dedupedPromptCount, 2);
+    assert.strictEqual(parsed.parseStats.duplicatePromptCount, 2);
+    assert.strictEqual(parsed.parseStats.duplicateRowPairs.length, 1);
+    assert.strictEqual(parsed.parseStats.duplicateRowPairs[0].duplicatePromptCount, 2);
+    assert.strictEqual(parsed.parseStats.duplicatePromptRows[0].sourceRow, 3);
+    assert.strictEqual(parsed.parseStats.duplicatePromptRows[0].duplicateOfRow, 2);
+    assert.strictEqual(parsed.prompts[0].prompt, promptA);
+    assert.strictEqual(parsed.prompts[1].prompt, promptB);
+    assert.strictEqual(parsed.prompts[0].sourceRow, 2);
+    assert.strictEqual(parsed.prompts[1].sourceRow, 2);
 }
 
 function runQualityTest() {
@@ -62,5 +89,6 @@ function runQualityTest() {
 }
 
 runParserTest();
+runDuplicatePromptDeduplicationTest();
 runQualityTest();
 console.log('creative agent parser and quality tests passed');
