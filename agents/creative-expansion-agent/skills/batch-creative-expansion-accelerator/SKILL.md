@@ -20,6 +20,12 @@ description: Use this skill when the user gives one or more reference images, sc
 
 把“参考素材理解 → 共性抽取 → 去重避坑 → 系列化拆分 → 新方向扩展 → 中文提示词生成”压缩成一套稳定流程，减少重复分析、减少空泛创意、减少方向撞车，并让输出更适合批量出图。
 
+在当前项目中，本技能还要帮助 Agent 把方向种子表和分月 TOP 素材表转成可用的创意判断：
+
+- 方向种子表决定可扩展的世界观、标签路径和方向简述。
+- TOP 素材表提供买量信号，用于判断哪些机制更值得优先扩展。
+- 参考图目录提供视觉线索；如果只有文件名没有图像理解，不要假装看到了图。
+
 ## 输入识别
 
 先判断用户给的是哪一类输入：
@@ -35,8 +41,20 @@ description: Use this skill when the user gives one or more reference images, sc
 - 必须保留的核心卖点
 - 明确禁止重复的内容
 - 目标规模（例如 5 个方向、20 组素材、100 组扩展）
+- Legil 出图参数（当前默认 Nano Banana 2、1:1、2K、每 prompt 4 张）
 
 如果目标规模没有说清楚，默认先输出“高质量方向拆分方案 + 每个方向少量样例提示词”，而不是直接无上限铺开。
+
+如果是 `creative-auto` run-once 任务，默认目标规模是：
+
+```text
+1 个原始方向
+3 个新方向
+每个新方向 4 条 prompt
+合计 12 条 prompt
+```
+
+调用层可为了冒烟测试或放量任务调整 prompt 数；Agent 本身仍保持结构完整。
 
 ## 核心流程
 
@@ -85,6 +103,8 @@ description: Use this skill when the user gives one or more reference images, sc
    - 例如主体数量、场景类型、叙事焦点、镜头、动作、卖点承载方式
 3. **高重复风险项**
    - 例如总是同一种构图、同一种角色站位、同一种“废墟+风雪”背景模板
+4. **TOP 素材信号**
+   - 高 CTR、高花费、高 D7 ROI、低 CPI 背后的有效机制和风险
 
 这一阶段的目标是建立“保留什么、变化什么、避开什么”的扩展边界。
 

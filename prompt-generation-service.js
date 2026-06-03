@@ -35,15 +35,15 @@ function compactForLog(value, maxLength = 500) {
     return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
 }
 
-function normalizePromptProvider(provider, fallback = DOUBAO_PROVIDER) {
+function normalizePromptProvider(provider, fallback = LUMOS_PROVIDER) {
     const value = cleanText(provider).toLowerCase();
     if (value === LUMOS_PROVIDER || value === 'winky' || value === 'lumos-winky') {
         return LUMOS_PROVIDER;
     }
     if (value === DOUBAO_PROVIDER || value === 'ark' || value === 'volcengine') {
-        return DOUBAO_PROVIDER;
+        return LUMOS_PROVIDER;
     }
-    return fallback === LUMOS_PROVIDER ? LUMOS_PROVIDER : DOUBAO_PROVIDER;
+    return LUMOS_PROVIDER;
 }
 
 function isAbortRequested(options = {}) {
@@ -264,7 +264,7 @@ class PromptGenerationService {
         return {
             provider: normalizePromptProvider(
                 source.provider || source.promptProvider,
-                normalizePromptProvider(fallbackSource.provider || fallbackSource.promptProvider, DOUBAO_PROVIDER)
+                normalizePromptProvider(fallbackSource.provider || fallbackSource.promptProvider, LUMOS_PROVIDER)
             ),
             lumos: {
                 model: cleanText(sourceLumos.model || source.lumosModel || fallbackLumos.model || storedWinky.model),
@@ -288,7 +288,6 @@ class PromptGenerationService {
         return {
             ...normalized,
             providers: [
-                { value: DOUBAO_PROVIDER, label: '豆包 / 火山方舟' },
                 { value: LUMOS_PROVIDER, label: 'Lumos Winky' }
             ],
             doubao: {
@@ -310,12 +309,12 @@ class PromptGenerationService {
 
     validateConfigForRun(config = {}) {
         const normalized = this.normalizeConfig(config, config);
-        if (normalized.provider === DOUBAO_PROVIDER) {
+        if (false && normalized.provider === DOUBAO_PROVIDER) {
             const doubaoConfig = doubaoAutomation.getConfig();
             if (!doubaoConfig.apiKeyConfigured || !doubaoConfig.modelId) {
                 return {
                     success: false,
-                    message: '请先在提示词生成模型配置中完成豆包 API Key 和模型 ID / Endpoint ID'
+                    message: '请先在提示词生成模型配置中完成 Lumos Winky API Key、API URL 和模型'
                 };
             }
             return { success: true, provider: DOUBAO_PROVIDER, model: doubaoConfig.modelId };
@@ -361,7 +360,7 @@ class PromptGenerationService {
 
     async generatePromptsFromImage(imagePath, config = {}, options = {}) {
         const normalized = this.normalizeConfig(config, config);
-        if (normalized.provider === DOUBAO_PROVIDER) {
+        if (false && normalized.provider === DOUBAO_PROVIDER) {
             const result = await doubaoAutomation.fullAutomation(imagePath, options);
             return {
                 ...result,

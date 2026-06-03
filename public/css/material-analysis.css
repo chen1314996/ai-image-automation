@@ -1,0 +1,1343 @@
+body.material-analysis-mode #doubaoStatusItem {
+    display: none;
+}
+
+#materialAnalysisPage {
+    grid-column: 1 / -1;
+    min-width: 0;
+    width: 100%;
+}
+
+.material-analysis-shell {
+    display: grid;
+    gap: 16px;
+    min-width: 0;
+}
+
+.material-analysis-shell .card {
+    min-width: 0;
+    border-color: rgba(255, 255, 255, 0.075);
+    background:
+        linear-gradient(180deg, rgba(18, 24, 30, 0.92), rgba(10, 14, 18, 0.86));
+    color: var(--flat-text, var(--text-main));
+}
+
+.material-analysis-hero {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(280px, 0.75fr);
+    gap: 18px;
+    align-items: center;
+    overflow: hidden;
+    border-color: rgba(14, 165, 233, 0.22);
+}
+
+.material-analysis-hero-copy p {
+    margin-top: 8px;
+    color: var(--flat-muted, var(--text-muted));
+    font-size: 14px;
+    line-height: 1.7;
+}
+
+.material-analysis-hero-stats,
+.material-analysis-kpis {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.material-analysis-hero-stats div,
+.material-analysis-kpi,
+.material-analysis-share-card,
+.material-analysis-vision-progress,
+.material-analysis-health-summary,
+.material-analysis-mini-item,
+.material-analysis-import-item,
+.material-analysis-vision-tile,
+.material-analysis-vision-detail {
+    border: 1px solid rgba(255, 255, 255, 0.075);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.035);
+}
+
+.material-analysis-hero-stats div,
+.material-analysis-kpi {
+    min-height: 74px;
+    padding: 12px;
+}
+
+.material-analysis-hero-stats strong,
+.material-analysis-kpi strong {
+    display: block;
+    margin-top: 4px;
+    color: rgba(255, 255, 255, 0.92);
+    font-size: 19px;
+    line-height: 1.2;
+}
+
+.material-analysis-hero-stats span,
+.material-analysis-kpi span {
+    display: block;
+    color: #9bd8d0;
+    font-size: 12px;
+    font-weight: 800;
+    line-height: 1.45;
+}
+
+.material-analysis-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+    gap: 16px;
+    align-items: start;
+}
+
+.material-analysis-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.material-analysis-run-meta,
+.material-analysis-table-meta {
+    color: var(--flat-muted, var(--text-muted));
+    font-size: 13px;
+    line-height: 1.6;
+    overflow-wrap: anywhere;
+}
+
+.material-analysis-run-meta {
+    margin-top: 14px;
+}
+
+.material-analysis-share-card {
+    display: grid;
+    gap: 12px;
+    margin-top: 14px;
+    padding: 14px;
+}
+
+.material-analysis-share-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.material-analysis-share-head strong {
+    color: rgba(255, 255, 255, 0.9);
+    font-size: 14px;
+    font-weight: 900;
+}
+
+.material-analysis-share-head span {
+    color: var(--flat-muted, var(--text-muted));
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.material-analysis-share-chart {
+    display: grid;
+    gap: 9px;
+    min-height: 118px;
+    color: var(--flat-muted, var(--text-muted));
+    font-size: 13px;
+    line-height: 1.6;
+}
+
+.material-analysis-share-row {
+    display: grid;
+    grid-template-columns: minmax(140px, 0.34fr) minmax(120px, 1fr) minmax(128px, auto);
+    gap: 10px;
+    align-items: center;
+    min-width: 0;
+}
+
+.material-analysis-share-label {
+    min-width: 0;
+}
+
+.material-analysis-share-label strong,
+.material-analysis-share-label span {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.material-analysis-share-label strong {
+    color: rgba(255, 255, 255, 0.88);
+    font-size: 12px;
+    font-weight: 900;
+}
+
+.material-analysis-share-label span {
+    margin-top: 2px;
+    color: var(--flat-muted, var(--text-muted));
+    font-size: 11px;
+}
+
+.material-analysis-share-track {
+    height: 10px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.07);
+}
+
+.material-analysis-share-bar {
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, rgba(14, 165, 233, 0.92), rgba(34, 197, 94, 0.86));
+    box-shadow: 0 0 18px rgba(14, 165, 233, 0.18);
+}
+
+.material-analysis-share-value {
+    color: #bae6fd;
+    font-size: 12px;
+    font-weight: 900;
+    text-align: right;
+    white-space: nowrap;
+}
+
+.material-analysis-health-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+    gap: 16px;
+    align-items: start;
+}
+
+.material-analysis-health-summary {
+    display: grid;
+    grid-template-columns: 104px minmax(0, 1fr);
+    gap: 14px;
+    align-items: center;
+    min-height: 126px;
+    padding: 14px;
+    background:
+        radial-gradient(circle at 46px 44px, rgba(14, 165, 233, 0.22), transparent 68px),
+        rgba(255, 255, 255, 0.035);
+}
+
+.material-analysis-health-score {
+    display: grid;
+    place-items: center;
+    width: 92px;
+    height: 92px;
+    border: 1px solid rgba(14, 165, 233, 0.32);
+    border-radius: 50%;
+    background: rgba(14, 165, 233, 0.12);
+    color: #e0f2fe;
+    font-size: 28px;
+    font-weight: 900;
+    box-shadow: inset 0 0 22px rgba(14, 165, 233, 0.13);
+}
+
+.material-analysis-health-summary strong {
+    display: block;
+    margin-bottom: 6px;
+    color: rgba(255, 255, 255, 0.92);
+    font-size: 18px;
+}
+
+.material-analysis-health-summary p {
+    color: var(--flat-muted, var(--text-muted));
+    font-size: 13px;
+    line-height: 1.7;
+}
+
+.material-analysis-health-lists {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.material-analysis-health-lists h4 {
+    margin-bottom: 8px;
+    color: rgba(255, 255, 255, 0.86);
+    font-size: 13px;
+}
+
+.material-analysis-report-panel {
+    display: grid;
+    gap: 12px;
+}
+
+.material-analysis-report-status,
+.material-analysis-report-paths,
+.material-analysis-report-preview {
+    border: 1px solid rgba(255, 255, 255, 0.075);
+    border-radius: 8px;
+    background: rgba(8, 12, 16, 0.44);
+}
+
+.material-analysis-report-status {
+    padding: 11px 12px;
+    color: rgba(226, 232, 240, 0.86);
+    font-size: 13px;
+    font-weight: 800;
+    line-height: 1.6;
+    overflow-wrap: anywhere;
+}
+
+.material-analysis-report-actions,
+.material-analysis-report-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.material-analysis-report-actions .btn {
+    min-height: 32px;
+    padding: 6px 10px;
+    font-size: 12px;
+}
+
+.material-analysis-report-tabs button {
+    min-height: 32px;
+    padding: 6px 11px;
+    border: 1px solid rgba(255, 255, 255, 0.075);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.045);
+    color: var(--flat-muted, var(--text-muted));
+    font-size: 12px;
+    font-weight: 900;
+    cursor: pointer;
+}
+
+.material-analysis-report-tabs button:hover {
+    border-color: rgba(14, 165, 233, 0.28);
+    color: #e0f2fe;
+}
+
+.material-analysis-report-tabs button.active {
+    border-color: rgba(34, 197, 94, 0.38);
+    background: rgba(34, 197, 94, 0.12);
+    color: #bbf7d0;
+}
+
+.material-analysis-report-paths {
+    display: grid;
+    gap: 8px;
+    padding: 10px;
+    color: var(--flat-muted, var(--text-muted));
+    font-size: 12px;
+    line-height: 1.55;
+}
+
+.material-analysis-report-path-row {
+    display: grid;
+    grid-template-columns: 80px minmax(0, 1fr);
+    gap: 10px;
+    align-items: start;
+}
+
+.material-analysis-report-path-row strong {
+    color: #9bd8d0;
+    font-size: 12px;
+    font-weight: 900;
+}
+
+.material-analysis-report-path-row span {
+    color: rgba(226, 232, 240, 0.78);
+    overflow-wrap: anywhere;
+}
+
+.material-analysis-report-preview {
+    max-height: 520px;
+    min-height: 220px;
+    overflow: auto;
+    padding: 14px;
+    color: rgba(226, 232, 240, 0.88);
+    font-family: Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 12px;
+    line-height: 1.7;
+    white-space: pre-wrap;
+}
+
+.material-analysis-creative-panel,
+.creative-brief-panel {
+    border: 1px solid rgba(34, 197, 94, 0.18);
+    border-radius: 8px;
+    background: rgba(6, 18, 18, 0.48);
+}
+
+.material-analysis-creative-panel {
+    display: grid;
+    gap: 10px;
+    min-height: 74px;
+    padding: 12px;
+    color: rgba(226, 232, 240, 0.82);
+    font-size: 13px;
+    line-height: 1.65;
+}
+
+.material-analysis-creative-empty {
+    color: var(--flat-muted, var(--text-muted));
+    font-weight: 800;
+}
+
+.material-analysis-creative-head,
+.material-analysis-creative-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+}
+
+.material-analysis-creative-head {
+    justify-content: space-between;
+}
+
+.material-analysis-creative-head strong {
+    color: rgba(255, 255, 255, 0.92);
+    font-size: 14px;
+    font-weight: 900;
+    overflow-wrap: anywhere;
+}
+
+.material-analysis-creative-head span {
+    min-height: 24px;
+    padding: 4px 8px;
+    border: 1px solid rgba(34, 197, 94, 0.24);
+    border-radius: 999px;
+    background: rgba(34, 197, 94, 0.09);
+    color: #bbf7d0;
+    font-size: 11px;
+    font-weight: 900;
+}
+
+.material-analysis-creative-summary,
+.creative-brief-body {
+    display: grid;
+    gap: 7px;
+}
+
+.material-analysis-creative-row,
+.creative-brief-row {
+    display: grid;
+    grid-template-columns: 74px minmax(0, 1fr);
+    gap: 10px;
+    align-items: start;
+}
+
+.material-analysis-creative-row span,
+.creative-brief-row span {
+    color: #9bd8d0;
+    font-size: 11px;
+    font-weight: 900;
+}
+
+.material-analysis-creative-row strong,
+.creative-brief-row strong {
+    color: rgba(226, 232, 240, 0.86);
+    font-size: 12px;
+    line-height: 1.65;
+    font-weight: 700;
+    overflow-wrap: anywhere;
+}
+
+.material-analysis-row-action {
+    display: grid;
+    gap: 8px;
+    min-width: 140px;
+}
+
+.material-analysis-row-action span {
+    color: rgba(226, 232, 240, 0.82);
+    font-size: 12px;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+}
+
+.creative-brief-panel {
+    padding: 12px;
+}
+
+.creative-brief-panel[hidden] {
+    display: none;
+}
+
+.material-analysis-creative-expansion {
+    display: grid;
+    gap: 12px;
+}
+
+.material-analysis-creative-expansion-toolbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(180px, 220px) auto;
+    gap: 10px;
+    align-items: center;
+    padding: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.075);
+    border-radius: 8px;
+    background: rgba(8, 12, 16, 0.44);
+}
+
+.material-analysis-creative-expansion-meta {
+    color: rgba(226, 232, 240, 0.82);
+    font-size: 12px;
+    font-weight: 800;
+    line-height: 1.55;
+}
+
+.material-analysis-creative-expansion-input {
+    display: grid;
+    gap: 5px;
+    color: #9bd8d0;
+    font-size: 11px;
+    font-weight: 900;
+}
+
+.material-analysis-creative-expansion-input input,
+.material-analysis-creative-target-override input {
+    width: 100%;
+    min-height: 34px;
+    border: 1px solid rgba(255, 255, 255, 0.11);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.055);
+    color: rgba(255, 255, 255, 0.92);
+    font-size: 13px;
+    font-weight: 900;
+}
+
+.material-analysis-creative-expansion-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.material-analysis-creative-targets {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    max-height: 520px;
+    overflow: auto;
+    color: rgba(226, 232, 240, 0.78);
+    font-size: 13px;
+}
+
+.material-analysis-creative-target {
+    display: grid;
+    gap: 9px;
+    padding: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.075);
+    border-radius: 8px;
+    background: rgba(9, 14, 17, 0.44);
+}
+
+.material-analysis-creative-target.is-selected {
+    border-color: rgba(34, 197, 94, 0.34);
+    background: rgba(20, 83, 45, 0.16);
+}
+
+.material-analysis-creative-target-head {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 116px;
+    gap: 10px;
+    align-items: start;
+}
+
+.material-analysis-creative-target-check {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    min-width: 0;
+    color: rgba(255, 255, 255, 0.9);
+    font-size: 13px;
+    font-weight: 900;
+    line-height: 1.45;
+}
+
+.material-analysis-creative-target-check input {
+    margin-top: 3px;
+    flex: 0 0 auto;
+}
+
+.material-analysis-creative-target-check span {
+    overflow-wrap: anywhere;
+}
+
+.material-analysis-creative-target-override {
+    display: grid;
+    gap: 4px;
+    color: #9bd8d0;
+    font-size: 11px;
+    font-weight: 900;
+}
+
+.material-analysis-creative-target-stats,
+.material-analysis-creative-target-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.material-analysis-creative-target-stats span,
+.material-analysis-creative-target-tags span {
+    min-height: 24px;
+    padding: 4px 7px;
+    border: 1px solid rgba(255, 255, 255, 0.075);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.045);
+    color: rgba(226, 232, 240, 0.78);
+    font-size: 11px;
+    font-weight: 800;
+}
+
+.material-analysis-creative-target-tags span {
+    border-color: rgba(14, 165, 233, 0.22);
+    background: rgba(14, 165, 233, 0.09);
+    color: #bae6fd;
+}
+
+.material-analysis-creative-target p {
+    margin: 0;
+    color: rgba(226, 232, 240, 0.76);
+    font-size: 12px;
+    line-height: 1.65;
+    overflow-wrap: anywhere;
+}
+
+.material-analysis-creative-pool-preview {
+    display: grid;
+    gap: 8px;
+}
+
+.material-analysis-creative-pool-prompt {
+    display: grid;
+    gap: 4px;
+    padding: 9px 10px;
+    border: 1px solid rgba(255, 255, 255, 0.075);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.035);
+}
+
+.material-analysis-creative-pool-prompt strong {
+    color: rgba(255, 255, 255, 0.9);
+    font-size: 12px;
+    font-weight: 900;
+    overflow-wrap: anywhere;
+}
+
+.material-analysis-creative-pool-prompt span {
+    color: rgba(226, 232, 240, 0.76);
+    font-size: 12px;
+    line-height: 1.6;
+    overflow-wrap: anywhere;
+}
+
+.material-analysis-creative-pool-prompt small {
+    color: #bae6fd;
+    font-size: 11px;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+}
+
+.material-analysis-mini-list {
+    display: grid;
+    gap: 7px;
+    color: var(--flat-muted, var(--text-muted));
+    font-size: 13px;
+}
+
+.material-analysis-mini-item {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+    align-items: start;
+    padding: 8px 10px;
+    font-size: 12px;
+}
+
+.material-analysis-mini-item span {
+    color: rgba(226, 232, 240, 0.84);
+    overflow-wrap: anywhere;
+}
+
+.material-analysis-mini-item strong {
+    color: #9bd8d0;
+    white-space: nowrap;
+}
+
+.material-analysis-mini-actions {
+    display: grid;
+    justify-items: end;
+    gap: 6px;
+}
+
+.material-analysis-vision-panel {
+    display: grid;
+    gap: 14px;
+}
+
+.material-analysis-vision-progress {
+    display: grid;
+    gap: 10px;
+    padding: 12px;
+}
+
+.material-analysis-vision-progress .progress-label {
+    color: rgba(255, 255, 255, 0.84);
+    font-size: 13px;
+    font-weight: 800;
+}
+
+.material-analysis-vision-progress .progress-bar {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.material-analysis-vision-progress .progress-fill {
+    background: linear-gradient(90deg, rgba(14, 165, 233, 0.96), rgba(34, 197, 94, 0.9));
+}
+
+.material-analysis-vision-stats {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.material-analysis-vision-stat {
+    min-height: 58px;
+    padding: 9px 10px;
+    border: 1px solid rgba(255, 255, 255, 0.075);
+    border-radius: 8px;
+    background: rgba(9, 14, 17, 0.42);
+}
+
+.material-analysis-vision-stat strong,
+.material-analysis-vision-stat span {
+    display: block;
+}
+
+.material-analysis-vision-stat strong {
+    color: rgba(255, 255, 255, 0.9);
+    font-size: 18px;
+}
+
+.material-analysis-vision-stat span {
+    margin-top: 4px;
+    color: var(--flat-muted, var(--text-muted));
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.material-analysis-vision-filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.material-analysis-vision-filters button {
+    min-height: 32px;
+    padding: 6px 10px;
+    border: 1px solid rgba(255, 255, 255, 0.075);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.045);
+    color: var(--flat-muted, var(--text-muted));
+    font-size: 12px;
+    font-weight: 800;
+    cursor: pointer;
+}
+
+.material-analysis-vision-filters button:hover {
+    border-color: rgba(14, 165, 233, 0.28);
+    color: #e0f2fe;
+}
+
+.material-analysis-vision-filters button.active {
+    border-color: rgba(14, 165, 233, 0.46);
+    background: rgba(14, 165, 233, 0.13);
+    color: #e0f2fe;
+}
+
+.material-analysis-vision-selection {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    min-height: 42px;
+    padding: 8px 10px;
+    border: 1px solid rgba(255, 255, 255, 0.075);
+    border-radius: 8px;
+    background: rgba(8, 12, 16, 0.44);
+    color: rgba(226, 232, 240, 0.78);
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.material-analysis-vision-selection-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.material-analysis-vision-selection .btn {
+    min-height: 30px;
+    padding: 5px 9px;
+    font-size: 12px;
+}
+
+.material-analysis-vision-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.65fr);
+    gap: 14px;
+    align-items: start;
+}
+
+.material-analysis-vision-wall {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 12px;
+    max-height: 720px;
+    overflow: auto;
+    padding-right: 4px;
+    color: var(--flat-muted, var(--text-muted));
+    font-size: 13px;
+}
+
+.material-analysis-vision-tile {
+    position: relative;
+    display: grid;
+    gap: 0;
+    overflow: hidden;
+}
+
+.material-analysis-vision-tile.is-selected {
+    border-color: rgba(14, 165, 233, 0.46);
+    box-shadow: 0 0 0 2px rgba(14, 165, 233, 0.12);
+}
+
+.material-analysis-vision-tile.is-checked {
+    border-color: rgba(34, 197, 94, 0.5);
+    box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.12);
+}
+
+.material-analysis-vision-select {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    z-index: 2;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 28px;
+    padding: 4px 8px;
+    border: 1px solid rgba(255, 255, 255, 0.13);
+    border-radius: 7px;
+    background: rgba(5, 9, 13, 0.78);
+    color: rgba(241, 245, 249, 0.9);
+    font-size: 11px;
+    font-weight: 900;
+    line-height: 1;
+    cursor: pointer;
+    backdrop-filter: blur(10px);
+}
+
+.material-analysis-vision-select input {
+    width: 14px;
+    height: 14px;
+    margin: 0;
+    accent-color: #22c55e;
+}
+
+.material-analysis-vision-media {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    border: 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.075);
+    background: rgba(8, 12, 16, 0.74);
+    color: var(--flat-muted, var(--text-muted));
+    cursor: pointer;
+    overflow: hidden;
+}
+
+.material-analysis-vision-media.is-image-failed {
+    padding: 12px;
+    color: rgba(248, 113, 113, 0.92);
+    font-size: 12px;
+    font-weight: 900;
+    line-height: 1.5;
+    text-align: center;
+}
+
+.material-analysis-vision-media img {
+    position: absolute;
+    inset: 0;
+    display: block;
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+    object-fit: cover;
+}
+
+body.material-analysis-preview-open {
+    overflow: hidden;
+}
+
+.material-analysis-image-preview[hidden] {
+    display: none;
+}
+
+.material-analysis-image-preview {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+    background: rgba(3, 7, 12, 0.84);
+    opacity: 0;
+    backdrop-filter: blur(16px);
+    transition: opacity 120ms ease;
+}
+
+.material-analysis-image-preview.is-open {
+    opacity: 1;
+}
+
+.material-analysis-image-preview-dialog {
+    position: relative;
+    display: grid;
+    grid-template-rows: minmax(0, 1fr) auto;
+    gap: 12px;
+    width: min(1120px, 94vw);
+    max-height: 92vh;
+    padding: 14px;
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    border-radius: 8px;
+    background:
+        linear-gradient(180deg, rgba(20, 27, 33, 0.96), rgba(7, 11, 16, 0.96));
+    box-shadow: 0 28px 90px rgba(0, 0, 0, 0.42);
+}
+
+.material-analysis-image-preview-close {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    z-index: 2;
+    display: grid;
+    place-items: center;
+    width: 34px;
+    height: 34px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 8px;
+    background: rgba(7, 11, 16, 0.78);
+    color: rgba(255, 255, 255, 0.92);
+    font-size: 22px;
+    font-weight: 700;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.material-analysis-image-preview-close:hover {
+    border-color: rgba(14, 165, 233, 0.42);
+    background: rgba(14, 165, 233, 0.16);
+    color: #e0f2fe;
+}
+
+.material-analysis-image-preview-frame {
+    display: grid;
+    place-items: center;
+    min-height: 260px;
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, 0.075);
+    border-radius: 8px;
+    background:
+        linear-gradient(45deg, rgba(255, 255, 255, 0.035) 25%, transparent 25%),
+        linear-gradient(-45deg, rgba(255, 255, 255, 0.035) 25%, transparent 25%),
+        linear-gradient(45deg, transparent 75%, rgba(255, 255, 255, 0.035) 75%),
+        linear-gradient(-45deg, transparent 75%, rgba(255, 255, 255, 0.035) 75%),
+        rgba(2, 6, 10, 0.82);
+    background-position: 0 0, 0 10px, 10px -10px, -10px 0;
+    background-size: 20px 20px;
+}
+
+.material-analysis-image-preview-frame img {
+    display: block;
+    width: auto;
+    height: auto;
+    max-width: 100%;
+    max-height: calc(92vh - 116px);
+    object-fit: contain;
+}
+
+.material-analysis-image-preview-failed {
+    padding: 18px;
+    color: rgba(248, 113, 113, 0.92);
+    font-size: 13px;
+    font-weight: 900;
+}
+
+.material-analysis-image-preview-footer {
+    display: grid;
+    gap: 5px;
+    min-width: 0;
+}
+
+.material-analysis-image-preview-footer strong {
+    color: rgba(255, 255, 255, 0.92);
+    font-size: 14px;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+}
+
+.material-analysis-image-preview-footer span {
+    color: #9bd8d0;
+    font-size: 12px;
+    font-weight: 800;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+}
+
+.material-analysis-vision-body {
+    display: grid;
+    gap: 7px;
+    padding: 10px;
+}
+
+.material-analysis-vision-tile-head,
+.material-analysis-vision-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.material-analysis-vision-tile-head strong {
+    color: #9bd8d0;
+    font-size: 12px;
+}
+
+.material-analysis-vision-title {
+    color: rgba(255, 255, 255, 0.88);
+    font-size: 12px;
+    font-weight: 800;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+}
+
+.material-analysis-vision-body p {
+    min-height: 38px;
+    color: var(--flat-muted, var(--text-muted));
+    font-size: 12px;
+    line-height: 1.55;
+}
+
+.material-analysis-vision-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    min-height: 24px;
+}
+
+.material-analysis-vision-tags span {
+    padding: 3px 6px;
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.045);
+    color: rgba(226, 232, 240, 0.78);
+    font-size: 11px;
+    font-weight: 800;
+}
+
+.material-analysis-vision-actions .btn {
+    min-height: 30px;
+    padding: 5px 8px;
+    font-size: 12px;
+}
+
+.material-analysis-vision-detail {
+    position: sticky;
+    top: 12px;
+    display: grid;
+    gap: 10px;
+    max-height: 720px;
+    overflow: auto;
+    padding: 14px;
+}
+
+.material-analysis-vision-detail h4 {
+    color: rgba(255, 255, 255, 0.9);
+    font-size: 14px;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+}
+
+.material-analysis-vision-detail p {
+    color: var(--flat-muted, var(--text-muted));
+    font-size: 13px;
+    line-height: 1.7;
+}
+
+.material-analysis-vision-detail-row {
+    display: grid;
+    gap: 4px;
+    padding: 8px 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.material-analysis-vision-detail-row span {
+    color: #9bd8d0;
+    font-size: 11px;
+    font-weight: 900;
+}
+
+.material-analysis-vision-detail-row strong {
+    color: rgba(255, 255, 255, 0.84);
+    font-size: 13px;
+    line-height: 1.65;
+    font-weight: 700;
+}
+
+.material-analysis-import-list {
+    display: grid;
+    gap: 8px;
+    color: var(--flat-muted, var(--text-muted));
+    font-size: 13px;
+}
+
+.material-analysis-import-item {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    gap: 8px;
+    align-items: center;
+    min-height: 54px;
+    padding: 10px 12px;
+}
+
+.material-analysis-import-item.is-current {
+    border-color: rgba(14, 165, 233, 0.32);
+    background: rgba(14, 165, 233, 0.08);
+}
+
+.material-analysis-import-title {
+    color: rgba(255, 255, 255, 0.88);
+    font-weight: 800;
+    overflow-wrap: anywhere;
+}
+
+.material-analysis-import-meta {
+    margin-top: 4px;
+    color: var(--flat-muted, var(--text-muted));
+    font-size: 12px;
+}
+
+.material-analysis-import-delete {
+    border-color: rgba(248, 113, 113, 0.28);
+    background: rgba(248, 113, 113, 0.1);
+    color: #fecaca;
+}
+
+.material-analysis-import-delete:hover {
+    border-color: rgba(248, 113, 113, 0.48);
+    background: rgba(248, 113, 113, 0.18);
+    color: #fee2e2;
+}
+
+.material-analysis-table-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+.material-analysis-table-head .card-title {
+    margin-bottom: 0;
+}
+
+.material-analysis-table-wrap {
+    overflow: auto;
+    max-height: 580px;
+    border: 1px solid rgba(255, 255, 255, 0.075);
+    border-radius: 8px;
+    background: rgba(9, 14, 17, 0.34);
+}
+
+.material-analysis-table {
+    width: 100%;
+    min-width: 1360px;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+
+.material-analysis-direction-table {
+    min-width: 1180px;
+}
+
+.material-analysis-direction-wrap {
+    max-height: 460px;
+}
+
+.material-analysis-table th,
+.material-analysis-table td {
+    padding: 9px 10px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.065);
+    text-align: left;
+    vertical-align: top;
+}
+
+.material-analysis-table th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: rgba(14, 20, 25, 0.98);
+    color: #9bd8d0;
+    font-size: 11px;
+    font-weight: 900;
+    text-transform: uppercase;
+}
+
+.material-analysis-table td {
+    color: rgba(226, 232, 240, 0.84);
+    background: rgba(255, 255, 255, 0.018);
+}
+
+.material-analysis-table tr:nth-child(even) td {
+    background: rgba(255, 255, 255, 0.032);
+}
+
+.material-analysis-table tr:hover td {
+    background: rgba(14, 165, 233, 0.07);
+}
+
+.material-analysis-name-cell {
+    max-width: 360px;
+    color: rgba(255, 255, 255, 0.88);
+    overflow-wrap: anywhere;
+    font-weight: 800;
+}
+
+.material-analysis-direction-cell {
+    max-width: 180px;
+    overflow-wrap: anywhere;
+}
+
+.material-analysis-pill {
+    display: inline-flex;
+    align-items: center;
+    min-height: 24px;
+    padding: 4px 8px;
+    border: 1px solid rgba(148, 163, 184, 0.24);
+    border-radius: 999px;
+    background: rgba(148, 163, 184, 0.1);
+    color: rgba(226, 232, 240, 0.76);
+    font-size: 11px;
+    font-weight: 900;
+    white-space: nowrap;
+}
+
+.material-analysis-pill.is-excellent {
+    border-color: rgba(34, 197, 94, 0.32);
+    background: rgba(34, 197, 94, 0.1);
+    color: #86efac;
+}
+
+.material-analysis-pill.is-good {
+    border-color: rgba(14, 165, 233, 0.35);
+    background: rgba(14, 165, 233, 0.11);
+    color: #bae6fd;
+}
+
+.material-analysis-pill.is-watch {
+    border-color: rgba(245, 158, 11, 0.32);
+    background: rgba(245, 158, 11, 0.1);
+    color: #fcd34d;
+}
+
+.material-analysis-pill.is-risk {
+    border-color: rgba(249, 115, 22, 0.34);
+    background: rgba(249, 115, 22, 0.1);
+    color: #fdba74;
+}
+
+.material-analysis-pill.is-bad {
+    border-color: rgba(248, 113, 113, 0.34);
+    background: rgba(248, 113, 113, 0.1);
+    color: #fca5a5;
+}
+
+@media (max-width: 980px) {
+    .material-analysis-share-row {
+        grid-template-columns: minmax(120px, 0.42fr) minmax(100px, 1fr);
+    }
+
+    .material-analysis-share-value {
+        grid-column: 2;
+        text-align: left;
+    }
+}
+
+@media (max-width: 860px) {
+    .material-analysis-hero,
+    .material-analysis-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .material-analysis-hero-stats {
+        grid-template-columns: 1fr;
+    }
+
+    .material-analysis-table-head {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .material-analysis-health-layout,
+    .material-analysis-health-lists,
+    .material-analysis-creative-expansion-toolbar,
+    .material-analysis-creative-targets,
+    .material-analysis-vision-layout {
+        grid-template-columns: 1fr;
+    }
+
+    .material-analysis-vision-selection {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .material-analysis-vision-selection-actions {
+        justify-content: flex-start;
+    }
+
+    .material-analysis-creative-expansion-actions {
+        justify-content: flex-start;
+    }
+
+    .material-analysis-vision-detail {
+        position: static;
+    }
+}
+
+@media (max-width: 640px) {
+    .material-analysis-kpis,
+    .material-analysis-vision-stats {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .material-analysis-share-row {
+        grid-template-columns: 1fr;
+    }
+
+    .material-analysis-share-value {
+        grid-column: auto;
+    }
+
+    .material-analysis-creative-target-head {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 560px) {
+    .material-analysis-health-summary,
+    .material-analysis-import-item {
+        grid-template-columns: 1fr;
+    }
+
+    .material-analysis-import-item .btn {
+        width: 100%;
+    }
+}

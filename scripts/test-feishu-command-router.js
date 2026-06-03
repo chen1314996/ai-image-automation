@@ -55,6 +55,18 @@ function createMockService() {
         async startMassProduction() {
             calls.push('startMassProduction');
             return { success: true, message: 'mass started' };
+        },
+        async startCreativePromptOnly() {
+            calls.push('startCreativePromptOnly');
+            return { success: true, message: 'prompts started' };
+        },
+        async startCreativeSmoke() {
+            calls.push('startCreativeSmoke');
+            return { success: true, message: 'smoke started' };
+        },
+        async startCreativeFullScale() {
+            calls.push('startCreativeFullScale');
+            return { success: true, message: 'full started' };
         }
     };
 }
@@ -77,6 +89,9 @@ function event(content, overrides = {}) {
     assert.strictEqual(detectCommand('继续上次停止或中断的创意拓展任务').type, 'continue_creative');
     assert.strictEqual(detectCommand('继续刚才的任务').type, 'continue_workflow');
     assert.strictEqual(detectCommand('开始量产').type, 'start_mass');
+    assert.strictEqual(detectCommand('生成Prompt').type, 'start_creative_prompts');
+    assert.strictEqual(detectCommand('小批量验证').type, 'start_creative_smoke');
+    assert.strictEqual(detectCommand('持续生图').type, 'start_creative_full');
     assert.strictEqual(detectCommand('重启工作流').type, 'restart_workflow');
     assert.strictEqual(detectCommand('绑定平台').type, 'pair');
     assert.strictEqual(detectCommand('控制面板').type, 'control_panel');
@@ -90,18 +105,18 @@ function event(content, overrides = {}) {
     });
     assert.strictEqual(card.header.title.content, 'AI生图自动化平台');
     assert.ok(!JSON.stringify(card).includes('/api/feishu-cli/card-action'));
-    assert.ok(JSON.stringify(card).includes('start_mass'));
-    assert.ok(JSON.stringify(card).includes('continue_workflow'));
-    assert.ok(JSON.stringify(card).includes('restart_server'));
-    assert.ok(!JSON.stringify(card).includes('"action":"continue_creative"'));
+    assert.ok(JSON.stringify(card).includes('start_creative_prompts'));
+    assert.ok(JSON.stringify(card).includes('start_creative_smoke'));
+    assert.ok(JSON.stringify(card).includes('"action":"continue_creative"'));
+    assert.ok(!JSON.stringify(card).includes('"action":"start_mass"'));
 
     const visibleButtons = card.elements
         .filter(element => element.tag === 'action')
         .flatMap(element => element.actions || []);
-    assert.strictEqual(visibleButtons.length, 6);
+    assert.strictEqual(visibleButtons.length, 8);
     assert.deepStrictEqual(
         visibleButtons.map(item => item.text.content),
-        ['状态', '进度', '开始量产', '继续任务', '停止任务', '重启服务']
+        ['创意状态', '创意进度', '生成Prompt', '小批量验证', '继续创意', '暂停创意', '日志', '浏览器']
     );
 
     const textOnlyCard = buildFeishuControlCard({
@@ -109,7 +124,7 @@ function event(content, overrides = {}) {
         enableButtons: false
     });
     assert.strictEqual(textOnlyCard.elements.filter(element => element.tag === 'action').length, 0);
-    assert.ok(JSON.stringify(textOnlyCard).includes('开始量产 | 继续任务'));
+    assert.ok(JSON.stringify(textOnlyCard).includes('生成Prompt | 小批量验证'));
 
     const normalized = normalizeFeishuEvent(event(' 状态 '));
     assert.strictEqual(normalized.text, '状态');
@@ -147,6 +162,14 @@ function event(content, overrides = {}) {
     result = await router.handleEvent(event('开始量产', { eventId: 'evt_start_mass' }), config);
     assert.match(result.replyText, /mass started/);
     assert.ok(service.calls.includes('startMassProduction'));
+
+    result = await router.handleEvent(event('生成Prompt', { eventId: 'evt_start_prompts' }), config);
+    assert.match(result.replyText, /prompts started/);
+    assert.ok(service.calls.includes('startCreativePromptOnly'));
+
+    result = await router.handleEvent(event('小批量验证', { eventId: 'evt_start_smoke' }), config);
+    assert.match(result.replyText, /smoke started/);
+    assert.ok(service.calls.includes('startCreativeSmoke'));
 
     result = await router.handleEvent(event('控制面板', { eventId: 'evt_panel' }), config);
     assert.ok(result.replyCard);

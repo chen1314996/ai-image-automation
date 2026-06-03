@@ -81,6 +81,11 @@ module.exports = function createConfigMethodsMethods(deps) {
             const promptNumber = Number(options.promptIndexWithinImage ?? promptIndex);
             const promptPart = padNumber(promptNumber, 2);
             const runPart = sanitizeFileNamePart(options.runId || timestamp, 30);
+            const safeOutputNameBase = sanitizeFileNamePart(options.outputNameBase, 120);
+
+            if (safeOutputNameBase && safeOutputNameBase !== 'image') {
+                return `${runPart}_${sequencePart}_${safeOutputNameBase}_v${padNumber(variantIndex, 2)}_${timestamp}.png`;
+            }
 
             const refIndex = Number(options.referenceImageIndex);
             if (Number.isFinite(refIndex) && refIndex > 0) {

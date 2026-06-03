@@ -1,6 +1,54 @@
 const { normalizeCellText } = require('./creative-table-parser');
 
 const STRUCTURED_PROMPT_SUFFIX = '冰雪氛围，画面直观、主题明确，高质量3D卡通渲染，商业级游戏宣传海报风格，电影镜头感。';
+const DEFAULT_PROMPT_FORBIDDEN_TERMS = [
+    '真实品牌',
+    '品牌 logo',
+    '品牌logo',
+    '强赛博',
+    '高科技 UI',
+    '高科技UI',
+    '枪支',
+    '军事',
+    '悬浮设备',
+    '机甲',
+    '激光界面',
+    '大面积英文',
+    '二次元赛璐璐'
+];
+const REQUIRED_PROMPT_SECTIONS = ['主题', '画风', '情绪氛围', '画面内容', '整体基调'];
+const ABSTRACT_DIRECTION_TERMS = [
+    '氛围感',
+    '高级感',
+    '生存感',
+    '末日感',
+    '故事感',
+    '电影感',
+    '视觉感',
+    '情绪感'
+];
+const CONCRETE_VISUAL_TERMS = [
+    '前景',
+    '中景',
+    '远景',
+    '镜头',
+    '构图',
+    '手',
+    '人物',
+    '幸存者',
+    '小队',
+    '物资',
+    '建筑',
+    '车辆',
+    '废墟',
+    '冰',
+    '雪',
+    '火光',
+    '灯光',
+    '包装',
+    '金属',
+    '布料'
+];
 
 function sanitizePromptText(text) {
     return normalizeCellText(text)
@@ -18,6 +66,56 @@ function normalizePromptKey(text) {
     return sanitizePromptText(text)
         .replace(/[，。！？；：、,.!?;:\s]/g, '')
         .toLowerCase();
+}
+
+function tokenizeForSimilarity(text) {
+    const key = normalizePromptKey(text);
+    const tokens = new Set();
+    for (let index = 0; index < key.length - 1; index += 2) {
+        tokens.add(key.slice(index, index + 2));
+    }
+    return tokens;
+}
+
+function promptSimilarity(a, b) {
+    const left = tokenizeForSimilarity(a);
+    const right = tokenizeForSimilarity(b);
+    if (!left.size || !right.size) {
+        return 0;
+    }
+    let intersection = 0;
+    left.forEach(token => {
+        if (right.has(token)) {
+            intersection += 1;
+        }
+    });
+    const union = left.size + right.size - intersection;
+    return union ? intersection / union : 0;
+}
+
+function findForbiddenTerm(prompt) {
+    const normalized = sanitizePromptText(prompt).toLowerCase();
+    return DEFAULT_PROMPT_FORBIDDEN_TERMS.find(term => {
+        const key = normalizeCellText(term).toLowerCase();
+        return key && normalized.includes(key);
+    }) || '';
+}
+
+function findMissingPromptSections(prompt) {
+    return REQUIRED_PROMPT_SECTIONS.filter(section => !prompt.includes(section));
+}
+
+function hasMultiScenePlan(prompt) {
+    return /(方案[一二三四五六123456]|四宫格|三联画|拼贴|分屏|或者|也可以|另一种|同时给出|分别呈现|一半.*另一半)/u.test(prompt);
+}
+
+function isAbstractPrompt(prompt) {
+    const text = sanitizePromptText(prompt);
+    const concreteHitCount = CONCRETE_VISUAL_TERMS.reduce((count, term) => count + (text.includes(term) ? 1 : 0), 0);
+    if (concreteHitCount >= 4) {
+        return false;
+    }
+    return /氛围|感觉|高级|震撼|史诗|希望|压迫|紧张|孤独|神秘/u.test(text);
 }
 
 function compactIssueItem(item, index) {
@@ -65,11 +163,15 @@ function findMalformedReason(prompt, item) {
 function buildCreativeAgentQualityReport(promptItems = []) {
     const report = {
         success: true,
+        status: 'pass',
         checkedAt: new Date().toISOString(),
         totalPrompts: 0,
+        acceptedPromptCount: 0,
+        rejectedPromptCount: 0,
         selectedPrompts: 0,
         directionCount: 0,
         duplicateCount: 0,
+        similarCount: 0,
         malformedCount: 0,
         sanitizedCount: 0,
         errors: [],
@@ -110,8 +212,25 @@ function buildCreativeAgentQualityReport(promptItems = []) {
         if (!sanitizedPrompt.includes('主题') || !sanitizedPrompt.includes('画风')) {
             addIssue(report, 'warning', 'missing_structure', '提示词缺少“主题/画风”等结构化字段', item, index);
         }
+        const missingSections = findMissingPromptSections(sanitizedPrompt);
+        if (missingSections.length) {
+            addIssue(report, 'warning', 'missing_required_sections', `提示词缺少结构字段：${missingSections.join('、')}`, item, index);
+        }
         if ((sanitizedPrompt.match(new RegExp(STRUCTURED_PROMPT_SUFFIX, 'g')) || []).length > 1) {
             addIssue(report, 'warning', 'duplicate_suffix', '固定风格尾句重复出现', item, index);
+        }
+        const forbiddenTerm = findForbiddenTerm(sanitizedPrompt);
+        if (forbiddenTerm) {
+            addIssue(report, 'error', 'forbidden_term', `命中禁用元素：${forbiddenTerm}`, item, index);
+        }
+        if (hasMultiScenePlan(sanitizedPrompt)) {
+            addIssue(report, 'warning', 'multi_scene_plan', '单条提示词疑似包含多个互斥画面方案，建议拆成多条 prompt', item, index);
+        }
+        if (isAbstractPrompt(sanitizedPrompt)) {
+            addIssue(report, 'warning', 'abstract_prompt', '提示词可能偏抽象，缺少足够具体的主体、动作、镜头或材质细节', item, index);
+        }
+        if (ABSTRACT_DIRECTION_TERMS.some(term => direction.includes(term))) {
+            addIssue(report, 'warning', 'abstract_direction_name', '方向名称偏抽象，建议改成具体画面母题', item, index);
         }
 
         const malformedReason = findMalformedReason(sanitizedPrompt, item);
@@ -127,10 +246,25 @@ function buildCreativeAgentQualityReport(promptItems = []) {
         } else if (key) {
             seenPrompts.set(key, Number(item && item.index) || index + 1);
         }
+
+        for (const [seenKey, seenIndex] of seenPrompts.entries()) {
+            if (seenKey === key) {
+                continue;
+            }
+            const similarity = promptSimilarity(seenKey, key);
+            if (similarity >= 0.9) {
+                report.similarCount += 1;
+                addIssue(report, 'warning', 'similar_prompt', `与第 ${seenIndex} 组提示词相似度较高（${Math.round(similarity * 100)}%）`, item, index);
+                break;
+            }
+        }
     });
 
     report.directionCount = directions.size;
     report.success = report.errors.length === 0;
+    report.status = report.errors.length > 0 ? 'error' : (report.warnings.length > 0 ? 'warning' : 'pass');
+    report.acceptedPromptCount = report.success ? report.totalPrompts : Math.max(0, report.totalPrompts - report.errors.length);
+    report.rejectedPromptCount = report.success ? 0 : report.errors.length;
     report.summary = report.errors.length > 0
         ? `发现 ${report.errors.length} 个严重问题、${report.warnings.length} 个提醒，建议修正后再批量生成`
         : `已检查 ${report.totalPrompts} 组提示词，${report.warnings.length} 个提醒`;
@@ -146,6 +280,8 @@ function sanitizeCreativePromptItems(promptItems = []) {
 }
 
 module.exports = {
+    DEFAULT_PROMPT_FORBIDDEN_TERMS,
+    REQUIRED_PROMPT_SECTIONS,
     STRUCTURED_PROMPT_SUFFIX,
     buildCreativeAgentQualityReport,
     sanitizeCreativePromptItems,

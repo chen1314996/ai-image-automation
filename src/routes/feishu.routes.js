@@ -40,7 +40,7 @@ module.exports = function registerFeishuRoutes(app, context) {
                 events: '/api/feishu/events',
                 notify: '/api/feishu/notify'
             },
-            supportedCommands: ['状态', '进度', '停止工作流', '继续工作流', '继续创意拓展', '重启工作流', '帮助']
+            supportedCommands: ['创意状态', '创意进度', '生成Prompt', '小批量验证', '继续创意', '暂停创意', '停止工作流', '继续工作流', '重启工作流', '帮助']
         });
     });
 
@@ -115,7 +115,7 @@ module.exports = function registerFeishuRoutes(app, context) {
             configured: getSafeFeishuCliConfig(config),
             validation: validateFeishuCliConfig(config),
             bridge: feishuCliBridge.getStatus(),
-            commands: ['帮助', '状态', '进度', '日志', '浏览器状态', '开始量产', '停止创意拓展', '继续创意拓展', '停止工作流', '继续工作流', '重启工作流']
+            commands: ['帮助', '创意状态', '创意进度', '生成Prompt', '小批量验证', '继续创意', '暂停创意', '日志', '浏览器状态', '开始量产', '停止工作流', '继续工作流', '重启工作流']
         });
     });
 

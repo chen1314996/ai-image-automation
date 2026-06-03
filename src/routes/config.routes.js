@@ -1,5 +1,5 @@
 /**
- * 豆包、Legil、通知、工作流等配置接口。
+ * Lumos Winky、Legil、通知、工作流等配置接口。
  */
 module.exports = function registerConfigRoutes(app, context) {
     const __dirname = context.rootDir;
@@ -43,14 +43,14 @@ module.exports = function registerConfigRoutes(app, context) {
                 if (typeof nextPrompt !== 'string' || !nextPrompt.trim()) {
                     return res.json({
                         success: false,
-                        message: '豆包固定指令不能为空'
+                        message: 'Lumos Winky 固定指令不能为空'
                     });
                 }
 
                 if (nextPrompt.length > 10000) {
                     return res.json({
                         success: false,
-                        message: '豆包固定指令过长，请控制在10000字以内'
+                        message: 'Lumos Winky 固定指令过长，请控制在10000字以内'
                     });
                 }
 
@@ -85,7 +85,7 @@ module.exports = function registerConfigRoutes(app, context) {
             res.json({
                 success: true,
                 config,
-                message: '豆包配置已保存'
+                message: 'Lumos Winky 配置已保存'
             });
         } catch (error) {
             res.json({
@@ -105,7 +105,7 @@ module.exports = function registerConfigRoutes(app, context) {
             res.json({
                 success: true,
                 config,
-                message: '豆包固定指令已恢复默认'
+                message: 'Lumos Winky 固定指令已恢复默认'
             });
         } catch (error) {
             res.json({

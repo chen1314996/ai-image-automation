@@ -64,29 +64,65 @@
             document.getElementById('completionModal').classList.remove('active');
         }
 
+        function moveGlobalConfigCards() {
+            const mount = document.getElementById('configPanelMount');
+            if (!mount) return;
+
+            ['promptGenerationConfigCard', 'notificationConfigCard'].forEach(cardId => {
+                const card = document.getElementById(cardId);
+                if (card && card.parentElement !== mount) {
+                    mount.appendChild(card);
+                }
+            });
+        }
+
         function switchPage(page) {
-            const targetPage = page === 'resize' || page === 'creative' || page === 'rename' ? page : 'mass';
+            const allowedPages = ['runCenter', 'creative', 'knowledge', 'materialAnalysis', 'taskWorkbook', 'delivery', 'config', 'rename'];
+            const targetPage = allowedPages.includes(page) ? page : 'mass';
+            document.getElementById('runCenterPage')?.classList.toggle('active', targetPage === 'runCenter');
             document.getElementById('massPage')?.classList.toggle('active', targetPage === 'mass');
-            document.getElementById('resizePage')?.classList.toggle('active', targetPage === 'resize');
             document.getElementById('creativePage')?.classList.toggle('active', targetPage === 'creative');
+            document.getElementById('knowledgePage')?.classList.toggle('active', targetPage === 'knowledge');
+            document.getElementById('materialAnalysisPage')?.classList.toggle('active', targetPage === 'materialAnalysis');
+            document.getElementById('taskWorkbookPage')?.classList.toggle('active', targetPage === 'taskWorkbook');
+            document.getElementById('deliveryPage')?.classList.toggle('active', targetPage === 'delivery');
+            document.getElementById('configPage')?.classList.toggle('active', targetPage === 'config');
             document.getElementById('renamePage')?.classList.toggle('active', targetPage === 'rename');
+            document.getElementById('runCenterPageTab')?.classList.toggle('active', targetPage === 'runCenter');
             document.getElementById('massPageTab')?.classList.toggle('active', targetPage === 'mass');
-            document.getElementById('resizePageTab')?.classList.toggle('active', targetPage === 'resize');
             document.getElementById('creativePageTab')?.classList.toggle('active', targetPage === 'creative');
+            document.getElementById('knowledgePageTab')?.classList.toggle('active', targetPage === 'knowledge');
+            document.getElementById('materialAnalysisPageTab')?.classList.toggle('active', targetPage === 'materialAnalysis');
+            document.getElementById('taskWorkbookPageTab')?.classList.toggle('active', targetPage === 'taskWorkbook');
+            document.getElementById('deliveryPageTab')?.classList.toggle('active', targetPage === 'delivery');
+            document.getElementById('configPageTab')?.classList.toggle('active', targetPage === 'config');
             document.getElementById('renamePageTab')?.classList.toggle('active', targetPage === 'rename');
-            document.body.classList.toggle('resize-mode', targetPage === 'resize');
+            document.body.classList.toggle('delivery-mode', targetPage === 'delivery');
+            document.body.classList.toggle('config-mode', targetPage === 'config');
+            document.body.classList.toggle('run-center-mode', targetPage === 'runCenter');
             document.body.classList.toggle('creative-mode', targetPage === 'creative');
+            document.body.classList.toggle('knowledge-mode', targetPage === 'knowledge');
+            document.body.classList.toggle('material-analysis-mode', targetPage === 'materialAnalysis');
+            document.body.classList.toggle('task-workbook-mode', targetPage === 'taskWorkbook');
             document.body.classList.toggle('rename-mode', targetPage === 'rename');
-            const subtitle = document.getElementById('pageSubtitle');
-            if (subtitle) {
-                subtitle.textContent = targetPage === 'creative'
-                    ? '本地表格提示词 → Legil逐组生成 → 自动保存'
-                    : (targetPage === 'rename'
-                        ? '本地图片文件夹 → 提取中文题材 → 复制重命名输出'
-                    : (targetPage === 'resize'
-                        ? '即梦AI批量改尺寸 → 网页并发生成 → 自动保存到输出文件夹'
-                        : '提示词模型生成提示词 → Legil生成图片 → 全自动循环处理'));
-            }
+            document.getElementById('pageSubtitle').textContent =
+                targetPage === 'runCenter'
+                    ? '运行中心：统一查看老流程、新流程、当前 Agent 和 Legil 队列'
+                    : targetPage === 'creative'
+                    ? '创意拓展：自动方向拓展 → Prompt Gate → 提示词池 → Legil 量产'
+                    : targetPage === 'taskWorkbook'
+                    ? '任务方向池：自动化任务表导入 → 行级方向视觉整理 → 多选送入创意拓展'
+                    : targetPage === 'knowledge'
+                        ? '知识库：方向体系、参考图、生成资产与运行记录'
+                        : targetPage === 'materialAnalysis'
+                            ? '素材分析：每周素材数据导入 → Top100 消耗分析 → 本地沉淀与趋势基础'
+                            : targetPage === 'delivery'
+                                ? 'OK 图改尺寸：AI 三尺寸适配 → LOGO → 命名 → 打包'
+                                : targetPage === 'config'
+                                    ? '全局配置：提示词模型、Legil 参数、通知和运行监控'
+                                    : targetPage === 'rename'
+                                        ? '本地图片文件夹 → 提取中文题材 → 复制重命名输出'
+                                        : '批量产图：提示词模型生成提示词 → Legil生成图片 → 全自动循环处理';
             closeFolderHistoryMenus();
         }
 
@@ -286,6 +322,11 @@
                 if (typeof saveLogoBatchSettings === 'function') {
                     saveLogoBatchSettings();
                 }
+            } else if (inputId === 'deliveryInputFolder' || inputId === 'deliveryOutputFolder') {
+                config[inputId] = folderPath;
+                if (typeof updateDeliveryPreview === 'function') {
+                    updateDeliveryPreview();
+                }
             }
         }
 
@@ -441,7 +482,7 @@
             const folderPath = document.getElementById('resizeInputFolder')?.value.trim();
             const infoBox = document.getElementById('resizeInputCountInfo');
             if (!folderPath) {
-                if (!options.silent) showToast('请输入改尺寸输入文件夹路径', 'error');
+                if (!options.silent) showToast('请输入 AI 三尺寸适配输入文件夹路径', 'error');
                 return false;
             }
 

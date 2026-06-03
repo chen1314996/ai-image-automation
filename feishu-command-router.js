@@ -108,11 +108,13 @@ function buildHelpText() {
     return [
         '**AI生图控制指令**',
         '帮助：查看可用指令',
-        '状态 / 进度：查看运行状态和任务进度',
-        '开始量产 / 继续任务：启动量产或继续可恢复任务',
-        '停止工作流：停止当前完整工作流或 Legil/创意拓展任务',
+        '创意状态 / 创意进度：查看新版创意拓展页状态和任务进度',
+        '生成Prompt：只运行 Agent + Prompt Gate，不调用 Legil',
+        '小批量验证：运行一次自动创意，并提交 1 条 prompt 到 Legil',
+        '继续创意 / 暂停创意：继续或暂停自动创意/Legil 创意拓展任务',
+        '开始量产 / 继续任务：启动完整工作流或继续可恢复任务',
+        '停止工作流：停止当前完整工作流或 Legil 任务',
         '日志 / 浏览器状态：查看最近日志或浏览器状态',
-        '继续创意拓展 / 停止创意拓展：单独控制创意拓展任务',
         '重启工作流：二次确认后按默认配置重启',
         '',
         '安全限制：只处理白名单群或白名单用户消息，不执行任意 shell 命令。'
@@ -162,6 +164,18 @@ function detectCommand(text) {
 
     if (/开始.*量产|启动.*量产|量产开始|start.*mass|mass.*start/i.test(text)) {
         return { type: 'start_mass' };
+    }
+
+    if (/持续.*生图|全量.*创意|full.*creative|creative.*full/i.test(text)) {
+        return { type: 'start_creative_full' };
+    }
+
+    if (/小批量.*验证|验证.*小批量|自动创意.*验证|运行一次.*自动创意|自动创意.*运行一次|run.*once|smoke/i.test(text)) {
+        return { type: 'start_creative_smoke' };
+    }
+
+    if (/生成.*prompt|只.*prompt|只.*提示词|只生成.*提示|agent.?only|prompt.?only/i.test(text)) {
+        return { type: 'start_creative_prompts' };
     }
 
     if (/继续.*创意|恢复.*创意|continue.*creative|resume.*creative/i.test(text)) {
@@ -331,6 +345,18 @@ class FeishuCommandRouter {
             case 'start_mass': {
                 const result = await this.controlService.startMassProduction();
                 return `开始量产结果：${result.message || (result.success ? '已启动' : '执行失败')}`;
+            }
+            case 'start_creative_prompts': {
+                const result = await this.controlService.startCreativePromptOnly();
+                return `生成 Prompt 结果：${result.message || (result.success ? '已启动' : '执行失败')}`;
+            }
+            case 'start_creative_smoke': {
+                const result = await this.controlService.startCreativeSmoke();
+                return `小批量验证结果：${result.message || (result.success ? '已启动' : '执行失败')}`;
+            }
+            case 'start_creative_full': {
+                const result = await this.controlService.startCreativeFullScale();
+                return `持续生图结果：${result.message || (result.success ? '已启动' : '执行失败')}`;
             }
             case 'continue_workflow': {
                 const result = await this.controlService.continueAutomation();

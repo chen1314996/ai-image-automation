@@ -10,7 +10,7 @@ function createApp(options = {}) {
     const rootDir = options.rootDir || path.join(__dirname, '..');
     const app = express();
 
-    app.use(express.json({ limit: '50mb' }));
+    app.use(express.json({ limit: '160mb' }));
     app.use(express.static(path.join(rootDir, 'public')));
 
     app.use((err, req, res, next) => {

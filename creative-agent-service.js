@@ -2,11 +2,9 @@ const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
 const XLSX = require('xlsx');
-const { formatDateTimeForFile } = require('./file-utils');
 const { readSecrets } = require('./secrets-store');
 const {
-    normalizeCellText,
-    parseCreativePromptWorkbook
+    normalizeCellText
 } = require('./creative-table-parser');
 const {
     STRUCTURED_PROMPT_SUFFIX,
@@ -16,11 +14,14 @@ const {
 
 const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'];
 const CREATIVE_AGENT_ROOT = process.env.CREATIVE_AGENT_ROOT || path.join(__dirname, 'agents', 'creative-expansion-agent');
+const CREATIVE_AGENT_PROJECT_SETTINGS_FILE = path.join(CREATIVE_AGENT_ROOT, 'PROJECT_SETTINGS.md');
+const CREATIVE_AGENT_PROMPT_SETTINGS_FILE = path.join(CREATIVE_AGENT_ROOT, 'CREATIVE_PROMPT_AGENT_SETTINGS.md');
 const CREATIVE_AGENT_OUTPUT_DIR = path.join(__dirname, 'creative_agent_outputs');
 const CREATIVE_AGENT_CORE_SKILLS = [
     'reference-analysis-table',
     'batch-iteration-strategy-table',
-    'new-direction-expansion-table'
+    'new-direction-expansion-table',
+    'legil-run-once-prompt-contract'
 ];
 const CREATIVE_AGENT_OPTIONAL_SKILLS = [
     'strict-table-direction-iteration',
@@ -30,6 +31,34 @@ const CREATIVE_AGENT_TEXT_EXTENSIONS = ['.txt', '.md', '.csv', '.json', '.log'];
 const CREATIVE_AGENT_TABLE_EXTENSIONS = ['.xlsx', '.xls', '.csv'];
 const CREATIVE_AGENT_MAX_TEXT_CHARS = 60000;
 const CREATIVE_AGENT_MAX_IMAGES = 12;
+const STRUCTURED_BATCH_NEW_DIRECTION_COUNT = 3;
+const STRUCTURED_BATCH_PROMPTS_PER_DIRECTION = 4;
+const CREATIVE_DIMENSION_HEADERS = [
+    '目标层级',
+    '氛围',
+    '视角',
+    '时间天气',
+    '叙事动作',
+    '规模',
+    '材质质感',
+    '主体关系',
+    '广告钩子',
+    '去重依据',
+    '质量风险'
+];
+const CREATIVE_DIMENSION_FIELDS = {
+    mood: '氛围',
+    perspective: '视角',
+    time: '时间天气',
+    weather: '时间天气',
+    narrative: '叙事动作',
+    action: '叙事动作',
+    scale: '规模',
+    material: '材质质感',
+    subjectRelation: '主体关系',
+    relationship: '主体关系',
+    hook: '广告钩子'
+};
 
 function getStoredWinkyConfig() {
     const secrets = readSecrets();
@@ -221,6 +250,12 @@ function summarizeCreativeAgentAttachments(attachments = []) {
 
 function loadCreativeExpansionAgentBundle() {
     const instructions = fs.readFileSync(path.join(CREATIVE_AGENT_ROOT, 'instructions.md'), 'utf8');
+    const projectSettings = fs.existsSync(CREATIVE_AGENT_PROJECT_SETTINGS_FILE)
+        ? fs.readFileSync(CREATIVE_AGENT_PROJECT_SETTINGS_FILE, 'utf8')
+        : '';
+    const promptAgentSettings = fs.existsSync(CREATIVE_AGENT_PROMPT_SETTINGS_FILE)
+        ? fs.readFileSync(CREATIVE_AGENT_PROMPT_SETTINGS_FILE, 'utf8')
+        : '';
     const skillNames = [...CREATIVE_AGENT_CORE_SKILLS, ...CREATIVE_AGENT_OPTIONAL_SKILLS];
     const skills = {};
 
@@ -229,7 +264,7 @@ function loadCreativeExpansionAgentBundle() {
         skills[skillName] = fs.readFileSync(skillPath, 'utf8');
     }
 
-    return { instructions, skills };
+    return { instructions, projectSettings, promptAgentSettings, skills };
 }
 
 function selectCreativeAgentSkills(inputText) {
@@ -250,7 +285,7 @@ function selectCreativeAgentSkills(inputText) {
 function buildCreativeAgentUserPrompt({ instruction, targetCount, attachmentSummaries, selectedSkillNames, omittedCount }) {
     const parts = [
         '# User Request',
-        String(instruction || '').trim() || '请基于我上传的资料拓展创意方向，并输出可直接用于生图的提示词表格。',
+        String(instruction || '').trim() || '请基于我上传的资料拓展创意方向，并输出可直接用于生图的 JSON 提示词。',
         '',
         '# Selected Skills',
         selectedSkillNames.map(name => `- ${name}`).join('\n')
@@ -278,7 +313,25 @@ function buildCreativeAgentUserPrompt({ instruction, targetCount, attachmentSumm
     parts.push(
         '',
         '# Output Requirements',
-        '请输出默认四部分 Markdown 表格，不要把表格放进代码块。第四部分必须命名为“新方向拓展表”，列名固定为：参考方向、新方向名称、方向描述、来源于哪条详细迭代策略、提示词1、提示词2、提示词3、提示词4、提示词5。'
+        '如果这是后台“运行一次自动创意 / run-once / creative-auto / Legil 自动生图”任务，只输出 JSON，不输出 Markdown 表格、Excel 表格、CSV 表格或任何 spreadsheet-ready 表格。',
+        '新方向之间要有更明显差异，但必须符合当前项目体系；至少改变场景机制、人物关系、危机/奖励道具、镜头距离/角度中的两项，不能只是同义词改写。',
+        '同一新方向下的不同提示词也要拉开画面差异，每条提示词的动作节点、空间位置、前景道具、镜头景别或情绪冲突至少有两项不同，同时保留该新方向的核心卖点。',
+        'JSON 顶层字段必须是 candidateDirections，供程序解析、入库、Prompt Gate 和 Legil 队列使用。',
+        'candidateDirections 每一项必须包含：type、sourcePath、targetLevel、label、description、dimensions、duplicateRisk、reason、prompts。dimensions 至少覆盖 mood、perspective、time、narrative、scale、material、subjectRelation、hook。prompts 是 1-5 条对象数组，每条包含 title 和 prompt。',
+        'Agent 只输出候选方向和可出图 prompt，不直接操作 Legil、不写入飞书或方向种子表、不评价生成图片好坏。',
+        'Prompt Gate 会拦截禁用词、短 prompt、抽象 prompt、重复 prompt 和多方案混写；请在输出前自检。',
+        '如果用户明确要求完整策划分析，也把分析内容放入 JSON 字段中，不要切换回表格输出。'
+    );
+
+    parts.push(
+        '',
+        '# Current Automation Contract',
+        'For run-once, creative-auto, and Legil automation tasks, output JSON only.',
+        'Do not output Markdown tables, Excel tables, CSV tables, or spreadsheet-ready tables.',
+        'The JSON top-level object must contain candidateDirections.',
+        'Each candidateDirections item must contain: type, sourcePath, targetLevel, label, description, dimensions, duplicateRisk, reason, prompts.',
+        'dimensions must include mood, perspective, time, narrative, scale, material, subjectRelation, hook.',
+        'prompts must be 1-5 objects, each with title and prompt. The prompt field must be the complete final image-generation prompt.'
     );
 
     return parts.join('\n');
@@ -297,6 +350,8 @@ function buildCreativeAgentMessages({ instruction, targetCount, attachments }) {
         .join('\n');
     const systemPrompt = [
         bundle.instructions,
+        bundle.projectSettings ? `\n\n# Current Project Settings\n\n${bundle.projectSettings}` : '',
+        bundle.promptAgentSettings ? `\n\n# Creative Prompt Agent Settings\n\n${bundle.promptAgentSettings}` : '',
         '\n\n# Loaded Skills',
         selectedSkills,
         '\n\n# Runtime Rule',
@@ -324,11 +379,82 @@ function buildCreativeAgentMessages({ instruction, targetCount, attachments }) {
 }
 
 function sanitizeCreativeAgentError(error, apiKey = '') {
-    const responseMessage = error && error.response && error.response.data
-        ? JSON.stringify(error.response.data)
-        : (error && error.message ? error.message : String(error || '未知错误'));
+    const details = [];
+    const appendDetail = (item, prefix = '') => {
+        if (!item) return;
+        const response = item.response || {};
+        const request = item.request || {};
+        const parts = [
+            item.code ? `code=${item.code}` : '',
+            response.status ? `status=${response.status}` : '',
+            response.statusText ? `statusText=${response.statusText}` : '',
+            item.hostname ? `host=${item.hostname}` : '',
+            item.address ? `address=${item.address}` : '',
+            item.port ? `port=${item.port}` : '',
+            item.syscall ? `syscall=${item.syscall}` : '',
+            item.message || String(item || '')
+        ].filter(Boolean);
+        if (response.data) {
+            parts.push(typeof response.data === 'string' ? response.data : JSON.stringify(response.data));
+        }
+        if (request && request.path && !parts.some(part => part.includes(request.path))) {
+            parts.push(`path=${request.path}`);
+        }
+        const text = parts.join('；');
+        if (text) details.push(prefix ? `${prefix}: ${text}` : text);
+    };
+
+    if (error && Array.isArray(error.errors) && error.errors.length) {
+        error.errors.slice(0, 5).forEach((item, index) => appendDetail(item, `子错误${index + 1}`));
+    }
+    appendDetail(error);
+
+    const responseMessage = details.length
+        ? details.join(' | ')
+        : (error && error.response && error.response.data
+            ? JSON.stringify(error.response.data)
+            : (error && error.message ? error.message : String(error || '未知错误')));
     const key = String(apiKey || '');
     return key ? responseMessage.replaceAll(key, '[REDACTED]') : responseMessage;
+}
+
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function isRetryableCreativeAgentError(error) {
+    const status = Number(error && error.response && error.response.status);
+    if (status === 429 || status >= 500) return true;
+    const texts = [
+        error && error.code,
+        error && error.message,
+        ...(Array.isArray(error && error.errors) ? error.errors.flatMap(item => [item && item.code, item && item.message]) : [])
+    ].map(value => String(value || '')).join('\n');
+    return /(AggregateError|ECONNRESET|ETIMEDOUT|ESOCKETTIMEDOUT|ECONNABORTED|ENOTFOUND|EAI_AGAIN|socket hang up|timeout|network)/i.test(texts);
+}
+
+async function postCreativeAgentApi({ apiUrl, apiKey, payload, timeout = 10 * 60 * 1000 }) {
+    let lastError = null;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+            return await axios.post(apiUrl, payload, {
+                timeout,
+                maxContentLength: Infinity,
+                maxBodyLength: Infinity,
+                headers: {
+                    Authorization: `Bearer ${apiKey}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+        } catch (error) {
+            lastError = error;
+            if (attempt >= 1 || !isRetryableCreativeAgentError(error)) {
+                throw error;
+            }
+            await sleep(1500);
+        }
+    }
+    throw lastError;
 }
 
 function extractCreativeAgentResponseText(data) {
@@ -358,32 +484,36 @@ function extractCreativeAgentResponseText(data) {
     return '';
 }
 
+function shouldUseMaxCompletionTokens(model) {
+    return /^gpt-5\.5(?:$|[-_.\s])/i.test(String(model || '').trim());
+}
+
 async function callCreativeAgentLlm({ apiUrl, apiKey, model, provider, instruction, targetCount, attachments }) {
     const request = buildCreativeAgentMessages({ instruction, targetCount, attachments });
     const payload = {
         model,
         messages: request.messages,
-        temperature: 0.78,
-        max_tokens: 12000,
         stream: false
     };
+    if (shouldUseMaxCompletionTokens(model)) {
+        payload.max_completion_tokens = 12000;
+    } else {
+        payload.temperature = 0.78;
+        payload.max_tokens = 12000;
+    }
 
     if (provider) {
         payload.provider = provider;
     }
 
-    const response = await axios.post(apiUrl, payload, {
-        timeout: 10 * 60 * 1000,
-        maxContentLength: Infinity,
-        maxBodyLength: Infinity,
-        headers: {
-            Authorization: `Bearer ${apiKey}`,
-            'Content-Type': 'application/json'
-        }
+    const response = await postCreativeAgentApi({
+        apiUrl,
+        apiKey,
+        payload
     });
     const text = extractCreativeAgentResponseText(response.data);
     if (!text.trim()) {
-        throw new Error('模型没有返回可读取的表格内容');
+        throw new Error('Creative Agent did not return readable prompt content');
     }
 
     return {
@@ -414,24 +544,24 @@ async function callCreativeAgentJson({ apiUrl, apiKey, model, provider, messages
     const payload = {
         model,
         messages,
-        temperature,
-        max_tokens: maxTokens,
         stream: false,
         response_format: { type: 'json_object' }
     };
+    if (shouldUseMaxCompletionTokens(model)) {
+        payload.max_completion_tokens = maxTokens;
+    } else {
+        payload.temperature = temperature;
+        payload.max_tokens = maxTokens;
+    }
 
     if (provider) {
         payload.provider = provider;
     }
 
-    const response = await axios.post(apiUrl, payload, {
-        timeout: 10 * 60 * 1000,
-        maxContentLength: Infinity,
-        maxBodyLength: Infinity,
-        headers: {
-            Authorization: `Bearer ${apiKey}`,
-            'Content-Type': 'application/json'
-        }
+    const response = await postCreativeAgentApi({
+        apiUrl,
+        apiKey,
+        payload
     });
     return extractJsonObject(extractCreativeAgentResponseText(response.data));
 }
@@ -486,34 +616,72 @@ function buildStructuredRowPrompt(sourceRow, sourceRows, retryReason = '') {
             },
             newDirections: [
                 {
+                    type: 'new',
+                    sourcePath: '',
+                    targetLevel: 'L4',
                     name: '',
                     description: '',
+                    dimensions: {
+                        mood: '',
+                        perspective: '',
+                        time: '',
+                        narrative: '',
+                        scale: '',
+                        material: '',
+                        subjectRelation: '',
+                        hook: ''
+                    },
+                    duplicateRisk: '低',
+                    reason: '',
                     sourceStrategy: '',
-                    prompts: ['', '', '', '', '']
+                    prompts: Array.from({ length: STRUCTURED_BATCH_PROMPTS_PER_DIRECTION }, () => '')
                 }
             ]
         }, null, 2),
         '',
         '# 质量要求',
-        '1. newDirections 必须正好 5 条，每条必须相对当前原始方向有明显不同的画面机制。',
-        '2. 每条 newDirection 的 prompts 必须正好 5 条。',
+        `1. newDirections 必须正好 ${STRUCTURED_BATCH_NEW_DIRECTION_COUNT} 条，每条必须相对当前原始方向有明显不同的画面机制。`,
+        `2. 每条 newDirection 的 prompts 必须正好 ${STRUCTURED_BATCH_PROMPTS_PER_DIRECTION} 条。`,
         '3. 每条提示词必须是 300-430 个中文字符，不能是关键词列表，必须是一段可直接出图的完整中文画面提示词。',
-        '4. 每条提示词都要覆盖：主题、画风、情绪氛围、主体、场景、构图、镜头、光线色彩、材质细节、广告传播点。',
+        '4. 每条提示词都要覆盖：主题、画风、情绪氛围、主体、场景、构图、镜头、光线色彩、材质细节、广告传播点，并默认适配 Legil Nano Banana 2、1:1 方图、2K、每 prompt 4 张。',
         `5. 每条提示词结尾必须包含：${STRUCTURED_PROMPT_SUFFIX}`,
-        '6. 不要把所有提示词写成同一模板；同一新方向下 5 条提示词必须在主体关系、动作机制、镜头景别、空间结构和光线方案上拉开。',
+        '6. 不要把所有提示词写成同一模板；同一新方向下多条提示词必须在主体关系、动作机制、镜头景别、空间结构和光线方案上拉开。',
         '7. referenceAnalysis 和 detailedStrategy 每个字段都要具体，不能写泛泛的“氛围好、视觉强”。',
         '8. 保持冰封末世、现实废土、生存资源、3D卡通商业海报质感，默认不要赛博、激光 UI、机甲、悬浮设备。',
+        '9. 每条 newDirection 必须填写八维标签：氛围、视角、时间天气、叙事动作、规模、材质质感、主体关系、广告钩子，并说明 duplicateRisk 与 reason。',
         retryReason ? `\n# 上次输出问题\n${retryReason}\n请修正后重新输出 JSON。` : ''
     ].filter(Boolean).join('\n');
+}
+
+function normalizeDimensionObject(value) {
+    const source = value && typeof value === 'object' ? value : {};
+    const normalized = {};
+    Object.entries(CREATIVE_DIMENSION_FIELDS).forEach(([key, header]) => {
+        if (source[key] !== undefined && source[key] !== null && !normalized[header]) {
+            normalized[header] = normalizeCellText(Array.isArray(source[key]) ? source[key].join('、') : source[key]);
+        }
+    });
+    Object.entries(source).forEach(([key, val]) => {
+        if (CREATIVE_DIMENSION_FIELDS[key]) {
+            return;
+        }
+        const header = CREATIVE_DIMENSION_FIELDS[key] || key;
+        if (!normalized[header]) {
+            normalized[header] = normalizeCellText(Array.isArray(val) ? val.join('、') : val);
+        }
+    });
+    return normalized;
 }
 
 function normalizeStructuredRowResult(result, sourceRow) {
     const fallbackReference = `第${sourceRow.originalRowNumber}行｜${sourceRow.directionName}`;
     const referenceAnalysis = result && typeof result.referenceAnalysis === 'object' ? result.referenceAnalysis : {};
     const detailedStrategy = result && typeof result.detailedStrategy === 'object' ? result.detailedStrategy : {};
-    const newDirections = Array.isArray(result && result.newDirections) ? result.newDirections.slice(0, 5) : [];
+    const newDirections = Array.isArray(result && result.newDirections)
+        ? result.newDirections.slice(0, STRUCTURED_BATCH_NEW_DIRECTION_COUNT)
+        : [];
 
-    while (newDirections.length < 5) {
+    while (newDirections.length < STRUCTURED_BATCH_NEW_DIRECTION_COUNT) {
         newDirections.push({
             name: `${sourceRow.directionName}拓展方向${newDirections.length + 1}`,
             description: `基于${sourceRow.directionName}继续扩展不同的生存事件与视觉中心。`,
@@ -547,13 +715,21 @@ function normalizeStructuredRowResult(result, sourceRow) {
             riskAdvice: normalizeCellText(detailedStrategy.riskAdvice)
         },
         newDirections: newDirections.map((direction, directionIndex) => {
-            const prompts = Array.isArray(direction && direction.prompts) ? direction.prompts.slice(0, 5).map(normalizeCellText) : [];
-            while (prompts.length < 5) {
+            const prompts = Array.isArray(direction && direction.prompts)
+                ? direction.prompts.slice(0, STRUCTURED_BATCH_PROMPTS_PER_DIRECTION).map(normalizeCellText)
+                : [];
+            while (prompts.length < STRUCTURED_BATCH_PROMPTS_PER_DIRECTION) {
                 prompts.push(`主题：${sourceRow.directionName}的冰封末世拓展画面。画风：高质量3D卡通渲染，商业级游戏宣传海报风格，电影镜头感。情绪氛围：紧张、压迫、带有求生希望。画面内容：幸存者在冰雪废墟中围绕关键资源展开行动，前景有霜雪覆盖的道具与手部动作，中景有角色关系和明确冲突，远景是被风雪吞没的旧文明建筑。构图突出核心物资和人物反应，冷蓝环境光与局部暖光形成对比，材质包含厚雪、磨损金属、破旧布料和雾气层次。整体基调强调一眼可读的广告爆点与末世生存叙事。${STRUCTURED_PROMPT_SUFFIX}`);
             }
             const normalizedDirection = {
+                type: normalizeCellText(direction && direction.type) || 'new',
+                sourcePath: normalizeCellText(direction && direction.sourcePath) || sourceRow.sourcePath || sourceRow.directionName,
+                targetLevel: normalizeCellText(direction && direction.targetLevel) || 'L4',
                 name: normalizeCellText(direction && direction.name) || `${sourceRow.directionName}拓展方向${directionIndex + 1}`,
                 description: normalizeCellText(direction && direction.description) || `基于${sourceRow.directionName}扩展新的视觉冲突和广告表达重点。`,
+                dimensions: normalizeDimensionObject(direction && direction.dimensions),
+                duplicateRisk: normalizeCellText(direction && direction.duplicateRisk) || '待检查',
+                reason: normalizeCellText(direction && direction.reason),
                 sourceStrategy: normalizeCellText(direction && direction.sourceStrategy) || '围绕主体关系、场景机制和镜头语言做差异化扩展'
             };
             return {
@@ -642,8 +818,9 @@ function ensureStructuredPromptDetail(prompt, sourceRow, direction, promptIndex)
 function structuredRowQualityIssue(result) {
     const directions = Array.isArray(result && result.newDirections) ? result.newDirections : [];
     const prompts = directions.flatMap(direction => Array.isArray(direction.prompts) ? direction.prompts : []);
-    if (directions.length !== 5) return `新方向数量为 ${directions.length}，必须正好 5 条。`;
-    if (prompts.length !== 25) return `提示词数量为 ${prompts.length}，必须正好 25 条。`;
+    const expectedPromptCount = STRUCTURED_BATCH_NEW_DIRECTION_COUNT * STRUCTURED_BATCH_PROMPTS_PER_DIRECTION;
+    if (directions.length !== STRUCTURED_BATCH_NEW_DIRECTION_COUNT) return `新方向数量为 ${directions.length}，必须正好 ${STRUCTURED_BATCH_NEW_DIRECTION_COUNT} 条。`;
+    if (prompts.length !== expectedPromptCount) return `提示词数量为 ${prompts.length}，必须正好 ${expectedPromptCount} 条。`;
     const avgLength = prompts.reduce((sum, prompt) => sum + normalizeCellText(prompt).length, 0) / prompts.length;
     if (avgLength < 300) return `提示词平均长度只有 ${Math.round(avgLength)} 字，必须显著更详细。`;
     return '';
@@ -653,12 +830,14 @@ async function generateStructuredRowExpansion(payload, sourceRow, sourceRows) {
     const bundle = loadCreativeExpansionAgentBundle();
     const systemPrompt = [
         bundle.instructions,
+        bundle.projectSettings ? `\n\n# Current Project Settings\n\n${bundle.projectSettings}` : '',
+        bundle.promptAgentSettings ? `\n\n# Creative Prompt Agent Settings\n\n${bundle.promptAgentSettings}` : '',
         '\n\n# Loaded Skills',
-        ['reference-analysis-table', 'batch-iteration-strategy-table', 'new-direction-expansion-table', 'strict-table-direction-iteration', 'batch-creative-expansion-accelerator']
+        ['reference-analysis-table', 'batch-iteration-strategy-table', 'new-direction-expansion-table', 'legil-run-once-prompt-contract', 'strict-table-direction-iteration', 'batch-creative-expansion-accelerator']
             .map(name => `\n\n## Skill: ${name}\n\n${bundle.skills[name]}`)
             .join('\n'),
         '\n\n# Runtime Rule',
-        'This is an internal structured batch call. Follow the Agent quality rules, but output JSON only so the program can assemble the Excel workbook.'
+        'This is an internal structured batch call. Follow the Agent quality rules, but output JSON only so the program can assemble prompt items directly.'
     ].join('\n');
 
     let retryReason = '';
@@ -799,6 +978,265 @@ function appendSheet(workbook, sheetName, rows, widths = []) {
     XLSX.utils.book_append_sheet(workbook, sheet, sheetName);
 }
 
+function normalizeCandidatePromptList(prompts) {
+    return (Array.isArray(prompts) ? prompts : [])
+        .slice(0, 5)
+        .map((item, index) => {
+            if (typeof item === 'string') {
+                return {
+                    title: `提示词${index + 1}`,
+                    prompt: normalizeCellText(item)
+                };
+            }
+            return {
+                title: normalizeCellText(item && item.title) || `提示词${index + 1}`,
+                prompt: normalizeCellText(item && (item.prompt || item.finalPrompt || item.promptText))
+            };
+        })
+        .filter(item => item.prompt);
+}
+
+function normalizeCandidateDirection(item, index = 0) {
+    const label = normalizeCellText(item && (item.label || item.name || item.newDirectionName || item.direction));
+    const dimensions = normalizeDimensionObject(item && item.dimensions);
+    return {
+        type: normalizeCellText(item && item.type) || 'new',
+        sourcePath: normalizeCellText(item && (item.sourcePath || item.referenceDirection || item.sourceDirectionPath || item.reference)),
+        targetLevel: normalizeCellText(item && item.targetLevel) || '',
+        label: label || `候选方向${index + 1}`,
+        description: normalizeCellText(item && item.description),
+        dimensions,
+        duplicateRisk: normalizeCellText(item && item.duplicateRisk),
+        reason: normalizeCellText(item && (item.reason || item.dedupReason || item.sourceStrategy)),
+        sourceStrategy: normalizeCellText(item && item.sourceStrategy),
+        qualityRisk: normalizeCellText(item && item.qualityRisk),
+        prompts: normalizeCandidatePromptList(item && item.prompts)
+    };
+}
+
+function collectCandidateDirectionArrays(value, bucket = []) {
+    if (!value || typeof value !== 'object') {
+        return bucket;
+    }
+    if (Array.isArray(value)) {
+        bucket.push(value);
+        return bucket;
+    }
+    ['candidateDirections', 'candidates', 'directions', 'newDirections'].forEach(key => {
+        if (Array.isArray(value[key])) {
+            bucket.push(value[key]);
+        }
+    });
+    return bucket;
+}
+
+function parseJsonBlocksFromText(text) {
+    const raw = String(text || '');
+    const blocks = [];
+    const codeBlockPattern = /```json\s*([\s\S]*?)```/gi;
+    let match;
+    while ((match = codeBlockPattern.exec(raw)) !== null) {
+        blocks.push(match[1]);
+    }
+    blocks.push(raw);
+    return blocks
+        .map(block => {
+            try {
+                return extractJsonObject(block);
+            } catch {
+                return null;
+            }
+        })
+        .filter(Boolean);
+}
+
+function extractCandidateDirectionsFromText(text) {
+    const candidates = [];
+    parseJsonBlocksFromText(text).forEach(parsed => {
+        collectCandidateDirectionArrays(parsed).forEach(items => {
+            items
+                .map(normalizeCandidateDirection)
+                .filter(item => item.label || item.prompts.length)
+                .forEach(item => candidates.push(item));
+        });
+    });
+    const seen = new Set();
+    return candidates.filter(item => {
+        const key = `${item.sourcePath}::${item.label}`;
+        if (seen.has(key)) {
+            return false;
+        }
+        seen.add(key);
+        return true;
+    });
+}
+
+function sourcePathToLabelPath(sourcePath = '') {
+    return String(sourcePath || '')
+        .split(/[/>|]+/)
+        .map(part => normalizeCellText(part))
+        .filter(Boolean)
+        .slice(0, 3);
+}
+
+function normalizeDirectCreativePromptItem(item, index = 0, context = {}) {
+    const source = item && typeof item === 'object' ? item : {};
+    const prompt = normalizeCellText(typeof item === 'string'
+        ? item
+        : (source.prompt || source.finalPrompt || source.promptText || source.content || source.text));
+    if (!prompt) {
+        return null;
+    }
+
+    const direction = normalizeCellText(
+        context.direction ||
+        source.direction ||
+        source.newDirectionName ||
+        source.contentTitle ||
+        source.title
+    );
+    const promptTitle = normalizeCellText(source.promptTitle || source.title || context.promptTitle || `Prompt ${index + 1}`);
+    const sourceDirectionPath = normalizeCellText(source.sourceDirectionPath || source.sourcePath || context.sourceDirectionPath || context.sourcePath);
+    const standardLabelPath = Array.isArray(source.standardLabelPath)
+        ? source.standardLabelPath.map(part => normalizeCellText(part)).filter(Boolean).slice(0, 3)
+        : sourcePathToLabelPath(sourceDirectionPath);
+
+    return {
+        index: Number(source.index) > 0 ? Number(source.index) : index + 1,
+        sourceRow: Number(source.sourceRow) > 0 ? Number(source.sourceRow) : (Number(context.sourceRow) > 0 ? Number(context.sourceRow) : index + 1),
+        direction,
+        promptTitle,
+        sourceDirectionPath,
+        newDirectionName: normalizeCellText(source.newDirectionName || direction),
+        contentTitle: normalizeCellText(source.contentTitle || direction || promptTitle),
+        outputNameBase: normalizeCellText(source.outputNameBase || direction),
+        standardLabelPath,
+        primaryTag: normalizeCellText(source.primaryTag || standardLabelPath[0]),
+        secondaryTag: normalizeCellText(source.secondaryTag || standardLabelPath[1]),
+        tertiaryTag: normalizeCellText(source.tertiaryTag || standardLabelPath[2]),
+        prompt
+    };
+}
+
+function flattenCandidateDirectionsToPromptItems(candidateDirections = []) {
+    const promptItems = [];
+    (Array.isArray(candidateDirections) ? candidateDirections : []).forEach((direction, directionIndex) => {
+        const directionName = normalizeCellText(direction && (direction.label || direction.name || direction.newDirectionName || direction.direction));
+        const sourceDirectionPath = normalizeCellText(direction && (direction.sourcePath || direction.sourceDirectionPath || direction.referenceDirection));
+        const prompts = Array.isArray(direction && direction.prompts) ? direction.prompts : [];
+        prompts.forEach((promptItem, promptIndex) => {
+            const normalized = normalizeDirectCreativePromptItem(promptItem, promptItems.length, {
+                direction: directionName,
+                sourceDirectionPath,
+                sourceRow: directionIndex + 1,
+                promptTitle: `Prompt ${promptIndex + 1}`
+            });
+            if (normalized) {
+                promptItems.push({
+                    ...normalized,
+                    index: promptItems.length + 1,
+                    sourceRow: directionIndex + 1
+                });
+            }
+        });
+    });
+    return sanitizeCreativePromptItems(promptItems);
+}
+
+function extractDirectPromptItemsFromText(text) {
+    const promptItems = [];
+    parseJsonBlocksFromText(text).forEach(parsed => {
+        const arrays = [];
+        if (Array.isArray(parsed)) {
+            arrays.push(parsed);
+        }
+        if (parsed && Array.isArray(parsed.prompts)) {
+            arrays.push(parsed.prompts);
+        }
+        if (parsed && Array.isArray(parsed.promptItems)) {
+            arrays.push(parsed.promptItems);
+        }
+        arrays.forEach(items => {
+            items.forEach(item => {
+                const normalized = normalizeDirectCreativePromptItem(item, promptItems.length);
+                if (normalized) {
+                    promptItems.push({
+                        ...normalized,
+                        index: promptItems.length + 1
+                    });
+                }
+            });
+        });
+    });
+    return sanitizeCreativePromptItems(promptItems);
+}
+
+function buildPromptResultMessage(promptItems, qualityReport) {
+    const count = Array.isArray(promptItems) ? promptItems.length : 0;
+    if (qualityReport && qualityReport.success) {
+        return `Creative Agent generated ${count} prompt groups; quality check passed`;
+    }
+    return `Creative Agent generated ${count} prompt groups${qualityReport && qualityReport.summary ? `; ${qualityReport.summary}` : ''}`;
+}
+
+function candidateDirectionsToRows(candidateDirections = []) {
+    const headers = [
+        '参考方向',
+        '新方向名称',
+        '方向描述',
+        '来源于哪条详细迭代策略',
+        '提示词1',
+        '提示词2',
+        '提示词3',
+        '提示词4',
+        '提示词5',
+        ...CREATIVE_DIMENSION_HEADERS
+    ];
+    const rows = [headers];
+    candidateDirections.forEach(item => {
+        const promptTexts = item.prompts.map(prompt => prompt.prompt);
+        while (promptTexts.length < 5) {
+            promptTexts.push('');
+        }
+        rows.push([
+            item.sourcePath,
+            item.label,
+            item.description,
+            item.sourceStrategy || item.reason,
+            ...promptTexts.slice(0, 5),
+            item.targetLevel,
+            item.dimensions['氛围'] || '',
+            item.dimensions['视角'] || '',
+            item.dimensions['时间天气'] || '',
+            item.dimensions['叙事动作'] || '',
+            item.dimensions['规模'] || '',
+            item.dimensions['材质质感'] || '',
+            item.dimensions['主体关系'] || '',
+            item.dimensions['广告钩子'] || '',
+            item.reason,
+            item.qualityRisk || item.duplicateRisk
+        ]);
+    });
+    return rows;
+}
+
+function workbookHasSheet(workbook, sheetName) {
+    return Array.isArray(workbook && workbook.SheetNames) && workbook.SheetNames.includes(sheetName);
+}
+
+function creativeAgentResponseToWorkbook(text, candidateDirections = []) {
+    const workbook = markdownTablesToWorkbook(text);
+    if (!candidateDirections.length) {
+        return workbook;
+    }
+    const rows = candidateDirectionsToRows(candidateDirections);
+    const sheetName = workbookHasSheet(workbook, '新方向拓展表')
+        ? uniqueSheetName(workbook, '候选方向JSON')
+        : '新方向拓展表';
+    appendSheet(workbook, sheetName, rows, [18, 24, 34, 34, 58, 58, 58, 58, 58, 12, 14, 14, 14, 16, 12, 18, 18, 18, 28, 18]);
+    return workbook;
+}
+
 function buildStructuredCreativeWorkbook(sourceRows, rowResults) {
     const workbook = XLSX.utils.book_new();
 
@@ -851,7 +1289,7 @@ function buildStructuredCreativeWorkbook(sourceRows, rowResults) {
         ])
     ], [22, 46, 40, 36, 36, 40, 40, 36, 46, 36, 42]);
 
-    const expansionRows = [['原表序号', '参考方向', '新方向名称', '方向描述', '来源于哪条详细迭代策略', '提示词1', '提示词2', '提示词3', '提示词4', '提示词5']];
+    const expansionRows = [['原表序号', '参考方向', '新方向名称', '方向描述', '来源于哪条详细迭代策略', '提示词1', '提示词2', '提示词3', '提示词4', '提示词5', ...CREATIVE_DIMENSION_HEADERS]];
     rowResults.forEach(({ sourceRow, result }) => {
         result.newDirections.forEach(direction => {
             expansionRows.push([
@@ -860,11 +1298,22 @@ function buildStructuredCreativeWorkbook(sourceRows, rowResults) {
                 direction.name,
                 direction.description,
                 direction.sourceStrategy,
-                ...direction.prompts
+                ...direction.prompts,
+                direction.targetLevel,
+                direction.dimensions['氛围'] || '',
+                direction.dimensions['视角'] || '',
+                direction.dimensions['时间天气'] || '',
+                direction.dimensions['叙事动作'] || '',
+                direction.dimensions['规模'] || '',
+                direction.dimensions['材质质感'] || '',
+                direction.dimensions['主体关系'] || '',
+                direction.dimensions['广告钩子'] || '',
+                direction.reason,
+                direction.duplicateRisk
             ]);
         });
     });
-    appendSheet(workbook, '新方向拓展表', expansionRows, [10, 18, 24, 34, 34, 58, 58, 58, 58, 58]);
+    appendSheet(workbook, '新方向拓展表', expansionRows, [10, 18, 24, 34, 34, 58, 58, 58, 58, 58, 12, 14, 14, 14, 16, 12, 18, 18, 18, 28, 18]);
 
     return workbook;
 }
@@ -905,43 +1354,39 @@ async function runStructuredCreativeAgent(payload, sourceRows) {
         return { sourceRow, result };
     });
 
-    fs.mkdirSync(CREATIVE_AGENT_OUTPUT_DIR, { recursive: true });
-    const fileName = `creative_agent_structured_${formatDateTimeForFile()}.xlsx`;
-    const filePath = path.join(CREATIVE_AGENT_OUTPUT_DIR, fileName);
-    const workbook = buildStructuredCreativeWorkbook(sourceRows, rowResults);
-    const workbookBuffer = XLSX.write(workbook, {
-        type: 'buffer',
-        bookType: 'xlsx'
-    });
-    fs.writeFileSync(filePath, workbookBuffer);
-
-    let parsedPrompts = [];
-    let qualityReport = buildCreativeAgentQualityReport([]);
-    let parseMessage = '';
-    try {
-        const parsed = parseCreativePromptWorkbook(fileName, workbookBuffer.toString('base64'));
-        parsedPrompts = sanitizeCreativePromptItems(parsed.prompts);
-        qualityReport = buildCreativeAgentQualityReport(parsedPrompts);
-        parseMessage = qualityReport.success
-            ? `已从生成表格中提取 ${parsedPrompts.length} 组提示词，质检通过`
-            : `已从生成表格中提取 ${parsedPrompts.length} 组提示词；${qualityReport.summary}`;
-    } catch (error) {
-        parseMessage = `表格已生成，但未提取到提示词：${error.message}`;
-    }
+    const candidateDirections = rowResults.flatMap(({ sourceRow, result }) => result.newDirections.map((direction, index) => normalizeCandidateDirection({
+        type: direction.type,
+        sourcePath: direction.sourcePath || sourceRow.sourcePath,
+        targetLevel: direction.targetLevel,
+        label: direction.name,
+        description: direction.description,
+        dimensions: direction.dimensions,
+        duplicateRisk: direction.duplicateRisk,
+        reason: direction.reason,
+        sourceStrategy: direction.sourceStrategy,
+        prompts: direction.prompts.map((prompt, promptIndex) => ({
+            title: `提示词${promptIndex + 1}`,
+            prompt
+        }))
+    }, index)));
+    const parsedPrompts = flattenCandidateDirectionsToPromptItems(candidateDirections);
+    const qualityReport = buildCreativeAgentQualityReport(parsedPrompts);
+    const parseMessage = buildPromptResultMessage(parsedPrompts, qualityReport);
 
     return {
         success: true,
-        mode: 'structured-table-batch',
+        mode: 'structured-prompt-batch',
         message: parseMessage,
-        fileName,
-        downloadUrl: `/api/creative-agent/download/${encodeURIComponent(fileName)}`,
-        localPath: filePath,
+        fileName: '',
+        downloadUrl: '',
+        localPath: '',
         prompts: parsedPrompts,
         qualityReport,
         selectedSkills: ['reference-analysis-table', 'batch-iteration-strategy-table', 'new-direction-expansion-table', 'strict-table-direction-iteration', 'batch-creative-expansion-accelerator'],
         attachmentCount: Array.isArray(payload.attachments) ? payload.attachments.length : 0,
         sourceRowCount: sourceRows.length,
         expansionRowCount: rowResults.reduce((sum, item) => sum + item.result.newDirections.length, 0),
+        candidateDirections,
         markdownPreview: ''
     };
 }
@@ -954,40 +1399,28 @@ async function runCreativeAgent(payload) {
 
     const agentResult = await callCreativeAgentLlm(payload);
 
-    fs.mkdirSync(CREATIVE_AGENT_OUTPUT_DIR, { recursive: true });
-    const fileName = `creative_agent_${formatDateTimeForFile()}.xlsx`;
-    const filePath = path.join(CREATIVE_AGENT_OUTPUT_DIR, fileName);
-    const workbook = markdownTablesToWorkbook(agentResult.text);
-    const workbookBuffer = XLSX.write(workbook, {
-        type: 'buffer',
-        bookType: 'xlsx'
-    });
-    fs.writeFileSync(filePath, workbookBuffer);
-
-    let parsedPrompts = [];
-    let qualityReport = buildCreativeAgentQualityReport([]);
-    let parseMessage = '';
-    try {
-        const parsed = parseCreativePromptWorkbook(fileName, workbookBuffer.toString('base64'));
-        parsedPrompts = sanitizeCreativePromptItems(parsed.prompts);
-        qualityReport = buildCreativeAgentQualityReport(parsedPrompts);
-        parseMessage = qualityReport.success
-            ? `已从生成表格中提取 ${parsedPrompts.length} 组提示词，质检通过`
-            : `已从生成表格中提取 ${parsedPrompts.length} 组提示词；${qualityReport.summary}`;
-    } catch (error) {
-        parseMessage = `表格已生成，但未提取到提示词：${error.message}`;
+    const candidateDirections = extractCandidateDirectionsFromText(agentResult.text);
+    let parsedPrompts = flattenCandidateDirectionsToPromptItems(candidateDirections);
+    if (parsedPrompts.length === 0) {
+        parsedPrompts = extractDirectPromptItemsFromText(agentResult.text);
     }
+    const qualityReport = buildCreativeAgentQualityReport(parsedPrompts);
+    const parseMessage = buildPromptResultMessage(parsedPrompts, qualityReport);
 
     return {
         success: true,
         message: parseMessage,
-        fileName,
-        downloadUrl: `/api/creative-agent/download/${encodeURIComponent(fileName)}`,
-        localPath: filePath,
+        fileName: '',
+        downloadUrl: '',
+        localPath: '',
         prompts: parsedPrompts,
         qualityReport,
         selectedSkills: agentResult.selectedSkillNames,
         attachmentCount: agentResult.attachmentCount,
+        candidateDirections,
+        candidateDirectionCount: candidateDirections.length,
+        rawText: agentResult.text,
+        rawTableMarkdown: agentResult.text,
         markdownPreview: truncateCreativeAgentText(agentResult.text, 3000)
     };
 }

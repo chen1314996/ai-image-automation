@@ -174,7 +174,7 @@ module.exports = function registerBrowserRoutes(app, context) {
         if (name === 'doubao') {
             return res.json({
                 success: true,
-                message: '豆包已改为 API 调用，无需打开豆包网页'
+                message: '提示词生成已统一走 Lumos Winky，无需打开豆包网页'
             });
         }
 
@@ -243,7 +243,7 @@ module.exports = function registerBrowserRoutes(app, context) {
         const { legilUrl } = req.body;
 
         console.log('\n🌐 收到打开自动化网站的请求');
-        console.log('   豆包: 已改为 API 调用，无需网页');
+        console.log('   提示词模型: Lumos Winky API，无需网页');
         console.log('   Legil:', legilUrl);
 
         // 验证参数
@@ -276,20 +276,20 @@ module.exports = function registerBrowserRoutes(app, context) {
                 legil: false
             };
 
-            // 豆包提示词阶段已改为 API 调用，这里只需要打开 Legil 网页。
+            // 提示词阶段已统一走 Lumos Winky API，这里只需要打开 Legil 网页。
             results.legil = await browserController.openWebsite('legil', legilUrl);
 
             if (results.legil) {
                 res.json({
                     success: true,
                     results: results,
-                    message: '豆包 API 无需网页，Legil 网站已成功打开'
+                    message: 'Lumos Winky 无需网页，Legil 网站已成功打开'
                 });
             } else {
                 res.json({
                     success: false,
                     results: results,
-                    message: 'Legil 网站打开失败，豆包 API 无需网页'
+                    message: 'Legil 网站打开失败，Lumos Winky 无需网页'
                 });
             }
 

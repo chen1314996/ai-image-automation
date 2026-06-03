@@ -47,6 +47,8 @@ const {
 } = require('../services/jimeng-browser');
 const { parseCreativePromptWorkbook } = require('../../creative-table-parser');
 const { buildCreativeAgentQualityReport } = require('../../creative-agent-quality');
+const { createCreativeAutoService } = require('../services/creative-auto');
+const { createRunStateService } = require('../services/run-state');
 const {
     CREATIVE_AGENT_OUTPUT_DIR,
     getCreativeAgentStatus,
@@ -75,6 +77,7 @@ const DEFAULT_RESIZE_CONFIG = {
     generationSettings: {
         imageModel: 'nano-banana-2',
         aspectRatio: '16:9',
+        aspectRatios: ['16:9'],
         resolution: '1K',
         outputQuantity: 1
     }
@@ -82,7 +85,7 @@ const DEFAULT_RESIZE_CONFIG = {
 const DEFAULT_WORKFLOW_CONFIG = {
     browserMode: 'headless',
     promptGeneration: {
-        provider: 'doubao',
+        provider: 'lumos',
         lumos: {}
     }
 };
@@ -96,18 +99,18 @@ const DEFAULT_NOTIFICATION_CONFIG = {
     legilScreenshotEnabled: true,
     autoRecoveryEnabled: true,
     pauseOnConsecutiveFailures: true,
-    consecutiveFailureThreshold: 3,
+    consecutiveFailureThreshold: 5,
     watchdogAutoRestartEnabled: true
 };
 const DEFAULT_CREATIVE_CONFIG = {
     outputFolder: 'D:\\工作\\自动化工作流1\\创意拓展\\输出',
-    referenceFolder: '',
+    referenceFolder: 'D:\\工作\\自动化工作流1\\创意拓展\\参考图',
     browserMode: 'headed',
     generationSettings: {
         imageModel: 'nano-banana-2',
         aspectRatio: '1:1',
-        resolution: '1K',
-        outputQuantity: 1
+        resolution: '2K',
+        outputQuantity: 4
     }
 };
 
@@ -196,6 +199,23 @@ const automationState = {
     legilTaskProgress: null
 };
 
+const creativeAutoService = createCreativeAutoService({
+    rootDir: ROOT_DIR,
+    ROOT_DIR,
+    logger,
+    getStoredWinkyConfig,
+    startCreativeAgentTask,
+    getCreativeAgentTask,
+    publicCreativeAgentTask,
+    cancelCreativeAgentTask,
+    hasActiveCreativeAgentTask,
+    isLegilBusy,
+    requestLegilTaskStop,
+    getCreativeResumeInfo,
+    getCreativeProgressSnapshot,
+    notifyTaskEvent
+});
+
 const jimengBrowserService = createJimengBrowserService({
     ROOT_DIR,
     fs,
@@ -217,6 +237,7 @@ const WATCHDOG_STATUS_PATH = path.join(ROOT_DIR, 'runtime', 'feishu-watchdog.sta
 let watchdogStartAttempted = false;
 
 let creativeResumeState = null;
+let resizeResumeState = null;
 let serverRestartScheduled = false;
 const creativeAgentTasks = new Map();
 const CREATIVE_AGENT_TASK_MAX_AGE_MS = 6 * 60 * 60 * 1000;
@@ -237,6 +258,9 @@ function normalizeCreativeBatchPromptItems(promptItems = []) {
                 : (item && typeof item.prompt === 'string' ? item.prompt : '');
             const direction = item && typeof item.direction === 'string' ? item.direction : '';
             const promptTitle = item && typeof item.promptTitle === 'string' ? item.promptTitle : '';
+            const standardLabelPath = item && Array.isArray(item.standardLabelPath)
+                ? item.standardLabelPath.map(part => String(part || '').trim()).filter(Boolean).slice(0, 3)
+                : [];
             const sourceRow = item && Number.isFinite(Number(item.sourceRow)) ? Number(item.sourceRow) : index + 1;
             const originalIndex = item && Number.isFinite(Number(item.index)) && Number(item.index) > 0
                 ? Number(item.index)
@@ -247,6 +271,24 @@ function normalizeCreativeBatchPromptItems(promptItems = []) {
                 sourceRow,
                 direction: direction.trim(),
                 promptTitle: promptTitle.trim(),
+                primaryTag: String(item && item.primaryTag || '').trim(),
+                secondaryTag: String(item && item.secondaryTag || '').trim(),
+                tertiaryTag: String(item && item.tertiaryTag || '').trim(),
+                standardLabelPath,
+                sourceDirectionId: String(item && item.sourceDirectionId || '').trim(),
+                sourceDirectionPath: String(item && item.sourceDirectionPath || '').trim(),
+                sourceRawName: String(item && item.sourceRawName || item && item.sourceMaterialName || '').trim(),
+                sourceContentTitle: String(item && item.sourceContentTitle || '').trim(),
+                newDirectionName: String(item && item.newDirectionName || '').trim(),
+                contentTitle: String(item && item.contentTitle || item && item.newDirectionName || '').trim(),
+                outputNameBase: String(item && item.outputNameBase || '').trim(),
+                namingSource: String(item && item.namingSource || '').trim(),
+                tagConfidence: String(item && item.tagConfidence || '').trim(),
+                promptHash: String(item && item.promptHash || '').trim(),
+                sourcePromptHash: String(item && item.sourcePromptHash || '').trim(),
+                promptSchemaVersion: String(item && item.promptSchemaVersion || '').trim(),
+                translationVersion: String(item && item.translationVersion || '').trim(),
+                finalPrompt: String(item && item.finalPrompt || '').trim(),
                 prompt: prompt.trim(),
                 selected: true
             };
@@ -477,6 +519,241 @@ function getCreativeProgressSnapshot() {
     };
 }
 
+function normalizeResizeProvider(value) {
+    return value === 'jimeng' ? 'jimeng' : 'legil';
+}
+
+function getResizeAspectRatiosFromSettings(settings = {}) {
+    const source = settings && typeof settings === 'object' ? settings : {};
+    const rawValues = Array.isArray(source.aspectRatios) && source.aspectRatios.length
+        ? source.aspectRatios
+        : [source.aspectRatio || '16:9'];
+    const seen = new Set();
+    const values = rawValues
+        .map(value => String(value || '').trim())
+        .filter(Boolean)
+        .filter(value => {
+            if (seen.has(value)) return false;
+            seen.add(value);
+            return true;
+        });
+    return values.length ? values : ['16:9'];
+}
+
+function buildResizeJobs(imageFiles = [], aspectRatios = []) {
+    const ratios = Array.isArray(aspectRatios) && aspectRatios.length ? aspectRatios : ['16:9'];
+    const jobs = [];
+    (Array.isArray(imageFiles) ? imageFiles : []).forEach((imagePath, imageIndex) => {
+        ratios.forEach((aspectRatio, ratioIndex) => {
+            jobs.push({
+                imagePath: normalizeInputPath(imagePath),
+                imageName: path.basename(String(imagePath || '')),
+                imageIndex,
+                aspectRatio: String(aspectRatio || '').trim(),
+                ratioIndex,
+                jobIndex: jobs.length + 1
+            });
+        });
+    });
+    return jobs.filter(job => job.imagePath && job.aspectRatio);
+}
+
+function normalizeResizeResumeJob(job, fallbackIndex = 0) {
+    if (!job || typeof job !== 'object') {
+        return null;
+    }
+    const imagePath = normalizeInputPath(job.imagePath);
+    const aspectRatio = String(job.aspectRatio || '').trim();
+    if (!imagePath || !aspectRatio) {
+        return null;
+    }
+    const imageIndex = clampNumber(job.imageIndex, 0);
+    const ratioIndex = clampNumber(job.ratioIndex, 0);
+    return {
+        imagePath,
+        imageName: String(job.imageName || path.basename(imagePath)),
+        imageIndex,
+        aspectRatio,
+        ratioIndex,
+        jobIndex: clampNumber(job.jobIndex, fallbackIndex + 1)
+    };
+}
+
+function normalizeResizeResumeGenerationSettings(provider, settings = {}) {
+    if (provider === 'jimeng') {
+        return normalizeJimengResizeConfig(
+            { generationSettings: settings },
+            appConfig.jimengResize || DEFAULT_JIMENG_RESIZE_CONFIG
+        ).generationSettings;
+    }
+
+    return normalizeLegilGenerationSettings(
+        settings,
+        appConfig.resize && appConfig.resize.generationSettings
+            ? appConfig.resize.generationSettings
+            : DEFAULT_RESIZE_CONFIG.generationSettings
+    );
+}
+
+function normalizeResizeResumeState(state) {
+    if (!state || typeof state !== 'object' || !Array.isArray(state.jobs) || state.jobs.length === 0) {
+        return null;
+    }
+
+    const provider = normalizeResizeProvider(state.provider);
+    const jobs = state.jobs
+        .map((job, index) => normalizeResizeResumeJob(job, index))
+        .filter(Boolean)
+        .sort((a, b) => a.jobIndex - b.jobIndex);
+    if (jobs.length === 0) {
+        return null;
+    }
+
+    const generationSettings = normalizeResizeResumeGenerationSettings(provider, state.generationSettings);
+    const total = Math.max(clampNumber(state.total, 0), jobs.length);
+    const nextIndex = clampNumber(
+        state.nextIndex !== undefined ? state.nextIndex : state.completed,
+        0,
+        jobs.length
+    );
+    const outputQuantity = provider === 'jimeng'
+        ? 4
+        : (Number(generationSettings.outputQuantity) || 1);
+    const completed = clampNumber(
+        state.completed !== undefined ? state.completed : nextIndex,
+        0,
+        total
+    );
+
+    return {
+        provider,
+        runId: String(state.runId || ''),
+        phase: String(state.phase || 'interrupted'),
+        inputFolder: normalizeInputPath(state.inputFolder) ||
+            (provider === 'jimeng' ? appConfig.jimengResize.inputFolder : appConfig.resize.inputFolder),
+        outputFolder: normalizeInputPath(state.outputFolder) ||
+            (provider === 'jimeng' ? appConfig.jimengResize.outputFolder : appConfig.resize.outputFolder),
+        browserMode: normalizeBrowserMode(
+            state.browserMode,
+            provider === 'jimeng'
+                ? (appConfig.jimengResize.browserMode || DEFAULT_JIMENG_RESIZE_CONFIG.browserMode)
+                : (appConfig.resize.browserMode || DEFAULT_RESIZE_CONFIG.browserMode)
+        ),
+        promptTemplate: typeof state.promptTemplate === 'string' ? state.promptTemplate : '',
+        generationSettings,
+        jobs,
+        total,
+        totalImages: clampNumber(state.totalImages, 0) || new Set(jobs.map(job => job.imagePath)).size,
+        totalAspectRatios: clampNumber(state.totalAspectRatios, 0) || getResizeAspectRatiosFromSettings(generationSettings).length,
+        nextIndex,
+        currentIndex: clampNumber(state.currentIndex !== undefined ? state.currentIndex : completed, 0, total),
+        completed,
+        success: clampNumber(state.success, 0, total),
+        failed: clampNumber(state.failed, 0, total),
+        saved: clampNumber(state.saved, 0),
+        outputTotal: Math.max(clampNumber(state.outputTotal, 0), total * outputQuantity),
+        currentName: String(state.currentName || ''),
+        currentAction: String(state.currentAction || '改尺寸任务被中断，可选择继续剩余任务。'),
+        startedAt: String(state.startedAt || new Date().toISOString()),
+        updatedAt: String(state.updatedAt || new Date().toISOString())
+    };
+}
+
+function persistResizeResumeState() {
+    try {
+        updateConfig({ resizeResume: resizeResumeState });
+    } catch (error) {
+        console.warn('保存改尺寸恢复状态失败:', error.message);
+    }
+}
+
+function setResizeResumeState(state) {
+    resizeResumeState = state ? normalizeResizeResumeState(state) : null;
+    if (resizeResumeState) {
+        resizeResumeState.updatedAt = new Date().toISOString();
+    }
+    persistResizeResumeState();
+    return resizeResumeState;
+}
+
+function updateResizeResumeState(updates = {}) {
+    if (!resizeResumeState) {
+        return null;
+    }
+
+    resizeResumeState = normalizeResizeResumeState({
+        ...resizeResumeState,
+        ...(updates && typeof updates === 'object' ? updates : {}),
+        updatedAt: new Date().toISOString()
+    });
+    persistResizeResumeState();
+    return resizeResumeState;
+}
+
+function clearResizeResumeState() {
+    resizeResumeState = null;
+    persistResizeResumeState();
+}
+
+function getResizeResumeInfo(includeJobs = false) {
+    const state = normalizeResizeResumeState(resizeResumeState);
+    if (!state) {
+        return { hasResume: false };
+    }
+
+    resizeResumeState = state;
+    const nextIndex = clampNumber(state.nextIndex, 0, state.jobs.length);
+    const remainingJobs = state.jobs.slice(nextIndex);
+    if (remainingJobs.length === 0 || state.phase === 'completed') {
+        return { hasResume: false };
+    }
+
+    return {
+        hasResume: true,
+        provider: state.provider,
+        runId: state.runId,
+        phase: state.phase,
+        total: state.total,
+        totalImages: state.totalImages,
+        totalAspectRatios: state.totalAspectRatios,
+        nextIndex,
+        completed: Math.min(state.completed, state.total),
+        success: state.success,
+        failed: state.failed,
+        saved: state.saved,
+        remainingCount: remainingJobs.length,
+        inputFolder: state.inputFolder,
+        outputFolder: state.outputFolder,
+        browserMode: state.browserMode,
+        promptTemplate: state.promptTemplate,
+        generationSettings: {
+            ...state.generationSettings
+        },
+        startedAt: state.startedAt,
+        updatedAt: state.updatedAt,
+        currentAction: state.currentAction,
+        progress: {
+            taskType: state.provider === 'jimeng' ? 'jimeng-resize-batch' : 'resize-batch',
+            phase: state.phase,
+            total: state.total,
+            totalImages: state.totalImages,
+            totalAspectRatios: state.totalAspectRatios,
+            currentIndex: state.currentIndex || nextIndex,
+            completed: Math.min(state.completed, state.total),
+            success: state.success,
+            failed: state.failed,
+            saved: state.saved,
+            outputTotal: state.outputTotal,
+            browserMode: state.browserMode,
+            currentName: state.currentName,
+            currentAction: state.currentAction,
+            startedAt: state.startedAt,
+            updatedAt: state.updatedAt
+        },
+        jobs: includeJobs ? state.jobs.map(job => ({ ...job })) : undefined
+    };
+}
+
 function sameCreativePromptIdentity(a, b) {
     if (!a || !b) {
         return false;
@@ -667,6 +944,26 @@ function normalizeLegilGenerationSettings(settings = {}, fallback = {}) {
         : ((options.aspectRatios || []).includes(String(fallbackSettings.aspectRatio))
             ? String(fallbackSettings.aspectRatio)
             : defaultSettings.aspectRatio);
+    const normalizeAspectRatios = (value) => {
+        const rawValues = Array.isArray(value) ? value : (value ? [value] : []);
+        const seen = new Set();
+        return rawValues
+            .map(item => String(item || '').trim())
+            .filter(item => (options.aspectRatios || []).includes(item))
+            .filter(item => {
+                if (seen.has(item)) return false;
+                seen.add(item);
+                return true;
+            });
+    };
+    const sourceAspectRatios = normalizeAspectRatios(Array.isArray(source.aspectRatios) ? source.aspectRatios : source.aspectRatio);
+    const fallbackAspectRatios = normalizeAspectRatios(fallbackSettings.aspectRatios);
+    const aspectRatios = sourceAspectRatios.length
+        ? sourceAspectRatios
+        : (fallbackAspectRatios.length ? fallbackAspectRatios : [aspectRatio]);
+    const primaryAspectRatio = aspectRatios.includes(aspectRatio)
+        ? aspectRatio
+        : (aspectRatios[0] || aspectRatio);
     const resolution = (options.resolutions || []).includes(String(source.resolution))
         ? String(source.resolution)
         : ((options.resolutions || []).includes(String(fallbackSettings.resolution))
@@ -680,12 +977,18 @@ function normalizeLegilGenerationSettings(settings = {}, fallback = {}) {
             ? fallbackQuantityValue
             : defaultSettings.outputQuantity);
 
-    return {
+    const normalized = {
         imageModel,
-        aspectRatio,
+        aspectRatio: primaryAspectRatio,
         resolution,
         outputQuantity
     };
+
+    if (Array.isArray(source.aspectRatios) || Array.isArray(fallbackSettings.aspectRatios)) {
+        normalized.aspectRatios = aspectRatios;
+    }
+
+    return normalized;
 }
 
 creativeResumeState = normalizeCreativeResumeState(persistedConfig.creativeResume);
@@ -693,6 +996,14 @@ if (creativeResumeState && ['queued', 'running', 'stopping'].includes(String(cre
     updateCreativeResumeState({
         phase: 'interrupted',
         currentAction: '服务器重启或任务被意外打断，可选择继续剩余创意拓展任务。'
+    });
+}
+
+resizeResumeState = normalizeResizeResumeState(persistedConfig.resizeResume);
+if (resizeResumeState && ['queued', 'running', 'stopping'].includes(String(resizeResumeState.phase || ''))) {
+    updateResizeResumeState({
+        phase: 'interrupted',
+        currentAction: '服务器重启或任务被意外打断，可选择继续剩余改尺寸任务。'
     });
 }
 
@@ -830,6 +1141,7 @@ function startCreativeAgentTask(payload) {
         result: null,
         worker: null,
         cancelRequested: false,
+        suppressNotification: payload.suppressNotification === true,
         redactionKey: String(payload.apiKey || '')
     };
     creativeAgentTasks.set(runId, task);
@@ -842,7 +1154,7 @@ function startCreativeAgentTask(payload) {
         updateCreativeAgentTask(task, {
             phase: 'running',
             startedAt: new Date().toISOString(),
-            currentAction: '创意拓展 Agent 正在生成表格...'
+            currentAction: '创意拓展 Agent 正在生成提示词...'
         });
 
         const worker = new Worker(path.join(ROOT_DIR, 'creative-agent-worker.js'), {
@@ -865,23 +1177,25 @@ function startCreativeAgentTask(payload) {
                 settleCreativeAgentTask(task, {
                     phase: 'completed',
                     result,
-                    currentAction: `创意拓展 Agent 已完成：${result.fileName || '已生成表格'}`,
+                    currentAction: `创意拓展 Agent 已完成：已生成 ${Array.isArray(result.prompts) ? result.prompts.length : 0} 组提示词`,
                     message: result.message || 'Agent 已完成'
                 });
-                logger.log(`创意拓展 Agent 已生成表格: ${result.fileName || ''}`, 'success');
+                logger.log(`创意拓展 Agent 已生成 ${Array.isArray(result.prompts) ? result.prompts.length : 0} 组提示词`, 'success');
                 if (result.message) {
                     logger.info(result.message);
                 }
-                notifyTaskEvent({
-                    level: 'info',
-                    title: '创意拓展 Agent 已完成',
-                    taskType: '创意拓展Agent',
-                    message: result.fileName ? `已生成表格：${result.fileName}` : 'Agent 已完成',
-                    extraLines: [`提示词数量：${Array.isArray(result.prompts) ? result.prompts.length : 0}`]
-                }, {
-                    key: `creative-agent-completed:${task.runId}`,
-                    cooldownMs: 0
-                });
+                if (payload.suppressNotification !== true) {
+                    notifyTaskEvent({
+                        level: 'info',
+                        title: '创意拓展 Agent 已完成',
+                        taskType: '创意拓展Agent',
+                        message: `已生成 ${Array.isArray(result.prompts) ? result.prompts.length : 0} 组提示词`,
+                        extraLines: [`提示词数量：${Array.isArray(result.prompts) ? result.prompts.length : 0}`]
+                    }, {
+                        key: `creative-agent-completed:${task.runId}`,
+                        cooldownMs: 0
+                    });
+                }
                 return;
             }
 
@@ -896,16 +1210,18 @@ function startCreativeAgentTask(payload) {
                 message: safeMessage
             });
             logger.error(`创意拓展 Agent 调用失败: ${safeMessage}`);
-            notifyTaskEvent({
-                level: 'error',
-                title: '创意拓展 Agent 异常中断',
-                taskType: '创意拓展Agent',
-                message: safeMessage,
-                suggestion: '可在创意拓展页面重新发起任务，或检查 Agent/API 配置。'
-            }, {
-                key: `creative-agent-failed:${task.runId}`,
-                cooldownMs: 0
-            });
+            if (payload.suppressNotification !== true) {
+                notifyTaskEvent({
+                    level: 'error',
+                    title: '创意拓展 Agent 异常中断',
+                    taskType: '创意拓展Agent',
+                    message: safeMessage,
+                    suggestion: '可在创意拓展页面重新发起任务，或检查 Agent/API 配置。'
+                }, {
+                    key: `creative-agent-failed:${task.runId}`,
+                    cooldownMs: 0
+                });
+            }
         });
 
         worker.once('error', error => {
@@ -917,16 +1233,18 @@ function startCreativeAgentTask(payload) {
                 message: safeMessage
             });
             logger.error(`创意拓展 Agent 调用失败: ${safeMessage}`);
-            notifyTaskEvent({
-                level: 'error',
-                title: '创意拓展 Agent 异常中断',
-                taskType: '创意拓展Agent',
-                message: safeMessage,
-                suggestion: '可在创意拓展页面重新发起任务，或检查 Agent/API 配置。'
-            }, {
-                key: `creative-agent-error:${task.runId}`,
-                cooldownMs: 0
-            });
+            if (payload.suppressNotification !== true) {
+                notifyTaskEvent({
+                    level: 'error',
+                    title: '创意拓展 Agent 异常中断',
+                    taskType: '创意拓展Agent',
+                    message: safeMessage,
+                    suggestion: '可在创意拓展页面重新发起任务，或检查 Agent/API 配置。'
+                }, {
+                    key: `creative-agent-error:${task.runId}`,
+                    cooldownMs: 0
+                });
+            }
         });
 
         worker.once('exit', code => {
@@ -939,16 +1257,18 @@ function startCreativeAgentTask(payload) {
                     message: safeMessage
                 });
                 logger.error(safeMessage);
-                notifyTaskEvent({
-                    level: 'error',
-                    title: '创意拓展 Agent 异常退出',
-                    taskType: '创意拓展Agent',
-                    message: safeMessage,
-                    suggestion: '可重新发起任务，或查看服务器日志。'
-                }, {
-                    key: `creative-agent-exit:${task.runId}`,
-                    cooldownMs: 0
-                });
+                if (payload.suppressNotification !== true) {
+                    notifyTaskEvent({
+                        level: 'error',
+                        title: '创意拓展 Agent 异常退出',
+                        taskType: '创意拓展Agent',
+                        message: safeMessage,
+                        suggestion: '可重新发起任务，或查看服务器日志。'
+                    }, {
+                        key: `creative-agent-exit:${task.runId}`,
+                        cooldownMs: 0
+                    });
+                }
             }
         });
     });
@@ -979,15 +1299,17 @@ function cancelCreativeAgentTask(task) {
         message: '任务已取消'
     });
     logger.warn(`创意拓展 Agent 任务已取消: ${task.runId}`);
-    notifyTaskEvent({
-        level: 'warning',
-        title: '创意拓展 Agent 已取消',
-        taskType: '创意拓展Agent',
-        message: '任务已取消。'
-    }, {
-        key: `creative-agent-cancelled:${task.runId}`,
-        cooldownMs: 0
-    });
+    if (task.suppressNotification !== true) {
+        notifyTaskEvent({
+            level: 'warning',
+            title: '创意拓展 Agent 已取消',
+            taskType: '创意拓展Agent',
+            message: '任务已取消。'
+        }, {
+            key: `creative-agent-cancelled:${task.runId}`,
+            cooldownMs: 0
+        });
+    }
     return { success: true, message: '已取消创意拓展 Agent 任务', task: publicCreativeAgentTask(task) };
 }
 
@@ -1426,7 +1748,9 @@ function notifyLegilResult(taskType, result = {}) {
     const completed = !stopped && !interrupted;
     const taskLabel = taskType === 'creative-batch'
         ? '创意拓展产图'
-        : (taskType === 'resize-batch' ? '批量改尺寸' : 'Legil批量生成');
+        : (taskType === 'resize-batch'
+            ? '批量改尺寸'
+            : (taskType === 'delivery-candidates' ? '三尺寸候选生成' : 'Legil批量生成'));
 
     notifyTaskEvent({
         level: completed ? 'info' : (stopped ? 'warning' : 'error'),
@@ -2105,6 +2429,7 @@ function createRouteContext() {
         normalizeNotificationConfig,
         appConfig,
         automationState,
+        creativeAutoService,
         jimengBrowserService,
         serverStartedAt,
         feishuNotifier,
@@ -2121,6 +2446,15 @@ function createRouteContext() {
         clearCreativeResumeState,
         getCreativeResumeInfo,
         getCreativeProgressSnapshot,
+        normalizeResizeProvider,
+        getResizeAspectRatiosFromSettings,
+        buildResizeJobs,
+        normalizeResizeResumeState,
+        persistResizeResumeState,
+        setResizeResumeState,
+        updateResizeResumeState,
+        clearResizeResumeState,
+        getResizeResumeInfo,
         sameCreativePromptIdentity,
         isCreativeResumeStartRequest,
         resolveCreativeBatchRunContext,
@@ -2188,10 +2522,13 @@ function createRouteContext() {
         getHealthMonitor
     };
 
+    context.runStateService = createRunStateService(context);
+
     Object.defineProperties(context, {
         healthMonitor: { enumerable: true, get: () => healthMonitor },
         watchdogStartAttempted: { enumerable: true, get: () => watchdogStartAttempted, set: value => { watchdogStartAttempted = value; } },
         creativeResumeState: { enumerable: true, get: () => creativeResumeState, set: value => { creativeResumeState = value; } },
+        resizeResumeState: { enumerable: true, get: () => resizeResumeState, set: value => { resizeResumeState = value; } },
         serverRestartScheduled: { enumerable: true, get: () => serverRestartScheduled, set: value => { serverRestartScheduled = value; } }
     });
 

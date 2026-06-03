@@ -20,6 +20,7 @@ const {
     buildPackagePlan,
     packageImages
 } = require('../services/image-packager');
+const { createPostprocessTraceService } = require('../services/postprocess-trace');
 
 function pickResponseItems(items = [], limit = 80) {
     return items.slice(0, limit).map(item => ({
@@ -39,12 +40,20 @@ function pickResponseItems(items = [], limit = 80) {
         files: Array.isArray(item.files)
             ? item.files.map(file => ({
                 originalName: file.originalName,
-                size: file.size
+                size: file.size,
+                sourcePath: file.sourcePath || '',
+                outputPath: file.outputPath || ''
             }))
             : [],
         quality: item.quality || '',
         sizeBytes: item.sizeBytes || 0,
         sequenceNumber: item.sequenceNumber || '',
+        sourcePath: item.sourcePath || '',
+        outputPath: item.outputPath || '',
+        sourceAssetId: item.sourceAssetId || '',
+        sourceRunId: item.sourceRunId || '',
+        sourcePromptId: item.sourcePromptId || '',
+        derivativeId: item.derivativeId || '',
         reason: item.reason || ''
     }));
 }
@@ -88,6 +97,45 @@ function pickPackagePayload(body = {}) {
 
 module.exports = function registerRenameRoutes(app, context) {
     const { logger } = context;
+    const traceService = createPostprocessTraceService(context);
+
+    function attachTrace(operation, result, successItemsKey, config = {}) {
+        try {
+            const trace = traceService.recordOperationResult({
+                operation,
+                result,
+                successItemsKey,
+                failedItemsKey: 'failed',
+                config
+            });
+            if (trace && trace.derivativeCount) {
+                logger.info(`S10后处理追溯已登记：${operation} ${trace.derivativeCount} 个派生产物`);
+            }
+            return trace;
+        } catch (error) {
+            logger.warn(`S10后处理追溯登记失败：${operation} - ${error.message}`);
+            return {
+                success: false,
+                message: error.message
+            };
+        }
+    }
+
+    app.post('/api/postprocess/prepare-assets', (req, res) => {
+        try {
+            const result = traceService.prepareAssets(req.body || {});
+            logger.info(`S10已准备后处理输入目录：${result.outputFolder}，资产 ${result.count} 张`);
+            res.json({
+                ...result,
+                message: `已准备 ${result.count} 张资产，可送入重命名或改尺寸`
+            });
+        } catch (error) {
+            res.status(400).json({
+                success: false,
+                message: error.message
+            });
+        }
+    });
 
     app.post('/api/rename-images/preview', (req, res) => {
         try {
@@ -120,6 +168,7 @@ module.exports = function registerRenameRoutes(app, context) {
     app.post('/api/rename-images/run', (req, res) => {
         try {
             const result = renameImages(pickRenamePayload(req.body || {}));
+            const trace = attachTrace('rename', result, 'copied', result.rule || {});
 
             logger.system('图片重命名任务完成');
             logger.info(`输入文件夹: ${result.inputFolder}`);
@@ -139,6 +188,7 @@ module.exports = function registerRenameRoutes(app, context) {
                 skippedCount: result.skippedCount,
                 copiedCount: result.copiedCount,
                 failedCount: result.failedCount,
+                trace,
                 items: pickResponseItems(result.copied),
                 skipped: pickResponseItems(result.skipped),
                 failed: pickResponseItems(result.failed),
@@ -187,6 +237,9 @@ module.exports = function registerRenameRoutes(app, context) {
     app.post('/api/resize-images/run', async (req, res) => {
         try {
             const result = await resizeImages(pickResizePayload(req.body || {}));
+            const trace = attachTrace('resize', result, 'resized', {
+                targetSize: result.targetSize
+            });
 
             logger.system('本地批量改尺寸任务完成');
             logger.info(`输入文件夹: ${result.inputFolder}`);
@@ -209,6 +262,7 @@ module.exports = function registerRenameRoutes(app, context) {
                 skippedCount: result.skippedCount,
                 resizedCount: result.resizedCount,
                 failedCount: result.failedCount,
+                trace,
                 items: pickResponseItems(result.resized),
                 skipped: pickResponseItems(result.skipped),
                 failed: pickResponseItems(result.failed),
@@ -259,6 +313,9 @@ module.exports = function registerRenameRoutes(app, context) {
     app.post('/api/logo-overlay/run', async (req, res) => {
         try {
             const result = await applyLogoOverlay(pickLogoPayload(req.body || {}));
+            const trace = attachTrace('logo', result, 'applied', {
+                logoFileName: result.logoFileName
+            });
 
             logger.system('本地批量加LOGO任务完成');
             logger.info(`待处理图片目录: ${result.inputFolder}`);
@@ -283,6 +340,7 @@ module.exports = function registerRenameRoutes(app, context) {
                 skippedCount: result.skippedCount,
                 appliedCount: result.appliedCount,
                 failedCount: result.failedCount,
+                trace,
                 items: pickResponseItems(result.applied),
                 skipped: pickResponseItems(result.skipped),
                 failed: pickResponseItems(result.failed),
@@ -329,6 +387,9 @@ module.exports = function registerRenameRoutes(app, context) {
     app.post('/api/package-images/run', (req, res) => {
         try {
             const result = packageImages(pickPackagePayload(req.body || {}));
+            const trace = attachTrace('package', result, 'packaged', {
+                requiredSizes: result.requiredSizes
+            });
 
             logger.system('本地批量打包文件夹任务完成');
             logger.info(`待打包图片目录: ${result.inputFolder}`);
@@ -348,6 +409,7 @@ module.exports = function registerRenameRoutes(app, context) {
                 skippedCount: result.skippedCount,
                 packagedCount: result.packagedCount,
                 failedCount: result.failedCount,
+                trace,
                 items: pickResponseItems(result.packaged),
                 skipped: pickResponseItems(result.skipped),
                 failed: pickResponseItems(result.failed),

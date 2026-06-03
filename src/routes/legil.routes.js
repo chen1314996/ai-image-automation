@@ -4,15 +4,24 @@
 module.exports = function registerLegilRoutes(app, context) {
     const __dirname = context.rootDir;
     const {
+        buildCreativeOutputNamingContext
+    } = require('../services/output-naming/creative-output-naming');
+    const { CreativeKnowledgeStore } = require('../services/creative-knowledge/store');
+    const { registerRunAssets } = require('../services/creative-auto/assets');
+    const {
         appConfig,
         automationState,
+        buildResizeJobs,
         clearCreativeResumeState,
+        clearResizeResumeState,
         DEFAULT_CREATIVE_CONFIG,
         DEFAULT_RESIZE_CONFIG,
         formatDateTimeForFile,
         fs,
         getCreativeProgressSnapshot,
         getCreativeResumeInfo,
+        getResizeAspectRatiosFromSettings,
+        getResizeResumeInfo,
         isLegilBusy,
         isLegilStopRequested,
         legilAutomation,
@@ -30,11 +39,376 @@ module.exports = function registerLegilRoutes(app, context) {
         requestLegilTaskStop,
         resolveCreativeBatchRunContext,
         setCreativeResumeState,
+        setResizeResumeState,
         sleepWithLegilStop,
         toPositiveIndex,
         updateCreativeResumeState,
+        updateResizeResumeState,
         workflowController
     } = context;
+
+    function readCreativeDirectionLibrary(body = {}) {
+        if (Array.isArray(body.directionLibrary) || typeof body.directionLibrary === 'string') {
+            return body.directionLibrary;
+        }
+        if (body.directionLibrary && typeof body.directionLibrary === 'object') {
+            return body.directionLibrary;
+        }
+        if (Array.isArray(body.directions)) {
+            return body.directions;
+        }
+
+        const candidates = [
+            context.creativeKnowledgeDataDir,
+            context.dataDir,
+            path.join(__dirname, 'data', 'creative-knowledge')
+        ].filter(Boolean);
+
+        for (const dir of candidates) {
+            try {
+                const filePath = path.join(dir, 'directions.json');
+                if (fs.existsSync(filePath)) {
+                    const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+                    if (Array.isArray(data)) {
+                        return data;
+                    }
+                    if (Array.isArray(data && data.directions)) {
+                        return data.directions;
+                    }
+                }
+            } catch (error) {
+                logger.warn(`读取创意方向库失败: ${error.message}`);
+            }
+        }
+
+        return [];
+    }
+
+    function pickText(source, fields) {
+        for (const field of fields) {
+            const value = source && source[field];
+            if (typeof value === 'string' && value.trim()) {
+                return value.trim();
+            }
+        }
+        return '';
+    }
+
+    function resolvePromptTextFilePath(savePaths = []) {
+        const firstPath = Array.isArray(savePaths) ? savePaths.find(Boolean) : '';
+        if (!firstPath) {
+            return '';
+        }
+        const parsed = path.parse(firstPath);
+        const sharedStem = parsed.name
+            .replace(/_v\d+_\d{8}_\d{6}$/i, '')
+            .replace(/_v\d+$/i, '');
+        return path.join(parsed.dir, `${sharedStem || parsed.name}.prompt.txt`);
+    }
+
+    function buildPromptTextFileContent(promptItem = {}, meta = {}) {
+        const savedPaths = Array.isArray(meta.savedPaths) ? meta.savedPaths : [];
+        const outputNames = savedPaths.map(filePath => path.basename(filePath)).filter(Boolean);
+        return [
+            `Generated at: ${meta.savedAt || new Date().toISOString()}`,
+            `Run ID: ${meta.runId || ''}`,
+            `Prompt group: ${meta.displayIndex || promptItem.index || promptItem.batchIndex || ''}`,
+            `Prompt title: ${promptItem.promptTitle || promptItem.title || ''}`,
+            `Direction: ${promptItem.newDirectionName || promptItem.direction || promptItem.contentTitle || ''}`,
+            '',
+            'Output images:',
+            ...(outputNames.length ? outputNames.map(name => `- ${name}`) : ['-']),
+            '',
+            'Prompt:',
+            promptItem.prompt || promptItem.finalPrompt || ''
+        ].join('\n');
+    }
+
+    function savePromptTextFileForPromptGroup(savePaths = [], promptItem = {}, meta = {}) {
+        const promptFilePath = resolvePromptTextFilePath(savePaths);
+        if (!promptFilePath) {
+            return '';
+        }
+        fs.writeFileSync(promptFilePath, buildPromptTextFileContent(promptItem, {
+            ...meta,
+            savedPaths: savePaths
+        }), 'utf8');
+        return promptFilePath;
+    }
+
+    function normalizeTextArray(value) {
+        if (Array.isArray(value)) {
+            return value.map(part => String(part || '').trim()).filter(Boolean);
+        }
+        if (typeof value === 'string' && value.trim()) {
+            return value
+                .split(/[\/\\_>,，\n\r]+/g)
+                .map(part => part.trim())
+                .filter(Boolean);
+        }
+        return [];
+    }
+
+    function normalizeLookupKey(value) {
+        return String(value || '')
+            .trim()
+            .replace(/\\/g, '/')
+            .toLowerCase();
+    }
+
+    function basenameLookupKey(value) {
+        const text = String(value || '').trim();
+        if (!text) {
+            return '';
+        }
+        return normalizeLookupKey(path.basename(text));
+    }
+
+    function readCreativeAssetLibrary(body = {}) {
+        const directAssets = Array.isArray(body.assets)
+            ? body.assets
+            : (Array.isArray(body.assetLibrary) ? body.assetLibrary : null);
+        if (directAssets) {
+            return directAssets;
+        }
+
+        const candidates = [
+            context.creativeKnowledgeDataDir,
+            context.dataDir,
+            path.join(__dirname, 'data', 'creative-knowledge')
+        ].filter(Boolean);
+
+        for (const dir of candidates) {
+            try {
+                const filePath = path.join(dir, 'assets.json');
+                if (fs.existsSync(filePath)) {
+                    const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+                    if (Array.isArray(data && data.assets)) {
+                        return data.assets;
+                    }
+                }
+            } catch (error) {
+                logger.warn(`读取创意资产库失败: ${error.message}`);
+            }
+        }
+
+        return [];
+    }
+
+    function resolveCreativeKnowledgeDataDir() {
+        return context.creativeKnowledgeDataDir ||
+            context.dataDir ||
+            path.join(__dirname, 'data', 'creative-knowledge');
+    }
+
+    function registerLegilGeneratedAssets({
+        source,
+        runId,
+        outputFolder,
+        generationSettings,
+        prompts,
+        progress,
+        sourceDirection
+    } = {}) {
+        const savedCount = Number(progress && progress.saved) || 0;
+        if (!savedCount) {
+            return null;
+        }
+
+        try {
+            const store = new CreativeKnowledgeStore(resolveCreativeKnowledgeDataDir());
+            const assetReport = registerRunAssets({
+                store,
+                run: {
+                    runId,
+                    source,
+                    sourceDirection: sourceDirection || {},
+                    config: {
+                        outputFolder,
+                        generationSettings: generationSettings || {}
+                    },
+                    prompts: Array.isArray(prompts) ? prompts : []
+                },
+                progress
+            });
+            logger.info(`资产记录已更新：新增 ${assetReport.newAssetCount} 条，重复 ${assetReport.duplicateCount} 条`);
+            return assetReport;
+        } catch (error) {
+            logger.warn(`资产记录更新失败: ${error.message}`);
+            return {
+                success: false,
+                error: error.message
+            };
+        }
+    }
+
+    function findCreativeAssetHint(item, assets = []) {
+        if (!item || typeof item !== 'object' || !Array.isArray(assets) || !assets.length) {
+            return null;
+        }
+
+        const assetIds = [
+            item.assetId,
+            item.sourceAssetId,
+            item.referenceAssetId,
+            item.originalAssetId
+        ].map(value => String(value || '').trim()).filter(Boolean);
+
+        const pathKeys = [
+            item.filePath,
+            item.sourceFilePath,
+            item.referenceImagePath,
+            item.originalImagePath,
+            item.sourceImagePath
+        ].map(normalizeLookupKey).filter(Boolean);
+
+        const nameKeys = [
+            item.fileName,
+            item.sourceRawName,
+            item.referenceImageName,
+            item.originalImageName,
+            item.sourceImageName,
+            item.imageName
+        ].map(basenameLookupKey).filter(Boolean);
+
+        return assets.find(asset => {
+            if (!asset || typeof asset !== 'object') {
+                return false;
+            }
+            if (assetIds.length && assetIds.includes(String(asset.assetId || asset.id || '').trim())) {
+                return true;
+            }
+
+            const assetPath = normalizeLookupKey(asset.filePath || asset.path || asset.sourcePath || '');
+            const assetName = basenameLookupKey(asset.fileName || asset.name || assetPath);
+            if (assetPath && pathKeys.includes(assetPath)) {
+                return true;
+            }
+            return Boolean(assetName && nameKeys.includes(assetName));
+        }) || null;
+    }
+
+    function normalizeBatchGeneratePromptItems(prompts = [], body = {}) {
+        const assets = readCreativeAssetLibrary(body);
+        const defaultReferenceFolderPath = pickText(body, [
+            'referenceFolderPath',
+            'referenceFolder',
+            'sourceFolderPath',
+            'sourceFolder',
+            'originalFolderPath'
+        ]) || appConfig.legilReferenceFolder || '';
+
+        return (Array.isArray(prompts) ? prompts : [])
+            .map((item, index) => {
+                if (typeof item === 'string') {
+                    return {
+                        index: index + 1,
+                        prompt: item.trim(),
+                        outputNameBase: ''
+                    };
+                }
+
+                if (!item || typeof item !== 'object') {
+                    return null;
+                }
+
+                const assetHint = findCreativeAssetHint(item, assets) || {};
+                const prompt = pickText(item, ['prompt', 'content', 'finalPrompt', 'promptText', 'text']);
+                const title = pickText(item, ['contentTitle', 'title', 'newDirectionName', 'outputTitle']);
+                const assetStandardLabelPath = normalizeTextArray(
+                    assetHint.standardLabelPath ||
+                    assetHint.labelPath ||
+                    assetHint.sourceLabelPath ||
+                    ''
+                );
+                const itemStandardLabelPath = normalizeTextArray(
+                    item.standardLabelPath ||
+                    item.sourceLabelPath ||
+                    item.labelPath ||
+                    item.directionLabelPath ||
+                    ''
+                );
+                const sourceRawName = pickText(item, [
+                    'sourceRawName',
+                    'sourceMaterialName',
+                    'referenceImageName',
+                    'originalImageName',
+                    'sourceImageName',
+                    'imageName',
+                    'fileName'
+                ]) || pickText(assetHint, ['fileName', 'name']);
+
+                return {
+                    index: Number.isFinite(Number(item.index)) && Number(item.index) > 0 ? Number(item.index) : index + 1,
+                    prompt,
+                    title,
+                    contentTitle: pickText(item, ['contentTitle']) || title,
+                    newDirectionName: pickText(item, ['newDirectionName']),
+                    promptTitle: pickText(item, ['promptTitle', 'promptName']),
+                    fallbackName: pickText(item, ['fallbackName', 'name']),
+                    primaryTag: pickText(item, ['primaryTag', 'primary']),
+                    secondaryTag: pickText(item, ['secondaryTag', 'secondary']),
+                    tertiaryTag: pickText(item, ['tertiaryTag', 'tertiary']),
+                    standardLabelPath: itemStandardLabelPath.length ? itemStandardLabelPath : assetStandardLabelPath,
+                    sourceLabelPath: pickText(item, ['sourceLabelPath', 'labelPath', 'directionLabelPath']),
+                    sourceDirectionId: pickText(item, ['sourceDirectionId', 'directionId']) || pickText(assetHint, ['directionId', 'sourceDirectionId']),
+                    sourceDirectionPath: pickText(item, ['sourceDirectionPath', 'directionPath', 'direction']) || pickText(assetHint, ['directionPath', 'sourceDirectionPath']),
+                    sourceRawName,
+                    referenceFolderPath: pickText(item, [
+                        'referenceFolderPath',
+                        'sourceFolderPath',
+                        'sourceFolder',
+                        'originalFolderPath'
+                    ]) || defaultReferenceFolderPath,
+                    outputNameBase: pickText(item, ['outputNameBase']),
+                    namingSource: pickText(item, ['namingSource']),
+                    tagConfidence: pickText(item, ['tagConfidence'])
+                };
+            })
+            .filter(item => item && item.prompt);
+    }
+
+    function hasBatchOutputNamingClue(item) {
+        if (!item || typeof item !== 'object') {
+            return false;
+        }
+        if (item.outputNameBase) {
+            return true;
+        }
+        const hasTitle = Boolean(item.contentTitle || item.title || item.newDirectionName);
+        const hasLabelClue = Boolean(
+            item.primaryTag ||
+            item.secondaryTag ||
+            item.tertiaryTag ||
+            (Array.isArray(item.standardLabelPath) && item.standardLabelPath.length) ||
+            item.sourceLabelPath ||
+            item.sourceDirectionId ||
+            item.sourceDirectionPath ||
+            item.sourceRawName ||
+            item.referenceFolderPath
+        );
+        return hasTitle || hasLabelClue;
+    }
+
+    function resolveBatchOutputNameBase(item, directionLibrary) {
+        if (!item || typeof item !== 'object') {
+            return '';
+        }
+        if (!hasBatchOutputNamingClue(item)) {
+            return '';
+        }
+
+        const namingContext = buildCreativeOutputNamingContext({
+            ...item,
+            contentTitle: item.contentTitle || item.title || item.newDirectionName || item.outputNameBase,
+            fallbackName: item.fallbackName || item.title || item.contentTitle || item.newDirectionName || item.outputNameBase || item.sourceRawName,
+            directionLibrary,
+            strictLibraryTags: true
+        });
+
+        Object.assign(item, namingContext);
+        return namingContext.outputNameBase || '';
+    }
 
 
 
@@ -107,7 +481,9 @@ module.exports = function registerLegilRoutes(app, context) {
      * ============================================
      */
     app.post('/api/legil/batch-generate', async (req, res) => {
-        const { prompts } = req.body;
+        const requestBody = req.body || {};
+        const { prompts } = requestBody;
+        const directionLibrary = readCreativeDirectionLibrary(requestBody);
 
         console.log('\n🎨 收到 Legil 批量生成请求');
         console.log('   提示词数量:', prompts ? prompts.length : 0);
@@ -128,10 +504,7 @@ module.exports = function registerLegilRoutes(app, context) {
             });
         }
 
-        const normalizedPrompts = prompts
-            .map(promptData => typeof promptData === 'string' ? promptData : promptData && promptData.content)
-            .filter(promptText => typeof promptText === 'string' && promptText.trim())
-            .map(promptText => promptText.trim());
+        const normalizedPrompts = normalizeBatchGeneratePromptItems(prompts, requestBody);
 
         if (normalizedPrompts.length === 0) {
             return res.json({
@@ -160,10 +533,15 @@ module.exports = function registerLegilRoutes(app, context) {
             try {
                 let outputSequence = 1;
                 let consecutiveFailures = 0;
-                const legilOutputQuantity = legilAutomation.getConfig().settings.outputQuantity || 1;
+                const batchGenerationSettings = legilAutomation.getConfig().settings || {};
+                const legilOutputQuantity = batchGenerationSettings.outputQuantity || 1;
                 const outputTotal = normalizedPrompts.length * legilOutputQuantity;
+                const savedFiles = [];
+                const promptResults = [];
                 for (let i = 0; i < normalizedPrompts.length; i++) {
-                    const promptText = normalizedPrompts[i];
+                    const promptItem = normalizedPrompts[i];
+                    const promptText = promptItem.prompt;
+                    const outputNameBase = resolveBatchOutputNameBase(promptItem, directionLibrary);
 
                     logger.info(`正在生成第 ${i + 1}/${normalizedPrompts.length} 张图片...`);
 
@@ -174,6 +552,9 @@ module.exports = function registerLegilRoutes(app, context) {
                             runId: batchRunId,
                             promptIndexWithinImage: i + 1,
                             totalPromptsForImage: normalizedPrompts.length,
+                            outputNameBase: outputNameBase || undefined,
+                            referenceImageName: outputNameBase || promptItem.sourceRawName || undefined,
+                            promptTitle: promptItem.promptTitle || undefined,
                             taskType: 'Legil批量生成',
                             autoRecoveryEnabled: appConfig.notifications.autoRecoveryEnabled,
                             captureErrorScreenshot: appConfig.notifications.legilScreenshotEnabled
@@ -182,6 +563,74 @@ module.exports = function registerLegilRoutes(app, context) {
                         if (result.success) {
                             consecutiveFailures = 0;
                             const savedCount = Number(result.savedCount) || 1;
+                            const resultSavePaths = Array.isArray(result.savePaths)
+                                ? result.savePaths
+                                : (result.savePath ? [result.savePath] : []);
+                            let promptFilePath = '';
+                            const promptFileSavedAt = new Date().toISOString();
+                            try {
+                                promptFilePath = savePromptTextFileForPromptGroup(resultSavePaths, promptItem, {
+                                    savedAt: promptFileSavedAt,
+                                    runId: batchRunId,
+                                    displayIndex: i + 1
+                                });
+                                if (promptFilePath) {
+                                    logger.info(`Prompt text saved: ${path.basename(promptFilePath)}`);
+                                }
+                            } catch (promptFileError) {
+                                logger.warn(`Prompt text save failed: ${promptFileError.message}`);
+                            }
+                            const promptSavedFiles = resultSavePaths.map((filePath, fileIndex) => ({
+                                filePath,
+                                fileName: path.basename(filePath),
+                                promptFilePath,
+                                promptFileName: promptFilePath ? path.basename(promptFilePath) : '',
+                                promptListIndex: i + 1,
+                                displayIndex: i + 1,
+                                imageIndex: fileIndex + 1,
+                                promptTitle: promptItem.promptTitle || '',
+                                sourceDirectionId: promptItem.sourceDirectionId || '',
+                                sourceDirectionPath: promptItem.sourceDirectionPath || '',
+                                sourceRawName: promptItem.sourceRawName || '',
+                                sourceParsedParts: promptItem.sourceParsedParts || [],
+                                sourceContentTitle: promptItem.sourceContentTitle || '',
+                                droppedLabelParts: promptItem.droppedLabelParts || [],
+                                newDirectionName: promptItem.newDirectionName || '',
+                                outputNameBase: outputNameBase || '',
+                                contentTitle: promptItem.contentTitle || promptItem.title || '',
+                                standardLabelPath: promptItem.standardLabelPath || [],
+                                primaryTag: promptItem.primaryTag || '',
+                                secondaryTag: promptItem.secondaryTag || '',
+                                tertiaryTag: promptItem.tertiaryTag || '',
+                                namingSource: promptItem.namingSource || '',
+                                tagConfidence: promptItem.tagConfidence || '',
+                                savedAt: promptFileSavedAt
+                            }));
+                            savedFiles.push(...promptSavedFiles);
+                            promptResults.push({
+                                promptListIndex: i + 1,
+                                displayIndex: i + 1,
+                                promptTitle: promptItem.promptTitle || '',
+                                sourceDirectionId: promptItem.sourceDirectionId || '',
+                                sourceDirectionPath: promptItem.sourceDirectionPath || '',
+                                sourceRawName: promptItem.sourceRawName || '',
+                                sourceParsedParts: promptItem.sourceParsedParts || [],
+                                sourceContentTitle: promptItem.sourceContentTitle || '',
+                                droppedLabelParts: promptItem.droppedLabelParts || [],
+                                newDirectionName: promptItem.newDirectionName || '',
+                                outputNameBase: outputNameBase || '',
+                                contentTitle: promptItem.contentTitle || promptItem.title || '',
+                                standardLabelPath: promptItem.standardLabelPath || [],
+                                primaryTag: promptItem.primaryTag || '',
+                                secondaryTag: promptItem.secondaryTag || '',
+                                tertiaryTag: promptItem.tertiaryTag || '',
+                                namingSource: promptItem.namingSource || '',
+                                tagConfidence: promptItem.tagConfidence || '',
+                                promptFilePath,
+                                promptFileName: promptFilePath ? path.basename(promptFilePath) : '',
+                                savedCount,
+                                savedFiles: promptSavedFiles
+                            });
                             outputSequence += savedCount;
                             logger.info(`✅ 第 ${i + 1} 组生成成功，保存 ${savedCount} 张图片: ${path.basename(result.savePath)}`);
                         } else {
@@ -218,6 +667,25 @@ module.exports = function registerLegilRoutes(app, context) {
                 }
 
                 logger.system('✅ 批量生成完成！');
+                registerLegilGeneratedAssets({
+                    source: 'legil-batch-generate',
+                    runId: batchRunId,
+                    outputFolder: legilAutomation.saveFolder,
+                    generationSettings: batchGenerationSettings,
+                    prompts: normalizedPrompts,
+                    progress: {
+                        taskType: 'batch-generate',
+                        phase: 'completed',
+                        saved: savedFiles.length,
+                        success: promptResults.length,
+                        failed: Math.max(0, normalizedPrompts.length - promptResults.length),
+                        outputTotal,
+                        batchRunId,
+                        savedFiles,
+                        promptResults,
+                        updatedAt: new Date().toISOString()
+                    }
+                });
             } finally {
                 automationState.legilTaskRunning = false;
                 automationState.legilStopRequested = false;
@@ -246,18 +714,95 @@ module.exports = function registerLegilRoutes(app, context) {
     });
 
 
+    app.get('/api/resize/resume', (req, res) => {
+        res.json({
+            success: true,
+            resume: getResizeResumeInfo(false)
+        });
+    });
+
+
+
+    app.post('/api/resize/resume/clear', (req, res) => {
+        if (automationState.legilTaskRunning && automationState.legilTaskType === 'resize-batch') {
+            return res.json({
+                success: false,
+                message: 'Legil 改尺寸任务正在运行，不能清除恢复状态'
+            });
+        }
+        if (context.jimengBrowserService && context.jimengBrowserService.isRunning()) {
+            return res.json({
+                success: false,
+                message: '即梦改尺寸任务正在运行，不能清除恢复状态'
+            });
+        }
+
+        clearResizeResumeState();
+        res.json({
+            success: true,
+            resume: { hasResume: false },
+            message: '改尺寸恢复状态已清除'
+        });
+    });
+
+
 
     /**
      * ============================================
-     * Legil 批量改尺寸：只使用 Legil，不调用豆包 API
+     * Legil 批量改尺寸：只使用 Legil，不调用提示词 LLM
      * ============================================
      */
     app.post('/api/legil/resize-batch', async (req, res) => {
-        const resizeConfig = normalizeResizeConfigPayload(req.body || {});
-        const resizeGenerationSettings = normalizeLegilGenerationSettings(
+        const requestBody = req.body || {};
+        const resumeRequested = requestBody.resumeMode === true ||
+            String(requestBody.resumeMode || '').toLowerCase() === 'true' ||
+            Boolean(String(requestBody.resumeRunId || '').trim());
+        const resumeInfo = resumeRequested ? getResizeResumeInfo(true) : null;
+        let resizeConfig = normalizeResizeConfigPayload(requestBody);
+        let resizeGenerationSettings = normalizeLegilGenerationSettings(
             req.body && typeof req.body.generationSettings === 'object' ? req.body.generationSettings : resizeConfig.generationSettings,
             resizeConfig.generationSettings || DEFAULT_RESIZE_CONFIG.generationSettings
         );
+        let resumeBase = null;
+        if (resumeRequested) {
+            if (!resumeInfo || !resumeInfo.hasResume || resumeInfo.provider !== 'legil' || !Array.isArray(resumeInfo.jobs)) {
+                return res.json({
+                    success: false,
+                    message: '没有可继续的 Legil 改尺寸任务'
+                });
+            }
+            const resumeRunId = String(requestBody.resumeRunId || '').trim();
+            if (resumeRunId && resumeInfo.runId && resumeRunId !== resumeInfo.runId) {
+                return res.json({
+                    success: false,
+                    message: '可继续任务已变化，请刷新页面后重试'
+                });
+            }
+            resizeConfig = normalizeResizeConfigPayload({
+                inputFolder: resumeInfo.inputFolder,
+                outputFolder: resumeInfo.outputFolder,
+                browserMode: resumeInfo.browserMode,
+                promptTemplate: resumeInfo.promptTemplate,
+                generationSettings: resumeInfo.generationSettings
+            });
+            resizeGenerationSettings = normalizeLegilGenerationSettings(
+                resumeInfo.generationSettings,
+                resizeConfig.generationSettings || DEFAULT_RESIZE_CONFIG.generationSettings
+            );
+            resumeBase = {
+                runId: resumeInfo.runId,
+                jobs: resumeInfo.jobs,
+                nextIndex: Number(resumeInfo.nextIndex) || 0,
+                total: Number(resumeInfo.total) || resumeInfo.jobs.length,
+                totalImages: Number(resumeInfo.totalImages) || 0,
+                totalAspectRatios: Number(resumeInfo.totalAspectRatios) || 0,
+                completed: Number(resumeInfo.completed) || 0,
+                success: Number(resumeInfo.success) || 0,
+                failed: Number(resumeInfo.failed) || 0,
+                saved: Number(resumeInfo.saved) || 0,
+                outputTotal: Number(resumeInfo.progress && resumeInfo.progress.outputTotal) || 0
+            };
+        }
         const promptText = String(resizeConfig.promptTemplate || '').trim();
 
         console.log('\n🖼️ 收到 Legil 批量改尺寸请求');
@@ -294,11 +839,19 @@ module.exports = function registerLegilRoutes(app, context) {
                 });
             }
 
-            const imageFiles = listImageFilesInFolder(resizeConfig.inputFolder);
+            let imageFiles = resumeBase
+                ? Array.from(new Set(resumeBase.jobs.map(job => job.imagePath)))
+                : listImageFilesInFolder(resizeConfig.inputFolder);
             if (imageFiles.length === 0) {
                 return res.json({
                     success: false,
                     message: '输入文件夹中没有找到图片'
+                });
+            }
+            if (resumeBase && resumeBase.jobs.slice(resumeBase.nextIndex).length === 0) {
+                return res.json({
+                    success: false,
+                    message: '没有剩余的 Legil 改尺寸任务可继续'
                 });
             }
 
@@ -321,29 +874,79 @@ module.exports = function registerLegilRoutes(app, context) {
             automationState.legilTaskRunning = true;
             automationState.legilStopRequested = false;
             automationState.legilTaskType = 'resize-batch';
-            const batchRunId = formatDateTimeForFile();
-            const outputTotal = imageFiles.length * (Number(resizeGenerationSettings.outputQuantity) || 1);
+            const batchRunId = resumeBase && resumeBase.runId ? resumeBase.runId : formatDateTimeForFile();
+            const resizeAspectRatios = Array.isArray(resizeGenerationSettings.aspectRatios) && resizeGenerationSettings.aspectRatios.length
+                ? resizeGenerationSettings.aspectRatios
+                : [resizeGenerationSettings.aspectRatio];
+            const allResizeJobs = resumeBase
+                ? resumeBase.jobs
+                : buildResizeJobs(imageFiles, resizeAspectRatios);
+            const resizeJobs = resumeBase
+                ? allResizeJobs.slice(resumeBase.nextIndex)
+                : allResizeJobs;
+            const progressTotal = resumeBase ? resumeBase.total : allResizeJobs.length;
+            const baseCompleted = resumeBase ? resumeBase.completed : 0;
+            const baseSuccess = resumeBase ? resumeBase.success : 0;
+            const baseFailed = resumeBase ? resumeBase.failed : 0;
+            const baseSaved = resumeBase ? resumeBase.saved : 0;
+            const runNextIndexBase = resumeBase ? resumeBase.nextIndex : 0;
+            const outputTotal = Math.max(
+                resumeBase ? resumeBase.outputTotal : 0,
+                progressTotal * (Number(resizeGenerationSettings.outputQuantity) || 1)
+            );
             const resizeHeadless = resizeConfig.browserMode === 'headless';
             automationState.legilTaskProgress = {
                 taskType: 'resize-batch',
                 phase: 'queued',
-                total: imageFiles.length,
-                currentIndex: 0,
-                completed: 0,
-                success: 0,
-                failed: 0,
-                saved: 0,
+                total: progressTotal,
+                totalImages: resumeBase ? resumeBase.totalImages : imageFiles.length,
+                totalAspectRatios: resumeBase ? resumeBase.totalAspectRatios : resizeAspectRatios.length,
+                currentIndex: baseCompleted,
+                completed: baseCompleted,
+                success: baseSuccess,
+                failed: baseFailed,
+                saved: baseSaved,
                 outputTotal,
                 browserMode: resizeConfig.browserMode,
                 currentName: '',
-                currentAction: '批量改尺寸任务已排队，准备开始...',
+                currentAction: resumeBase
+                    ? `Legil 改尺寸继续任务已排队，准备从 ${baseCompleted}/${progressTotal} 继续...`
+                    : '批量改尺寸任务已排队，准备开始...',
                 startedAt: new Date().toISOString(),
                 updatedAt: new Date().toISOString()
             };
 
+            setResizeResumeState({
+                provider: 'legil',
+                runId: batchRunId,
+                phase: 'queued',
+                inputFolder: resizeConfig.inputFolder,
+                outputFolder: resizeConfig.outputFolder,
+                browserMode: resizeConfig.browserMode,
+                promptTemplate: resizeConfig.promptTemplate,
+                generationSettings: resizeGenerationSettings,
+                jobs: allResizeJobs,
+                total: progressTotal,
+                totalImages: resumeBase ? resumeBase.totalImages : imageFiles.length,
+                totalAspectRatios: resumeBase ? resumeBase.totalAspectRatios : resizeAspectRatios.length,
+                nextIndex: runNextIndexBase,
+                currentIndex: baseCompleted,
+                completed: baseCompleted,
+                success: baseSuccess,
+                failed: baseFailed,
+                saved: baseSaved,
+                outputTotal,
+                currentName: '',
+                currentAction: automationState.legilTaskProgress.currentAction,
+                startedAt: automationState.legilTaskProgress.startedAt,
+                updatedAt: automationState.legilTaskProgress.updatedAt
+            });
+
             res.json({
                 success: true,
-                message: `已启动 Legil 批量改尺寸任务，共 ${imageFiles.length} 张输入图。请通过实时日志查看进度。`,
+                message: resumeBase
+                    ? `已继续 Legil 批量改尺寸任务，剩余 ${resizeJobs.length} 组。请通过实时日志查看进度。`
+                    : `已启动 Legil 批量改尺寸任务，共 ${imageFiles.length} 张输入图、${resizeAspectRatios.length} 个宽高比。请通过实时日志查看进度。`,
                 totalImages: imageFiles.length,
                 outputTotal,
                 progress: automationState.legilTaskProgress
@@ -366,65 +969,97 @@ module.exports = function registerLegilRoutes(app, context) {
                 logger.info(`输出文件夹: ${resizeConfig.outputFolder}`);
                 logger.info(`运行模式: ${resizeHeadless ? '无头模式' : '有头模式'}`);
                 logger.info(`输入图片数量: ${imageFiles.length}`);
-                logger.info(`改尺寸 Legil 参数: 模型 ${legilAutomation.getImageModelLabel(resizeGenerationSettings.imageModel)}，宽高比 ${resizeGenerationSettings.aspectRatio}，分辨率 ${resizeGenerationSettings.resolution}，输出数量 ${resizeGenerationSettings.outputQuantity}`);
+                logger.info(`改尺寸 Legil 参数: 模型 ${legilAutomation.getImageModelLabel(resizeGenerationSettings.imageModel)}，宽高比 ${resizeAspectRatios.join('、')}，分辨率 ${resizeGenerationSettings.resolution}，输出数量 ${resizeGenerationSettings.outputQuantity}`);
                 logger.system('========================================');
 
-                let outputSequence = 1;
+                let outputSequence = baseSaved + 1;
                 let successCount = 0;
                 let failedCount = 0;
+                let savedTotal = 0;
                 let consecutiveFailures = 0;
                 let stopped = false;
                 let interruptedMessage = '';
+                const totalImagesForProgress = resumeBase ? resumeBase.totalImages : imageFiles.length;
+                const totalRatiosForProgress = resumeBase ? resumeBase.totalAspectRatios : resizeAspectRatios.length;
+                const getLocalCompleted = () => successCount + failedCount;
+                const getAggregateCompleted = () => Math.min(progressTotal, baseCompleted + getLocalCompleted());
+                const getAggregateSuccess = () => baseSuccess + successCount;
+                const getAggregateFailed = () => baseFailed + failedCount;
+                const getAggregateSaved = () => baseSaved + savedTotal;
+                const getResumeNextIndex = () => Math.min(allResizeJobs.length, runNextIndexBase + getLocalCompleted());
                 const updateResizeProgress = (patch = {}) => {
                     automationState.legilTaskProgress = {
                         ...(automationState.legilTaskProgress || {}),
                         taskType: 'resize-batch',
-                        total: imageFiles.length,
+                        total: progressTotal,
+                        totalImages: totalImagesForProgress,
+                        totalAspectRatios: totalRatiosForProgress,
                         outputTotal,
                         browserMode: resizeConfig.browserMode,
                         ...patch,
                         updatedAt: new Date().toISOString()
                     };
                 };
+                const updateResizeResumeFromProgress = (patch = {}) => {
+                    updateResizeResumeState({
+                        phase: patch.phase || 'running',
+                        nextIndex: getResumeNextIndex(),
+                        currentIndex: patch.currentIndex !== undefined ? patch.currentIndex : getAggregateCompleted(),
+                        completed: getAggregateCompleted(),
+                        success: getAggregateSuccess(),
+                        failed: getAggregateFailed(),
+                        saved: getAggregateSaved(),
+                        currentName: patch.currentName || '',
+                        currentAction: patch.currentAction || '',
+                        ...patch
+                    });
+                };
 
                 try {
-                    for (let i = 0; i < imageFiles.length; i++) {
+                    for (const job of resizeJobs) {
                         if (isLegilStopRequested()) {
                             stopped = true;
                             logger.warn('⏹️ 改尺寸任务已停止，退出剩余图片处理');
                             break;
                         }
 
-                        const imagePath = imageFiles[i];
+                        const imagePath = job.imagePath;
                         const imageName = path.basename(imagePath);
+                        const perRatioGenerationSettings = {
+                            ...resizeGenerationSettings,
+                            aspectRatio: job.aspectRatio,
+                            aspectRatios: resizeAspectRatios
+                        };
+
                         updateResizeProgress({
                             phase: 'running',
-                            currentIndex: i + 1,
-                            completed: successCount + failedCount,
-                            success: successCount,
-                            failed: failedCount,
-                            saved: outputSequence - 1,
+                            currentIndex: job.jobIndex,
+                            completed: getAggregateCompleted(),
+                            success: getAggregateSuccess(),
+                            failed: getAggregateFailed(),
+                            saved: getAggregateSaved(),
                             currentName: imageName,
-                            currentAction: `正在处理改尺寸图片 ${i + 1}/${imageFiles.length}: ${imageName}`
+                            currentAction: `正在处理改尺寸图片 ${job.imageIndex + 1}/${imageFiles.length}，比例 ${job.ratioIndex + 1}/${resizeAspectRatios.length}（${job.aspectRatio}）: ${imageName}`
                         });
+                        updateResizeResumeFromProgress(automationState.legilTaskProgress);
 
                         logger.info('');
-                        logger.info(`🖼️ 正在处理改尺寸图片 ${i + 1}/${imageFiles.length}: ${imageName}`);
+                        logger.info(`🖼️ 正在处理改尺寸图片 ${job.imageIndex + 1}/${imageFiles.length}: ${imageName}，比例 ${job.ratioIndex + 1}/${resizeAspectRatios.length}（${job.aspectRatio}）`);
 
                         try {
-                            const result = await legilAutomation.generateImage(promptText, i + 1, {
+                            const result = await legilAutomation.generateImage(promptText, job.jobIndex, {
                                 referenceImagePath: imagePath,
                                 saveFolder: resizeConfig.outputFolder,
                                 headless: resizeHeadless,
-                                generationSettings: resizeGenerationSettings,
+                                generationSettings: perRatioGenerationSettings,
                                 outputSequence,
                                 outputTotal,
                                 runId: batchRunId,
-                                referenceImageIndex: i + 1,
+                                referenceImageIndex: job.imageIndex + 1,
                                 totalReferenceImages: imageFiles.length,
                                 referenceImageName: imageName,
-                                promptIndexWithinImage: 1,
-                                totalPromptsForImage: 1,
+                                promptIndexWithinImage: job.ratioIndex + 1,
+                                totalPromptsForImage: resizeAspectRatios.length,
                                 taskType: '批量改尺寸',
                                 acceptStablePartialOutputs: true,
                                 autoRecoveryEnabled: appConfig.notifications.autoRecoveryEnabled,
@@ -436,18 +1071,20 @@ module.exports = function registerLegilRoutes(app, context) {
                                 consecutiveFailures = 0;
                                 const savedCount = Number(result.savedCount) || 1;
                                 outputSequence += savedCount;
+                                savedTotal += savedCount;
                                 successCount += 1;
                                 updateResizeProgress({
                                     phase: 'running',
-                                    currentIndex: i + 1,
-                                    completed: successCount + failedCount,
-                                    success: successCount,
-                                    failed: failedCount,
-                                    saved: outputSequence - 1,
+                                    currentIndex: job.jobIndex,
+                                    completed: getAggregateCompleted(),
+                                    success: getAggregateSuccess(),
+                                    failed: getAggregateFailed(),
+                                    saved: getAggregateSaved(),
                                     currentName: imageName,
-                                    currentAction: `改尺寸图片 ${i + 1}/${imageFiles.length} 完成，保存 ${savedCount} 张`
+                                    currentAction: `改尺寸图片 ${job.imageIndex + 1}/${imageFiles.length}，比例 ${job.aspectRatio} 完成，保存 ${savedCount} 张`
                                 });
-                                logger.info(`✅ 改尺寸图片 ${i + 1}/${imageFiles.length} 完成，保存 ${savedCount} 张`);
+                                updateResizeResumeFromProgress(automationState.legilTaskProgress);
+                                logger.info(`✅ 改尺寸图片 ${job.imageIndex + 1}/${imageFiles.length}，比例 ${job.aspectRatio} 完成，保存 ${savedCount} 张`);
                             } else if (isLegilStopRequested() || String(result.message || '').includes('操作已取消')) {
                                 stopped = true;
                                 logger.warn('⏹️ 改尺寸任务已停止');
@@ -457,15 +1094,16 @@ module.exports = function registerLegilRoutes(app, context) {
                                 consecutiveFailures += 1;
                                 updateResizeProgress({
                                     phase: 'running',
-                                    currentIndex: i + 1,
-                                    completed: successCount + failedCount,
-                                    success: successCount,
-                                    failed: failedCount,
-                                    saved: outputSequence - 1,
+                                    currentIndex: job.jobIndex,
+                                    completed: getAggregateCompleted(),
+                                    success: getAggregateSuccess(),
+                                    failed: getAggregateFailed(),
+                                    saved: getAggregateSaved(),
                                     currentName: imageName,
-                                    currentAction: `改尺寸图片 ${i + 1}/${imageFiles.length} 失败: ${result.message}`
+                                    currentAction: `改尺寸图片 ${job.imageIndex + 1}/${imageFiles.length}，比例 ${job.aspectRatio} 失败: ${result.message}`
                                 });
-                                logger.error(`❌ 改尺寸图片 ${i + 1}/${imageFiles.length} 失败: ${result.message}`);
+                                updateResizeResumeFromProgress(automationState.legilTaskProgress);
+                                logger.error(`❌ 改尺寸图片 ${job.imageIndex + 1}/${imageFiles.length}，比例 ${job.aspectRatio} 失败: ${result.message}`);
                                 if (
                                     appConfig.notifications.pauseOnConsecutiveFailures &&
                                     consecutiveFailures >= appConfig.notifications.consecutiveFailureThreshold
@@ -495,15 +1133,16 @@ module.exports = function registerLegilRoutes(app, context) {
                             consecutiveFailures += 1;
                             updateResizeProgress({
                                 phase: 'running',
-                                currentIndex: i + 1,
-                                completed: successCount + failedCount,
-                                success: successCount,
-                                failed: failedCount,
-                                saved: outputSequence - 1,
+                                currentIndex: job.jobIndex,
+                                completed: getAggregateCompleted(),
+                                success: getAggregateSuccess(),
+                                failed: getAggregateFailed(),
+                                saved: getAggregateSaved(),
                                 currentName: imageName,
-                                currentAction: `改尺寸图片 ${i + 1}/${imageFiles.length} 出错: ${error.message}`
+                                currentAction: `改尺寸图片 ${job.imageIndex + 1}/${imageFiles.length}，比例 ${job.aspectRatio} 出错: ${error.message}`
                             });
-                            logger.error(`❌ 改尺寸图片 ${i + 1}/${imageFiles.length} 出错: ${error.message}`);
+                            updateResizeResumeFromProgress(automationState.legilTaskProgress);
+                            logger.error(`❌ 改尺寸图片 ${job.imageIndex + 1}/${imageFiles.length}，比例 ${job.aspectRatio} 出错: ${error.message}`);
                             if (
                                 appConfig.notifications.pauseOnConsecutiveFailures &&
                                 consecutiveFailures >= appConfig.notifications.consecutiveFailureThreshold
@@ -524,7 +1163,9 @@ module.exports = function registerLegilRoutes(app, context) {
                             }
                         }
 
-                        if (i < imageFiles.length - 1) {
+                        const isLastRatioForImage = job.ratioIndex === resizeAspectRatios.length - 1;
+                        const isLastImage = job.imageIndex >= imageFiles.length - 1;
+                        if (isLastRatioForImage && !isLastImage) {
                             logger.info('等待 5 秒后继续下一张...');
                             try {
                                 await sleepWithLegilStop(5000);
@@ -540,25 +1181,27 @@ module.exports = function registerLegilRoutes(app, context) {
                     if (stopped) {
                         updateResizeProgress({
                             phase: 'stopped',
-                            currentIndex: successCount + failedCount,
-                            completed: successCount + failedCount,
-                            success: successCount,
-                            failed: failedCount,
-                            saved: outputSequence - 1,
+                            currentIndex: getAggregateCompleted(),
+                            completed: getAggregateCompleted(),
+                            success: getAggregateSuccess(),
+                            failed: getAggregateFailed(),
+                            saved: getAggregateSaved(),
                             currentAction: '批量改尺寸任务已停止'
                         });
-                        logger.system(`⏹️ Legil 批量改尺寸任务已停止：成功 ${successCount} 张，失败 ${failedCount} 张`);
+                        updateResizeResumeFromProgress(automationState.legilTaskProgress);
+                        logger.system(`⏹️ Legil 批量改尺寸任务已停止：成功 ${getAggregateSuccess()} 组，失败 ${getAggregateFailed()} 组`);
                     } else {
                         updateResizeProgress({
                             phase: 'completed',
-                            currentIndex: imageFiles.length,
-                            completed: successCount + failedCount,
-                            success: successCount,
-                            failed: failedCount,
-                            saved: outputSequence - 1,
-                            currentAction: `批量改尺寸任务完成：成功 ${successCount} 张，失败 ${failedCount} 张`
+                            currentIndex: progressTotal,
+                            completed: getAggregateCompleted(),
+                            success: getAggregateSuccess(),
+                            failed: getAggregateFailed(),
+                            saved: getAggregateSaved(),
+                            currentAction: `批量改尺寸任务完成：成功 ${getAggregateSuccess()} 组，失败 ${getAggregateFailed()} 组`
                         });
-                        logger.system(`✅ Legil 批量改尺寸任务完成：成功 ${successCount} 张，失败 ${failedCount} 张`);
+                        clearResizeResumeState();
+                        logger.system(`✅ Legil 批量改尺寸任务完成：成功 ${getAggregateSuccess()} 组，失败 ${getAggregateFailed()} 组`);
                     }
                     logger.system('========================================');
                 } catch (error) {
@@ -566,20 +1209,21 @@ module.exports = function registerLegilRoutes(app, context) {
                     interruptedMessage = safeMessage;
                     updateResizeProgress({
                         phase: 'interrupted',
-                        currentIndex: successCount + failedCount,
-                        completed: successCount + failedCount,
-                        success: successCount,
-                        failed: failedCount,
-                        saved: outputSequence - 1,
+                        currentIndex: getAggregateCompleted(),
+                        completed: getAggregateCompleted(),
+                        success: getAggregateSuccess(),
+                        failed: getAggregateFailed(),
+                        saved: getAggregateSaved(),
                         currentAction: `批量改尺寸任务被中断: ${safeMessage}`
                     });
+                    updateResizeResumeFromProgress(automationState.legilTaskProgress);
                     logger.error(`❌ Legil 批量改尺寸任务被中断: ${safeMessage}`);
                 } finally {
                     notifyLegilResult('resize-batch', {
-                        successCount,
-                        failedCount,
+                        successCount: getAggregateSuccess(),
+                        failedCount: getAggregateFailed(),
                         interrupted: Boolean(interruptedMessage),
-                        message: interruptedMessage || (stopped ? '任务已停止' : `任务完成：成功 ${successCount} 张，失败 ${failedCount} 张`)
+                        message: interruptedMessage || (stopped ? '任务已停止' : `任务完成：成功 ${getAggregateSuccess()} 组，失败 ${getAggregateFailed()} 组`)
                     });
                     legilAutomation.saveFolder = previousSaveFolder;
                     legilAutomation.referenceFolder = previousReferenceFolder;
@@ -656,6 +1300,7 @@ module.exports = function registerLegilRoutes(app, context) {
         );
         const promptItems = Array.isArray(req.body && req.body.prompts) ? req.body.prompts : [];
         const normalizedPrompts = normalizeCreativeBatchPromptItems(promptItems);
+        const directionLibrary = readCreativeDirectionLibrary(req.body || {});
         const creativeTableFileName = String(req.body && req.body.tableFileName ? req.body.tableFileName : '').trim();
 
         console.log('\n🎨 收到 Legil 创意拓展批量生成请求');
@@ -673,7 +1318,7 @@ module.exports = function registerLegilRoutes(app, context) {
         if (normalizedPrompts.length === 0) {
             return res.json({
                 success: false,
-                message: '请先上传表格并提取有效画面提示词'
+                message: 'Please provide valid image prompts before starting Legil generation'
             });
         }
 
@@ -731,6 +1376,10 @@ module.exports = function registerLegilRoutes(app, context) {
                 browserMode: creativeBrowserMode,
                 currentName: '',
                 currentAction: initialAction,
+                batchRunId,
+                creativeAutoRunId: String(req.body && req.body.creativeAutoRunId || ''),
+                savedFiles: [],
+                promptResults: [],
                 startedAt: new Date().toISOString(),
                 updatedAt: new Date().toISOString()
             };
@@ -797,6 +1446,8 @@ module.exports = function registerLegilRoutes(app, context) {
                 let successCount = 0;
                 let failedCount = 0;
                 let savedTotal = 0;
+                const savedFiles = [];
+                const promptResults = [];
                 let consecutiveFailures = 0;
                 let stopped = false;
                 let interruptedMessage = '';
@@ -815,9 +1466,22 @@ module.exports = function registerLegilRoutes(app, context) {
                         }
 
                         const promptItem = normalizedPrompts[i];
-                        const directionName = [promptItem.direction, promptItem.promptTitle]
-                            .filter(Boolean)
-                            .join('_') || `表格第${promptItem.sourceRow}行`;
+                        const namingContext = buildCreativeOutputNamingContext({
+                            ...promptItem,
+                            sourceDirectionPath: promptItem.sourceDirectionPath || promptItem.direction,
+                            contentTitle: promptItem.contentTitle || promptItem.newDirectionName || promptItem.direction,
+                            fallbackName: promptItem.newDirectionName || promptItem.direction || `表格第${promptItem.sourceRow}行`,
+                            directionLibrary,
+                            strictLibraryTags: true
+                        });
+                        const outputNameBase = namingContext.outputNameBase || promptItem.outputNameBase || promptItem.newDirectionName || promptItem.direction || `表格第${promptItem.sourceRow}行`;
+                        const enrichedPromptItem = {
+                            ...promptItem,
+                            ...namingContext,
+                            outputNameBase
+                        };
+                        normalizedPrompts[i] = enrichedPromptItem;
+                        const directionName = outputNameBase;
                         const displayIndex = runContext.baseCompleted + i + 1;
                         automationState.legilTaskProgress = {
                             ...(automationState.legilTaskProgress || {}),
@@ -850,7 +1514,7 @@ module.exports = function registerLegilRoutes(app, context) {
                         logger.info(`🎨 正在处理创意提示词 ${displayIndex}/${progressTotal}: ${directionName}`);
 
                         try {
-                            const result = await legilAutomation.generateImage(promptItem.prompt, i + 1, {
+                            const result = await legilAutomation.generateImage(enrichedPromptItem.prompt, i + 1, {
                                 saveFolder: creativeConfig.outputFolder,
                                 referenceFolder: creativeConfig.referenceFolder || undefined,
                                 skipReferenceUpload: !creativeConfig.referenceFolder,
@@ -861,6 +1525,7 @@ module.exports = function registerLegilRoutes(app, context) {
                                 referenceImageIndex: i + 1,
                                 totalReferenceImages: normalizedPrompts.length,
                                 referenceImageName: directionName,
+                                outputNameBase,
                                 promptIndexWithinImage: 1,
                                 totalPromptsForImage: 1,
                                 headless: creativeHeadless,
@@ -874,6 +1539,80 @@ module.exports = function registerLegilRoutes(app, context) {
                             if (result.success) {
                                 consecutiveFailures = 0;
                                 const savedCount = Number(result.savedCount) || 1;
+                                const resultSavePaths = Array.isArray(result.savePaths)
+                                    ? result.savePaths
+                                    : (result.savePath ? [result.savePath] : []);
+                                let promptFilePath = '';
+                                const promptFileSavedAt = new Date().toISOString();
+                                try {
+                                    promptFilePath = savePromptTextFileForPromptGroup(resultSavePaths, enrichedPromptItem, {
+                                        savedAt: promptFileSavedAt,
+                                        runId: batchRunId,
+                                        displayIndex
+                                    });
+                                    if (promptFilePath) {
+                                        logger.info(`Prompt text saved: ${path.basename(promptFilePath)}`);
+                                    }
+                                } catch (promptFileError) {
+                                    logger.warn(`Prompt text save failed: ${promptFileError.message}`);
+                                }
+                                const promptSavedFiles = resultSavePaths.map((filePath, fileIndex) => ({
+                                    filePath,
+                                    fileName: path.basename(filePath),
+                                    promptFilePath,
+                                    promptFileName: promptFilePath ? path.basename(promptFilePath) : '',
+                                    promptListIndex: i + 1,
+                                    displayIndex,
+                                    imageIndex: fileIndex + 1,
+                                    sourceRow: promptItem.sourceRow || '',
+                                    direction: enrichedPromptItem.direction || '',
+                                    promptTitle: enrichedPromptItem.promptTitle || '',
+                                    promptHash: enrichedPromptItem.promptHash || '',
+                                    sourceDirectionId: enrichedPromptItem.sourceDirectionId || '',
+                                    sourceDirectionPath: enrichedPromptItem.sourceDirectionPath || '',
+                                    sourceRawName: enrichedPromptItem.sourceRawName || '',
+                                    sourceParsedParts: enrichedPromptItem.sourceParsedParts || [],
+                                    sourceContentTitle: enrichedPromptItem.sourceContentTitle || '',
+                                    droppedLabelParts: enrichedPromptItem.droppedLabelParts || [],
+                                    newDirectionName: enrichedPromptItem.newDirectionName || '',
+                                    outputNameBase,
+                                    contentTitle: enrichedPromptItem.contentTitle || '',
+                                    standardLabelPath: enrichedPromptItem.standardLabelPath || [],
+                                    primaryTag: enrichedPromptItem.primaryTag || '',
+                                    secondaryTag: enrichedPromptItem.secondaryTag || '',
+                                    tertiaryTag: enrichedPromptItem.tertiaryTag || '',
+                                    namingSource: enrichedPromptItem.namingSource || '',
+                                    tagConfidence: enrichedPromptItem.tagConfidence || '',
+                                    savedAt: promptFileSavedAt
+                                }));
+                                savedFiles.push(...promptSavedFiles);
+                                promptResults.push({
+                                    promptListIndex: i + 1,
+                                    displayIndex,
+                                    sourceRow: enrichedPromptItem.sourceRow || '',
+                                    direction: enrichedPromptItem.direction || '',
+                                    promptTitle: enrichedPromptItem.promptTitle || '',
+                                    promptHash: enrichedPromptItem.promptHash || '',
+                                    sourceDirectionId: enrichedPromptItem.sourceDirectionId || '',
+                                    sourceDirectionPath: enrichedPromptItem.sourceDirectionPath || '',
+                                    sourceRawName: enrichedPromptItem.sourceRawName || '',
+                                    sourceParsedParts: enrichedPromptItem.sourceParsedParts || [],
+                                    sourceContentTitle: enrichedPromptItem.sourceContentTitle || '',
+                                    droppedLabelParts: enrichedPromptItem.droppedLabelParts || [],
+                                    newDirectionName: enrichedPromptItem.newDirectionName || '',
+                                    outputNameBase,
+                                    contentTitle: enrichedPromptItem.contentTitle || '',
+                                    standardLabelPath: enrichedPromptItem.standardLabelPath || [],
+                                    primaryTag: enrichedPromptItem.primaryTag || '',
+                                    secondaryTag: enrichedPromptItem.secondaryTag || '',
+                                    tertiaryTag: enrichedPromptItem.tertiaryTag || '',
+                                    namingSource: enrichedPromptItem.namingSource || '',
+                                    tagConfidence: enrichedPromptItem.tagConfidence || '',
+                                    promptFilePath,
+                                    promptFileName: promptFilePath ? path.basename(promptFilePath) : '',
+                                    savedCount,
+                                    savedFiles: promptSavedFiles
+                                });
                                 outputSequence += savedCount;
                                 successCount += 1;
                                 savedTotal += savedCount;
@@ -885,6 +1624,8 @@ module.exports = function registerLegilRoutes(app, context) {
                                     success: getAggregateSuccess(),
                                     failed: getAggregateFailed(),
                                     saved: getAggregateSaved(),
+                                    savedFiles,
+                                    promptResults,
                                     currentAction: `第 ${displayIndex}/${progressTotal} 组已完成，保存 ${savedCount} 张`,
                                     updatedAt: new Date().toISOString()
                                 };
@@ -1172,14 +1913,37 @@ module.exports = function registerLegilRoutes(app, context) {
                     });
                     logger.error(`❌ Legil 创意拓展任务被中断: ${safeMessage}`);
                 } finally {
-                    notifyLegilResult('creative-batch', {
-                        successCount: getAggregateSuccess(),
-                        failedCount: getAggregateFailed(),
-                        interrupted: Boolean(interruptedMessage),
-                        message: interruptedMessage || (stopped
-                            ? `任务已停止：成功 ${getAggregateSuccess()} 组，失败 ${getAggregateFailed()} 组`
-                            : `任务完成：成功 ${getAggregateSuccess()} 组，失败 ${getAggregateFailed()} 组`)
-                    });
+                    if (!(req.body && req.body.creativeAutoRunId)) {
+                        registerLegilGeneratedAssets({
+                            source: 'legil-creative-batch',
+                            runId: batchRunId,
+                            outputFolder: creativeConfig.outputFolder,
+                            generationSettings: creativeGenerationSettings,
+                            prompts: normalizedPrompts,
+                            progress: {
+                                ...(automationState.legilTaskProgress || {}),
+                                taskType: 'creative-batch',
+                                saved: getAggregateSaved(),
+                                success: getAggregateSuccess(),
+                                failed: getAggregateFailed(),
+                                outputTotal,
+                                batchRunId,
+                                savedFiles,
+                                promptResults,
+                                updatedAt: new Date().toISOString()
+                            }
+                        });
+                    }
+                    if (req.body && req.body.suppressLegilNotification !== true) {
+                        notifyLegilResult('creative-batch', {
+                            successCount: getAggregateSuccess(),
+                            failedCount: getAggregateFailed(),
+                            interrupted: Boolean(interruptedMessage),
+                            message: interruptedMessage || (stopped
+                                ? `任务已停止：成功 ${getAggregateSuccess()} 组，失败 ${getAggregateFailed()} 组`
+                                : `任务完成：成功 ${getAggregateSuccess()} 组，失败 ${getAggregateFailed()} 组`)
+                        });
+                    }
                     legilAutomation.saveFolder = previousSaveFolder;
                     legilAutomation.referenceFolder = previousReferenceFolder;
                     legilAutomation.referenceImages = previousReferenceImages;

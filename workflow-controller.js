@@ -433,9 +433,7 @@ class WorkflowController {
         logger.info(`输出文件夹: ${this.outputFolder}`);
         logger.info(`运行模式: ${this.headless ? '无头模式' : '有头模式'}`);
         const promptConfigForLog = promptGenerationService.getPublicConfig(this.promptGenerationConfig);
-        const promptProviderLabel = promptConfigForLog.provider === 'lumos'
-            ? `Lumos Winky / ${promptConfigForLog.lumos.model || '未填写模型'}`
-            : `豆包 / ${promptConfigForLog.doubao.modelLabel || '未填写模型'}`;
+        const promptProviderLabel = `Lumos Winky / ${promptConfigForLog.lumos.model || '未填写模型'}`;
         logger.info(`提示词生成模型: ${promptProviderLabel}`);
 
         try {
@@ -647,18 +645,14 @@ class WorkflowController {
 
         if (prompts.length === 0) {
             const publicPromptConfig = promptGenerationService.getPublicConfig(this.promptGenerationConfig);
-            const providerLabel = publicPromptConfig.provider === 'lumos'
-                ? `Lumos Winky / ${publicPromptConfig.lumos.model || '未填写模型'}`
-                : `豆包 / ${publicPromptConfig.doubao.modelLabel || '未填写模型'}`;
+            const providerLabel = `Lumos Winky / ${publicPromptConfig.lumos.model || '未填写模型'}`;
 
             // 更新状态 - 正在通过提示词模型生成提示词。
             this.updateStatus({
                 phase: 'extracting_prompts',
                 currentAction: `正在调用${providerLabel}生成提示词: ${imageName}`,
                 promptProvider: publicPromptConfig.provider,
-                promptModel: publicPromptConfig.provider === 'lumos'
-                    ? publicPromptConfig.lumos.model
-                    : publicPromptConfig.doubao.modelLabel
+                promptModel: publicPromptConfig.lumos.model
             });
             logger.info(`提示词生成模型: ${providerLabel}`);
 
@@ -857,6 +851,7 @@ class WorkflowController {
             : 0;
 
         return {
+            runId: this.currentRunId,
             isRunning: this.isRunning,
             currentIndex: this.currentIndex,
             totalImages: this.totalImages,

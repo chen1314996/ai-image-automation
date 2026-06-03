@@ -18,6 +18,7 @@ const DEFAULT_JIMENG_RESIZE_CONFIG = {
     generationSettings: {
         imageModel: 'image-5-lite',
         aspectRatio: '16:9',
+        aspectRatios: ['16:9'],
         resolution: '2k',
         outputQuantity: JIMENG_OUTPUT_QUANTITY,
         concurrency: 1,
@@ -96,6 +97,26 @@ function normalizeJimengResizeConfig(payload = {}, fallback = DEFAULT_JIMENG_RES
         : (JIMENG_GENERATION_OPTIONS.aspectRatios.includes(String(fallbackSettings.aspectRatio))
             ? String(fallbackSettings.aspectRatio)
             : DEFAULT_JIMENG_RESIZE_CONFIG.generationSettings.aspectRatio);
+    const normalizeAspectRatios = (value) => {
+        const rawValues = Array.isArray(value) ? value : [];
+        const seen = new Set();
+        return rawValues
+            .map(item => String(item || '').trim())
+            .filter(item => JIMENG_GENERATION_OPTIONS.aspectRatios.includes(item))
+            .filter(item => {
+                if (seen.has(item)) return false;
+                seen.add(item);
+                return true;
+            });
+    };
+    const sourceAspectRatios = normalizeAspectRatios(sourceSettings.aspectRatios);
+    const fallbackAspectRatios = normalizeAspectRatios(fallbackSettings.aspectRatios);
+    const aspectRatios = sourceAspectRatios.length
+        ? sourceAspectRatios
+        : (fallbackAspectRatios.length ? fallbackAspectRatios : [aspectRatio]);
+    const primaryAspectRatio = aspectRatios.includes(aspectRatio)
+        ? aspectRatio
+        : (aspectRatios[0] || aspectRatio);
     const resolution = JIMENG_GENERATION_OPTIONS.resolutions.some(option => option.value === String(sourceSettings.resolution).toLowerCase())
         ? String(sourceSettings.resolution).toLowerCase()
         : (JIMENG_GENERATION_OPTIONS.resolutions.some(option => option.value === String(fallbackSettings.resolution).toLowerCase())
@@ -113,7 +134,8 @@ function normalizeJimengResizeConfig(payload = {}, fallback = DEFAULT_JIMENG_RES
                 : (fallbackConfig.promptTemplate || DEFAULT_PROMPT)),
         generationSettings: {
             imageModel,
-            aspectRatio,
+            aspectRatio: primaryAspectRatio,
+            aspectRatios,
             resolution,
             outputQuantity: JIMENG_OUTPUT_QUANTITY,
             concurrency: 1,
@@ -1819,7 +1841,10 @@ class JimengBrowserService extends EventEmitter {
         this.fs.mkdirSync(outputFolder, { recursive: true });
 
         const sourceName = sanitizeFileNamePart(this.path.basename(imagePath, this.path.extname(imagePath)), 50);
-        const baseName = `jimeng_resize_${runId}_${padNumber(imageIndex, 3)}_${padNumber(outputIndex, 2)}_${sourceName}`;
+        const ratioPart = Array.isArray(settings.aspectRatios) && settings.aspectRatios.length > 1 && settings.aspectRatio
+            ? `_${sanitizeFileNamePart(String(settings.aspectRatio).replace(/[:：]/g, 'x'), 20)}`
+            : '';
+        const baseName = `jimeng_resize_${runId}_${padNumber(imageIndex, 3)}_${padNumber(outputIndex, 2)}${ratioPart}_${sourceName}`;
         const directUrl = this.normalizeImageUrl(candidate.src, page.url());
         const element = await this.findImageElementByCandidate(page, candidate);
 
@@ -2131,7 +2156,7 @@ class JimengBrowserService extends EventEmitter {
         });
     }
 
-    startResizeBatch(config, imageFiles = []) {
+    startResizeBatch(config, imageFiles = [], options = {}) {
         if (this.running) {
             return {
                 success: false,
@@ -2141,33 +2166,112 @@ class JimengBrowserService extends EventEmitter {
 
         const resizeConfig = normalizeJimengResizeConfig(config, DEFAULT_JIMENG_RESIZE_CONFIG);
         const safeImageFiles = Array.isArray(imageFiles) ? [...imageFiles] : [];
+        const aspectRatios = Array.isArray(resizeConfig.generationSettings.aspectRatios) && resizeConfig.generationSettings.aspectRatios.length
+            ? resizeConfig.generationSettings.aspectRatios
+            : [resizeConfig.generationSettings.aspectRatio];
         const concurrency = 1;
-        const runId = this.formatDateTimeForFile();
+        const buildJobs = () => {
+            const jobs = [];
+            safeImageFiles.forEach((imagePath, imageIndex) => {
+                aspectRatios.forEach((aspectRatio, ratioIndex) => {
+                    jobs.push({
+                        imagePath,
+                        imageName: this.path.basename(String(imagePath || '')),
+                        imageIndex,
+                        aspectRatio,
+                        ratioIndex,
+                        jobIndex: jobs.length + 1
+                    });
+                });
+            });
+            return jobs;
+        };
+        const allJobs = Array.isArray(options.jobs) && options.jobs.length ? options.jobs : buildJobs();
+        const resumeBase = options.resumeBase && typeof options.resumeBase === 'object' ? options.resumeBase : null;
+        const resumeNextIndex = Math.max(0, Math.min(allJobs.length, Number(options.resumeNextIndex) || 0));
+        const runId = String(options.runId || '').trim() || this.formatDateTimeForFile();
+        const totalJobs = resumeBase ? (Number(resumeBase.total) || allJobs.length) : allJobs.length;
+        const totalImages = resumeBase ? (Number(resumeBase.totalImages) || safeImageFiles.length) : safeImageFiles.length;
+        const totalAspectRatios = resumeBase ? (Number(resumeBase.totalAspectRatios) || aspectRatios.length) : aspectRatios.length;
+        const baseCompleted = resumeBase ? (Number(resumeBase.completed) || 0) : 0;
+        const baseSuccess = resumeBase ? (Number(resumeBase.success) || 0) : 0;
+        const baseFailed = resumeBase ? (Number(resumeBase.failed) || 0) : 0;
+        const baseSaved = resumeBase ? (Number(resumeBase.saved) || 0) : 0;
+        const outputTotal = Math.max(Number(resumeBase && resumeBase.outputTotal) || 0, totalJobs * JIMENG_OUTPUT_QUANTITY);
+        const startedAt = new Date().toISOString();
 
         this.running = true;
         this.stopRequested = false;
         this.taskType = JIMENG_TASK_TYPE;
         this.updateProgress({
             phase: 'queued',
-            total: safeImageFiles.length,
-            currentIndex: 0,
-            completed: 0,
-            success: 0,
-            failed: 0,
-            saved: 0,
+            total: totalJobs,
+            totalImages,
+            totalAspectRatios,
+            currentIndex: baseCompleted,
+            completed: baseCompleted,
+            success: baseSuccess,
+            failed: baseFailed,
+            saved: baseSaved,
+            outputTotal,
             active: 0,
-            queued: safeImageFiles.length,
+            queued: Math.max(0, totalJobs - resumeNextIndex),
             concurrency,
             browserMode: resizeConfig.browserMode,
             currentName: '',
-            currentAction: '即梦批量改尺寸任务已排队，准备启动浏览器...'
+            currentAction: resumeBase
+                ? `即梦批量改尺寸继续任务已排队，准备从 ${baseCompleted}/${totalJobs} 继续...`
+                : '即梦批量改尺寸任务已排队，准备启动浏览器...',
+            startedAt
         });
 
-        this.runResizeBatch(resizeConfig, safeImageFiles, runId).catch(error => {
+        if (typeof options.onSetResumeState === 'function') {
+            options.onSetResumeState({
+                provider: 'jimeng',
+                runId,
+                phase: 'queued',
+                inputFolder: resizeConfig.inputFolder,
+                outputFolder: resizeConfig.outputFolder,
+                browserMode: resizeConfig.browserMode,
+                promptTemplate: resizeConfig.promptTemplate,
+                generationSettings: resizeConfig.generationSettings,
+                jobs: allJobs,
+                total: totalJobs,
+                totalImages,
+                totalAspectRatios,
+                nextIndex: resumeNextIndex,
+                currentIndex: baseCompleted,
+                completed: baseCompleted,
+                success: baseSuccess,
+                failed: baseFailed,
+                saved: baseSaved,
+                outputTotal,
+                currentName: '',
+                currentAction: this.progress.currentAction,
+                startedAt
+            });
+        }
+
+        this.runResizeBatch(resizeConfig, safeImageFiles, runId, {
+            ...options,
+            jobs: allJobs,
+            resumeNextIndex,
+            resumeBase,
+            totalJobs,
+            totalImages,
+            totalAspectRatios,
+            outputTotal
+        }).catch(error => {
             this.updateProgress({
                 phase: 'interrupted',
                 currentAction: '即梦批量改尺寸任务被中断: ' + error.message
             });
+            if (typeof options.onUpdateResumeState === 'function') {
+                options.onUpdateResumeState({
+                    phase: 'interrupted',
+                    currentAction: '即梦批量改尺寸任务被中断: ' + error.message
+                });
+            }
             this.logger.error && this.logger.error(`即梦批量改尺寸任务被中断: ${error.message}`);
         }).finally(() => {
             this.running = false;
@@ -2177,27 +2281,53 @@ class JimengBrowserService extends EventEmitter {
 
         return {
             success: true,
-            message: `已启动即梦批量改尺寸任务，共 ${safeImageFiles.length} 张输入图。`,
+            message: resumeBase
+                ? `已继续即梦批量改尺寸任务，剩余 ${Math.max(0, allJobs.length - resumeNextIndex)} 组。`
+                : `已启动即梦批量改尺寸任务，共 ${safeImageFiles.length} 张输入图。`,
             totalImages: safeImageFiles.length,
-            outputTotal: safeImageFiles.length * JIMENG_OUTPUT_QUANTITY,
+            outputTotal,
             progress: this.progress
         };
     }
 
-    async runResizeBatch(config, imageFiles, runId) {
+    async runResizeBatch(config, imageFiles, runId, options = {}) {
         const headless = config.browserMode !== 'headed';
-        const total = imageFiles.length;
+        const aspectRatios = Array.isArray(config.generationSettings.aspectRatios) && config.generationSettings.aspectRatios.length
+            ? config.generationSettings.aspectRatios
+            : [config.generationSettings.aspectRatio];
+        const total = Number(options.totalJobs) || imageFiles.length * aspectRatios.length;
+        const totalImages = Number(options.totalImages) || imageFiles.length;
+        const totalAspectRatios = Number(options.totalAspectRatios) || aspectRatios.length;
+        const resumeBase = options.resumeBase && typeof options.resumeBase === 'object' ? options.resumeBase : null;
+        const startIndex = Math.max(0, Number(options.resumeNextIndex) || 0);
+        const outputTotal = Math.max(Number(options.outputTotal) || 0, total * JIMENG_OUTPUT_QUANTITY);
         const concurrency = 1;
-        let successCount = 0;
-        let failedCount = 0;
-        let savedCount = 0;
+        let successCount = resumeBase ? (Number(resumeBase.success) || 0) : 0;
+        let failedCount = resumeBase ? (Number(resumeBase.failed) || 0) : 0;
+        let savedCount = resumeBase ? (Number(resumeBase.saved) || 0) : 0;
         let stopped = false;
+        let jobIndex = 0;
+        const updateResumeState = (patch = {}) => {
+            if (typeof options.onUpdateResumeState !== 'function') return;
+            options.onUpdateResumeState({
+                phase: patch.phase || (this.progress && this.progress.phase) || 'running',
+                nextIndex: Math.max(0, Math.min(total, jobIndex)),
+                currentIndex: patch.currentIndex !== undefined ? patch.currentIndex : jobIndex,
+                completed: successCount + failedCount,
+                success: successCount,
+                failed: failedCount,
+                saved: savedCount,
+                currentName: patch.currentName || '',
+                currentAction: patch.currentAction || '',
+                ...patch
+            });
+        };
 
         this.logger.system && this.logger.system('========================================');
         this.logger.system && this.logger.system('开始即梦网页自动化批量改尺寸任务');
         this.logger.info && this.logger.info(`输入文件夹: ${config.inputFolder}`);
         this.logger.info && this.logger.info(`输出文件夹: ${config.outputFolder}`);
-        this.logger.info && this.logger.info('处理方式: 单页顺序生成，上一张保存成功后再处理下一张');
+        this.logger.info && this.logger.info(`处理方式: 单页顺序生成，每张图依次完成 ${aspectRatios.join('、')} 后再处理下一张`);
         this.logger.system && this.logger.system('========================================');
 
         const page = await this.openJimengPage({ headless });
@@ -2210,80 +2340,133 @@ class JimengBrowserService extends EventEmitter {
 
             const imagePath = imageFiles[current];
             const imageName = this.path.basename(imagePath);
-            this.updateProgress({
-                phase: 'running',
-                currentIndex: current + 1,
-                completed: successCount + failedCount,
-                success: successCount,
-                failed: failedCount,
-                saved: savedCount,
-                active: 1,
-                queued: Math.max(0, total - current - 1),
-                currentName: imageName,
-                currentAction: `即梦顺序处理 ${current + 1}/${total}: ${imageName}`
-            });
+            for (let ratioIndex = 0; ratioIndex < aspectRatios.length; ratioIndex += 1) {
+                if (jobIndex < startIndex) {
+                    jobIndex += 1;
+                    continue;
+                }
 
-            this.logger.info && this.logger.info(`🖼️ 即梦顺序处理 ${current + 1}/${total}: ${imageName}`);
-            try {
-                const result = await this.generateForImageOnPage(page, imagePath, current + 1, config, runId, {
-                    navigate: true
-                });
-                if (result.success) {
-                    successCount += 1;
-                    savedCount += Number(result.savedCount) || 0;
-                    this.logger.info && this.logger.info(`✅ 即梦改尺寸完成 ${current + 1}/${total}: ${imageName}，保存 ${result.savedCount || 0} 张`);
-                } else if (this.stopRequested || /停止|取消/.test(result.message || '')) {
-                    stopped = true;
-                    this.logger.warn && this.logger.warn(`⏹️ 即梦改尺寸已停止: ${imageName}`);
-                    break;
-                } else {
-                    failedCount += 1;
-                    this.logger.error && this.logger.error(`❌ 即梦改尺寸失败 ${current + 1}/${total}: ${result.message}`);
-                }
-            } catch (error) {
-                if (this.stopRequested || /停止|取消/.test(error.message || '')) {
+                if (this.stopRequested) {
                     stopped = true;
                     break;
                 }
-                failedCount += 1;
-                this.logger.error && this.logger.error(`❌ 即梦改尺寸出错 ${current + 1}/${total}: ${error.message}`);
-            } finally {
+
+                const aspectRatio = aspectRatios[ratioIndex];
+                const currentJobIndex = jobIndex + 1;
+                let countedCurrentJob = false;
+                const perRatioConfig = {
+                    ...config,
+                    generationSettings: {
+                        ...config.generationSettings,
+                        aspectRatio,
+                        aspectRatios
+                    }
+                };
+
                 this.updateProgress({
-                    phase: this.stopRequested || stopped ? 'stopping' : 'running',
-                    currentIndex: current + 1,
+                    phase: 'running',
+                    currentIndex: currentJobIndex,
                     completed: successCount + failedCount,
                     success: successCount,
                     failed: failedCount,
                     saved: savedCount,
-                    active: 0,
-                    queued: this.stopRequested ? 0 : Math.max(0, total - current - 1),
+                    total,
+                    totalImages,
+                    totalAspectRatios,
+                    outputTotal,
+                    active: 1,
+                    queued: Math.max(0, total - currentJobIndex),
                     currentName: imageName,
-                    currentAction: this.stopRequested || stopped
-                        ? '正在停止即梦本地队列和结果轮询...'
-                        : `即梦进度：成功 ${successCount}，失败 ${failedCount}，已保存 ${savedCount} 张`
+                    currentAction: `即梦顺序处理 ${current + 1}/${imageFiles.length}，比例 ${ratioIndex + 1}/${aspectRatios.length}（${aspectRatio}）: ${imageName}`
                 });
+                updateResumeState(this.progress);
+
+                this.logger.info && this.logger.info(`🖼️ 即梦顺序处理 ${current + 1}/${imageFiles.length}: ${imageName}，比例 ${ratioIndex + 1}/${aspectRatios.length}（${aspectRatio}）`);
+                try {
+                    const result = await this.generateForImageOnPage(page, imagePath, current + 1, perRatioConfig, runId, {
+                        navigate: true
+                    });
+                    if (result.success) {
+                        successCount += 1;
+                        savedCount += Number(result.savedCount) || 0;
+                        countedCurrentJob = true;
+                        this.logger.info && this.logger.info(`✅ 即梦改尺寸完成 ${current + 1}/${imageFiles.length}: ${imageName}，比例 ${aspectRatio}，保存 ${result.savedCount || 0} 张`);
+                    } else if (this.stopRequested || /停止|取消/.test(result.message || '')) {
+                        stopped = true;
+                        this.logger.warn && this.logger.warn(`⏹️ 即梦改尺寸已停止: ${imageName}`);
+                        break;
+                    } else {
+                        failedCount += 1;
+                        countedCurrentJob = true;
+                        this.logger.error && this.logger.error(`❌ 即梦改尺寸失败 ${current + 1}/${imageFiles.length}，比例 ${aspectRatio}: ${result.message}`);
+                    }
+                } catch (error) {
+                    if (this.stopRequested || /停止|取消/.test(error.message || '')) {
+                        stopped = true;
+                        break;
+                    }
+                    failedCount += 1;
+                    countedCurrentJob = true;
+                    this.logger.error && this.logger.error(`❌ 即梦改尺寸出错 ${current + 1}/${imageFiles.length}，比例 ${aspectRatio}: ${error.message}`);
+                } finally {
+                    if (countedCurrentJob) {
+                        jobIndex += 1;
+                    }
+                    this.updateProgress({
+                        phase: this.stopRequested || stopped ? 'stopping' : 'running',
+                        currentIndex: countedCurrentJob ? jobIndex : currentJobIndex,
+                        completed: successCount + failedCount,
+                        success: successCount,
+                        failed: failedCount,
+                        saved: savedCount,
+                        total,
+                        totalImages,
+                        totalAspectRatios,
+                        outputTotal,
+                        active: 0,
+                        queued: this.stopRequested ? 0 : Math.max(0, total - jobIndex),
+                        currentName: imageName,
+                        currentAction: this.stopRequested || stopped
+                            ? '正在停止即梦本地队列和结果轮询...'
+                            : `即梦进度：成功 ${successCount}，失败 ${failedCount}，已保存 ${savedCount} 张`
+                    });
+                    updateResumeState(this.progress);
+                }
+
+                if (stopped) break;
             }
+
+            if (stopped) break;
         }
 
         stopped = stopped || this.stopRequested;
         this.updateProgress({
             phase: stopped ? 'stopped' : 'completed',
-            currentIndex: successCount + failedCount,
+            currentIndex: stopped ? jobIndex : total,
             completed: successCount + failedCount,
             success: successCount,
             failed: failedCount,
             saved: savedCount,
+            total,
+            totalImages,
+            totalAspectRatios,
+            outputTotal,
             active: 0,
             queued: 0,
             currentName: '',
             currentAction: stopped
-                ? `即梦批量改尺寸已停止：成功 ${successCount} 张，失败 ${failedCount} 张`
-                : `即梦批量改尺寸完成：成功 ${successCount} 张，失败 ${failedCount} 张`
+                ? `即梦批量改尺寸已停止：成功 ${successCount} 组，失败 ${failedCount} 组`
+                : `即梦批量改尺寸完成：成功 ${successCount} 组，失败 ${failedCount} 组`
         });
+        if (stopped) {
+            updateResumeState(this.progress);
+        } else if (typeof options.onClearResumeState === 'function') {
+            options.onClearResumeState();
+        }
 
         this.logger.system && this.logger.system(stopped
-            ? `⏹️ 即梦批量改尺寸已停止：成功 ${successCount} 张，失败 ${failedCount} 张`
-            : `✅ 即梦批量改尺寸完成：成功 ${successCount} 张，失败 ${failedCount} 张`);
+            ? `⏹️ 即梦批量改尺寸已停止：成功 ${successCount} 组，失败 ${failedCount} 组`
+            : `✅ 即梦批量改尺寸完成：成功 ${successCount} 组，失败 ${failedCount} 组`);
     }
 
     throwIfStopped() {

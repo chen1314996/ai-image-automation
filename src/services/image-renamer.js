@@ -2,6 +2,9 @@ const fs = require('fs');
 const path = require('path');
 
 const { sortNaturallyByName } = require('../../file-utils');
+const {
+    extractSourceBusinessName
+} = require('./output-naming/source-business-name');
 
 const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'];
 const DEFAULT_RENAME_PREFIX = 'GOFCNIM28930_BJ_广点通_题材_载具';
@@ -301,19 +304,20 @@ function normalizeRenameRule(options = {}) {
     };
 }
 
-function buildOutputBaseName(rule, index, chinesePart, dimensionText = '') {
+function buildOutputBaseName(rule, index, chinesePart, dimensionText = '', businessName = '') {
     if (rule.mode === 'legacy') {
-        return [rule.prefix, chinesePart, dimensionText].filter(Boolean).join('_');
+        return [rule.prefix, businessName || chinesePart, dimensionText].filter(Boolean).join('_');
     }
 
     const sequenceToken = `${rule.fixedPrefix}${formatSequenceNumber(rule.startNumber, index)}`;
+    const businessParts = businessName
+        ? [businessName]
+        : [rule.primaryTag, rule.secondaryTag, chinesePart];
     return [
         sequenceToken,
         rule.regionText,
         rule.channelText,
-        rule.primaryTag,
-        rule.secondaryTag,
-        chinesePart,
+        ...businessParts,
         dimensionText
     ].filter(Boolean).join('_');
 }
@@ -345,16 +349,25 @@ function buildRenamePlan(options = {}) {
 
     imageFiles.forEach((file, index) => {
         const sourcePath = path.join(inputFolder, file);
+        const parsedBusinessName = extractSourceBusinessName(file);
         const chinesePart = extractChineseNamePart(file);
         const dimensions = readImageDimensions(sourcePath);
         const ext = path.extname(file);
-        const outputBaseName = buildOutputBaseName(rule, index, chinesePart, dimensions ? dimensions.text : '');
+        const outputBaseName = buildOutputBaseName(
+            rule,
+            index,
+            chinesePart,
+            dimensions ? dimensions.text : '',
+            parsedBusinessName ? parsedBusinessName.businessName : ''
+        );
         const outputName = getUniqueOutputName(outputFolder, outputBaseName, ext, usedNames);
 
         items.push({
             originalName: file,
             outputName,
             chinesePart,
+            businessName: parsedBusinessName ? parsedBusinessName.businessName : '',
+            businessNameSource: parsedBusinessName ? parsedBusinessName.sourceType : '',
             dimensions: dimensions ? dimensions.text : '',
             sequenceNumber: rule.mode === 'segmented' ? formatSequenceNumber(rule.startNumber, index) : '',
             sourcePath,

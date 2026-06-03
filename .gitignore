@@ -15,6 +15,11 @@ automation-config.json
 automation-secrets.json
 creative_agent_outputs/
 runtime/
+data/creative-knowledge/
+data/material-analysis/
+data/acceptance-*.png
+data/tmp-*.xlsx
+public/generated/
 .env
 .env.local
 .env.*
@@ -36,6 +41,7 @@ test-api-workflow-output/
 # Local scratch files created during automation experiments
 .doubao-part*.js
 temp*.js
+sucai/~$*.xlsx
 
 # OS/editor noise
 .DS_Store

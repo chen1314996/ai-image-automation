@@ -1,0 +1,914 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>自动化图片素材生产流程说明</title>
+  <style>
+    :root {
+      --ink: #17201b;
+      --muted: #68746d;
+      --line: #dfe6df;
+      --paper: #f7f5ef;
+      --panel: #ffffff;
+      --green: #2f7d55;
+      --green-soft: #e7f2eb;
+      --blue: #2d6692;
+      --blue-soft: #e6f0f7;
+      --rose: #b65061;
+      --rose-soft: #fae9ec;
+      --gold: #af7a22;
+      --gold-soft: #f8efd9;
+      --black: #111612;
+      --shadow: 0 18px 45px rgba(32, 42, 35, 0.12);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        linear-gradient(90deg, rgba(23, 32, 27, 0.04) 1px, transparent 1px),
+        linear-gradient(rgba(23, 32, 27, 0.04) 1px, transparent 1px),
+        var(--paper);
+      background-size: 28px 28px;
+      font-family: "Microsoft YaHei", "Noto Sans SC", "PingFang SC", sans-serif;
+      line-height: 1.65;
+    }
+
+    a {
+      color: inherit;
+    }
+
+    .page {
+      width: min(1180px, calc(100% - 40px));
+      margin: 0 auto;
+      padding: 28px 0 52px;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 18px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .brand-mark {
+      display: grid;
+      width: 38px;
+      height: 38px;
+      place-items: center;
+      color: #fff;
+      background: var(--black);
+      border-radius: 8px;
+      font-weight: 800;
+      letter-spacing: 0;
+    }
+
+    .brand strong {
+      display: block;
+      font-size: 18px;
+      line-height: 1.2;
+    }
+
+    .brand span {
+      display: block;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .nav {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    .nav a {
+      padding: 7px 11px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.72);
+      color: var(--muted);
+      font-size: 13px;
+      text-decoration: none;
+    }
+
+    .hero {
+      position: relative;
+      overflow: hidden;
+      display: grid;
+      grid-template-columns: minmax(0, 1.15fr) minmax(300px, 0.85fr);
+      gap: 28px;
+      align-items: stretch;
+      min-height: 360px;
+      padding: 34px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background:
+        linear-gradient(145deg, rgba(255, 255, 255, 0.92), rgba(245, 240, 228, 0.92)),
+        repeating-linear-gradient(135deg, rgba(47, 125, 85, 0.08) 0 1px, transparent 1px 12px);
+      box-shadow: var(--shadow);
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      width: fit-content;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      border: 1px solid rgba(47, 125, 85, 0.2);
+      border-radius: 999px;
+      color: var(--green);
+      background: var(--green-soft);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    h1 {
+      max-width: 760px;
+      margin: 18px 0 16px;
+      font-size: clamp(34px, 5vw, 62px);
+      line-height: 1.08;
+      letter-spacing: 0;
+    }
+
+    .lead {
+      max-width: 760px;
+      margin: 0;
+      color: #405047;
+      font-size: 18px;
+    }
+
+    .hero-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 24px;
+    }
+
+    .button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      min-height: 40px;
+      padding: 9px 14px;
+      border: 1px solid var(--black);
+      border-radius: 8px;
+      color: #fff;
+      background: var(--black);
+      font-weight: 700;
+      text-decoration: none;
+      cursor: pointer;
+    }
+
+    .button.secondary {
+      color: var(--black);
+      background: #fff;
+      border-color: var(--line);
+    }
+
+    .snapshot {
+      display: grid;
+      align-content: stretch;
+      gap: 12px;
+    }
+
+    .screen {
+      position: relative;
+      overflow: hidden;
+      min-height: 170px;
+      border: 1px solid rgba(23, 32, 27, 0.16);
+      border-radius: 8px;
+      background: #fdfbf6;
+    }
+
+    .screen-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      height: 30px;
+      padding: 0 10px;
+      border-bottom: 1px solid rgba(23, 32, 27, 0.12);
+      background: #efe9dc;
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--rose);
+    }
+
+    .dot:nth-child(2) {
+      background: var(--gold);
+    }
+
+    .dot:nth-child(3) {
+      background: var(--green);
+    }
+
+    .pipeline {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+      padding: 18px;
+    }
+
+    .pipe-step {
+      min-height: 112px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+    }
+
+    .pipe-step small {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .pipe-step strong {
+      display: block;
+      margin-top: 7px;
+      font-size: 15px;
+      line-height: 1.35;
+    }
+
+    .thumb-strip {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 8px;
+      padding: 0 18px 18px;
+    }
+
+    .thumb {
+      aspect-ratio: 1;
+      border: 1px solid rgba(23, 32, 27, 0.12);
+      border-radius: 6px;
+      background:
+        linear-gradient(135deg, rgba(47, 125, 85, 0.28), transparent 50%),
+        linear-gradient(45deg, rgba(45, 102, 146, 0.25), transparent 55%),
+        #f6efe2;
+    }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+    }
+
+    .metric {
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.86);
+    }
+
+    .metric strong {
+      display: block;
+      font-size: 24px;
+      line-height: 1.1;
+    }
+
+    .metric span {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    section {
+      margin-top: 28px;
+    }
+
+    .section-head {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 18px;
+      margin-bottom: 14px;
+    }
+
+    h2 {
+      margin: 0;
+      font-size: clamp(24px, 3vw, 34px);
+      letter-spacing: 0;
+    }
+
+    .section-head p {
+      max-width: 560px;
+      margin: 0;
+      color: var(--muted);
+      font-size: 15px;
+      text-align: right;
+    }
+
+    .summary {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 320px;
+      gap: 18px;
+      align-items: stretch;
+    }
+
+    .statement {
+      padding: 24px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: 0 8px 25px rgba(23, 32, 27, 0.06);
+    }
+
+    .statement h3 {
+      margin: 0 0 10px;
+      font-size: 18px;
+    }
+
+    .statement p {
+      margin: 0;
+      color: #405047;
+    }
+
+    .copy-area {
+      display: grid;
+      align-content: space-between;
+      gap: 14px;
+      padding: 20px;
+      border: 1px dashed rgba(23, 32, 27, 0.28);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.62);
+    }
+
+    .copy-area p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .module-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 14px;
+    }
+
+    .module {
+      position: relative;
+      overflow: hidden;
+      min-height: 310px;
+      padding: 20px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: 0 8px 25px rgba(23, 32, 27, 0.06);
+    }
+
+    .module::before {
+      content: "";
+      position: absolute;
+      inset: 0 0 auto;
+      height: 5px;
+      background: var(--accent);
+    }
+
+    .module.analysis {
+      --accent: var(--green);
+    }
+
+    .module.expand {
+      --accent: var(--blue);
+    }
+
+    .module.iterate {
+      --accent: var(--rose);
+    }
+
+    .module.resize {
+      --accent: var(--gold);
+    }
+
+    .module-number {
+      display: inline-grid;
+      width: 34px;
+      height: 34px;
+      place-items: center;
+      border-radius: 8px;
+      color: #fff;
+      background: var(--accent);
+      font-weight: 800;
+    }
+
+    .module h3 {
+      min-height: 58px;
+      margin: 16px 0 8px;
+      font-size: 21px;
+      line-height: 1.35;
+    }
+
+    .module p {
+      margin: 0;
+      color: #435048;
+      font-size: 15px;
+    }
+
+    .module ul,
+    .record-card ul {
+      margin: 16px 0 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .module li,
+    .record-card li {
+      position: relative;
+      margin-top: 9px;
+      padding-left: 17px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .module li::before,
+    .record-card li::before {
+      content: "";
+      position: absolute;
+      top: 10px;
+      left: 0;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent, var(--green));
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 10px;
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.78);
+    }
+
+    .flow-node {
+      position: relative;
+      min-height: 112px;
+      padding: 16px;
+      border: 1px solid rgba(23, 32, 27, 0.12);
+      border-radius: 8px;
+      background: #fff;
+    }
+
+    .flow-node:not(:last-child)::after {
+      content: ">";
+      position: absolute;
+      right: -10px;
+      top: 50%;
+      z-index: 2;
+      display: grid;
+      width: 18px;
+      height: 18px;
+      place-items: center;
+      transform: translateY(-50%);
+      border-radius: 50%;
+      color: #fff;
+      background: var(--black);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .flow-node span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .flow-node strong {
+      display: block;
+      margin-top: 8px;
+      font-size: 16px;
+      line-height: 1.35;
+    }
+
+    .record-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 14px;
+    }
+
+    .record-card {
+      padding: 20px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: 0 8px 25px rgba(23, 32, 27, 0.06);
+    }
+
+    .record-card h3 {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin: 0 0 8px;
+      font-size: 18px;
+    }
+
+    .record-card h3 span {
+      display: grid;
+      width: 28px;
+      height: 28px;
+      place-items: center;
+      border-radius: 7px;
+      color: #fff;
+      background: var(--accent);
+      font-size: 14px;
+    }
+
+    .record-card p {
+      margin: 0;
+      color: #435048;
+      font-size: 15px;
+    }
+
+    .record-card.analysis {
+      --accent: var(--green);
+    }
+
+    .record-card.expand {
+      --accent: var(--blue);
+    }
+
+    .record-card.iterate {
+      --accent: var(--rose);
+    }
+
+    .record-card.resize {
+      --accent: var(--gold);
+    }
+
+    .script-box {
+      padding: 20px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #121712;
+      color: #f4f0e7;
+      box-shadow: var(--shadow);
+    }
+
+    .script-box h3 {
+      margin: 0 0 12px;
+      color: #fff;
+      font-size: 18px;
+    }
+
+    .script-box p {
+      margin: 0;
+      color: #d9ded7;
+    }
+
+    .footer-note {
+      margin-top: 20px;
+      padding: 16px 18px;
+      border-left: 4px solid var(--green);
+      background: rgba(255, 255, 255, 0.72);
+      color: var(--muted);
+    }
+
+    @media (max-width: 980px) {
+      .hero,
+      .summary {
+        grid-template-columns: 1fr;
+      }
+
+      .module-grid,
+      .flow {
+        grid-template-columns: repeat(2, 1fr);
+      }
+
+      .flow-node:not(:last-child)::after {
+        display: none;
+      }
+
+      .section-head {
+        align-items: start;
+        flex-direction: column;
+      }
+
+      .section-head p {
+        text-align: left;
+      }
+    }
+
+    @media (max-width: 680px) {
+      .page {
+        width: min(100% - 24px, 1180px);
+        padding-top: 16px;
+      }
+
+      .topbar {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .nav {
+        justify-content: flex-start;
+      }
+
+      .hero {
+        padding: 22px;
+      }
+
+      .pipeline,
+      .metrics,
+      .module-grid,
+      .flow,
+      .record-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .thumb-strip {
+        grid-template-columns: repeat(3, 1fr);
+      }
+
+      .module {
+        min-height: auto;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header class="topbar" aria-label="页面导航">
+      <div class="brand">
+        <div class="brand-mark">AI</div>
+        <div>
+          <strong>自动化图片素材生产平台</strong>
+          <span>关键流程说明页</span>
+        </div>
+      </div>
+      <nav class="nav">
+        <a href="#summary">简要阐述</a>
+        <a href="#modules">四个环节</a>
+        <a href="#recording">录屏内容</a>
+        <a href="#script">汇报稿</a>
+      </nav>
+    </header>
+
+    <section class="hero">
+      <div>
+        <span class="eyebrow">给领导看的简单版本</span>
+        <h1>从素材分析到批量改尺寸的一体化流程</h1>
+        <p class="lead">平台围绕图片素材生产进行自动化整合，把已有素材分析、创意拓展产图、产出图二次迭代和批量改尺寸串成一条可演示、可复用的工作流。</p>
+        <div class="hero-actions">
+          <a class="button" href="#recording">查看录屏顺序</a>
+          <a class="button secondary" href="#script">查看简短讲稿</a>
+        </div>
+      </div>
+
+      <div class="snapshot" aria-label="流程概览示意">
+        <div class="screen">
+          <div class="screen-toolbar">
+            <span class="dot"></span>
+            <span class="dot"></span>
+            <span class="dot"></span>
+          </div>
+          <div class="pipeline">
+            <div class="pipe-step">
+              <small>01</small>
+              <strong>素材分析</strong>
+            </div>
+            <div class="pipe-step">
+              <small>02</small>
+              <strong>创意拓展</strong>
+            </div>
+            <div class="pipe-step">
+              <small>03</small>
+              <strong>二次迭代</strong>
+            </div>
+            <div class="pipe-step">
+              <small>04</small>
+              <strong>批量改尺寸</strong>
+            </div>
+          </div>
+          <div class="thumb-strip">
+            <div class="thumb"></div>
+            <div class="thumb"></div>
+            <div class="thumb"></div>
+            <div class="thumb"></div>
+            <div class="thumb"></div>
+          </div>
+        </div>
+        <div class="metrics">
+          <div class="metric">
+            <strong>4</strong>
+            <span>核心环节</span>
+          </div>
+          <div class="metric">
+            <strong>1</strong>
+            <span>完整流程</span>
+          </div>
+          <div class="metric">
+            <strong>批量</strong>
+            <span>素材处理</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="summary">
+      <div class="section-head">
+        <h2>文字简要阐述</h2>
+        <p>这一段可以直接放到汇报文档、飞书消息或录屏说明里。</p>
+      </div>
+      <div class="summary">
+        <article class="statement">
+          <h3>自动化平台说明</h3>
+          <p id="statementText">自动化平台围绕图片素材生产流程进行搭建，主要包括图片素材分析并迭代、自动化创意拓展并产图、基于已产出图片进行二次迭代，以及批量改尺寸。平台可以分析已有图片素材，提取风格、主体、场景和构图等关键信息，再根据分析结果拓展创意方向并生成图片。生成后的图片还可以继续作为新的参考素材进行二次创作，形成持续优化流程。最后，平台支持批量调整图片尺寸，方便适配不同投放、展示或交付场景。整体目标是减少人工重复操作，提高图片素材批量生产和迭代效率。</p>
+        </article>
+        <aside class="copy-area">
+          <div>
+            <strong>推荐表达重点</strong>
+            <p>不要讲代码和接口，重点讲“平台能做什么、流程怎么省人工、最后能产出什么”。</p>
+          </div>
+          <button class="button" type="button" onclick="copyStatement(this)">复制阐述文字</button>
+        </aside>
+      </div>
+    </section>
+
+    <section id="modules">
+      <div class="section-head">
+        <h2>四个关键环节</h2>
+        <p>每个环节都按“输入是什么、平台做什么、输出什么”来讲，简单直观。</p>
+      </div>
+      <div class="module-grid">
+        <article class="module analysis">
+          <span class="module-number">1</span>
+          <h3>图片素材分析并迭代</h3>
+          <p>读取已有图片素材，分析主体、风格、场景、色彩和构图，并形成后续创意迭代方向。</p>
+          <ul>
+            <li>输入：原始素材或 TOP 素材</li>
+            <li>过程：分析图片特点和可复用元素</li>
+            <li>输出：迭代方向、创意 brief、参考信息</li>
+          </ul>
+        </article>
+
+        <article class="module expand">
+          <span class="module-number">2</span>
+          <h3>自动化创意拓展并产图</h3>
+          <p>基于分析结果自动拓展多组创意方案，并进入 Legil 生图流程，减少人工逐条操作。</p>
+          <ul>
+            <li>输入：创意方向或素材分析结果</li>
+            <li>过程：生成提示词、质检、批量提交</li>
+            <li>输出：多张新生成图片素材</li>
+          </ul>
+        </article>
+
+        <article class="module iterate">
+          <span class="module-number">3</span>
+          <h3>已产出图片素材二次迭代</h3>
+          <p>把已经生成的图片继续作为新参考素材，再次分析和生成，让好方向可以继续放大。</p>
+          <ul>
+            <li>输入：上一轮已经生成的图片</li>
+            <li>过程：重新分析、挑选方向、再次创作</li>
+            <li>输出：更接近目标的新版本素材</li>
+          </ul>
+        </article>
+
+        <article class="module resize">
+          <span class="module-number">4</span>
+          <h3>批量改尺寸</h3>
+          <p>将已生成或已有素材批量处理为指定比例和尺寸，适配投放、展示、交付等不同场景。</p>
+          <ul>
+            <li>输入：一批待处理图片</li>
+            <li>过程：选择比例或尺寸后批量执行</li>
+            <li>输出：统一规格的图片文件</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <h2>当前流程一眼看懂</h2>
+        <p>录屏或汇报时，可以沿着这条线讲，不需要展开技术细节。</p>
+      </div>
+      <div class="flow">
+        <div class="flow-node">
+          <span>输入</span>
+          <strong>原始图片素材</strong>
+        </div>
+        <div class="flow-node">
+          <span>分析</span>
+          <strong>提取风格、主体、构图等信息</strong>
+        </div>
+        <div class="flow-node">
+          <span>拓展</span>
+          <strong>生成创意方向并批量产图</strong>
+        </div>
+        <div class="flow-node">
+          <span>迭代</span>
+          <strong>已产出图片继续二次创作</strong>
+        </div>
+        <div class="flow-node">
+          <span>交付</span>
+          <strong>批量改尺寸并输出文件</strong>
+        </div>
+      </div>
+    </section>
+
+    <section id="recording">
+      <div class="section-head">
+        <h2>关键环节录屏内容</h2>
+        <p>建议总时长 3 到 5 分钟，每段只录“操作入口、过程状态、结果展示”。</p>
+      </div>
+      <div class="record-grid">
+        <article class="record-card analysis">
+          <h3><span>1</span>素材分析并迭代</h3>
+          <p>录一张原始素材进入平台后的分析过程。</p>
+          <ul>
+            <li>展示素材分析页面或素材列表</li>
+            <li>选择一张图片或一批素材</li>
+            <li>点击分析、识别或生成 brief</li>
+            <li>展示输出的分析结果、方向或 brief</li>
+          </ul>
+        </article>
+
+        <article class="record-card expand">
+          <h3><span>2</span>自动化创意拓展并产图</h3>
+          <p>录从创意方向到生成图片的过程。</p>
+          <ul>
+            <li>展示创意拓展入口或 Prompt Gate</li>
+            <li>选择方向后启动自动创意</li>
+            <li>展示提示词生成、质检或待生成队列</li>
+            <li>展示 Legil 自动产图和输出结果</li>
+          </ul>
+        </article>
+
+        <article class="record-card iterate">
+          <h3><span>3</span>已产出图片二次迭代</h3>
+          <p>录把生成结果重新作为参考图继续创作。</p>
+          <ul>
+            <li>打开已产出图片或输出文件夹</li>
+            <li>选一张效果较好的生成图</li>
+            <li>作为新素材重新分析或继续拓展</li>
+            <li>展示新一轮结果或新的生成方向</li>
+          </ul>
+        </article>
+
+        <article class="record-card resize">
+          <h3><span>4</span>批量改尺寸</h3>
+          <p>录多张图统一改成目标尺寸。</p>
+          <ul>
+            <li>展示待改尺寸图片文件夹</li>
+            <li>选择目标比例或尺寸</li>
+            <li>点击开始批量处理</li>
+            <li>打开输出文件夹展示新尺寸图片</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <section id="script">
+      <div class="section-head">
+        <h2>录屏讲稿</h2>
+        <p>录屏时照着念这一段就够，语速正常大约 40 秒。</p>
+      </div>
+      <div class="script-box">
+        <h3>简短讲稿</h3>
+        <p>这个自动化平台主要用于图片素材的批量生产和持续迭代。第一步，平台会对已有素材进行分析，提取图片里的主体、风格、场景和构图等信息；第二步，系统会基于分析结果自动拓展创意方向，并进入产图流程；第三步，已经生成出来的图片还可以继续作为新的参考素材进行二次迭代，用于持续优化效果；第四步，平台可以把一批图片批量调整成指定尺寸，方便适配不同使用场景。整体目标是减少人工重复操作，提高素材生产和交付效率。</p>
+      </div>
+      <div class="footer-note">
+        录屏建议：不要录账号密码、密钥和配置文件；输出文件夹提前清空，最后展示新生成或新处理出来的图片，效果会更直观。
+      </div>
+    </section>
+  </main>
+
+  <script>
+    function copyStatement(button) {
+      const text = document.getElementById('statementText').innerText.trim();
+      navigator.clipboard.writeText(text).then(() => {
+        const original = button.textContent;
+        button.textContent = '已复制';
+        setTimeout(() => {
+          button.textContent = original;
+        }, 1400);
+      }).catch(() => {
+        alert('复制失败，可以直接选中文字复制。');
+      });
+    }
+  </script>
+</body>
+</html>

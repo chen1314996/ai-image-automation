@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 
-// 本文件只负责保存本机敏感配置，例如火山方舟 API Key。
+// 本文件只负责保存本机敏感配置，例如 Lumos Winky API Key。
 // automation-secrets.json 已加入 .gitignore，默认不会提交到 Git 仓库。
 const SECRETS_PATH = path.join(__dirname, 'automation-secrets.json');
 

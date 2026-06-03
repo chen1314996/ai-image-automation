@@ -7,12 +7,12 @@
             jimengUrl: 'https://jimeng.jianying.com/ai-tool/generate?workspace=12721326029068&type=image',
             legilReferenceFolder: 'D:\\工作\\自动化工作流1\\批量产图\\参考图',
             workflowBrowserMode: 'headless',
-            resizeInputFolder: 'D:\\工作\\自动化工作流1\\即梦AI批量改尺寸\\输入',
-            resizeOutputFolder: 'D:\\工作\\自动化工作流1\\即梦AI批量改尺寸\\输出',
-            resizeProvider: 'jimeng',
+            resizeInputFolder: 'D:\\工作\\自动化工作流1\\三尺寸交付\\OK图输入',
+            resizeOutputFolder: 'D:\\工作\\自动化工作流1\\三尺寸交付\\输出',
+            resizeProvider: 'legil',
             resizeBrowserMode: 'headless',
             creativeOutputFolder: 'D:\\工作\\自动化工作流1\\创意拓展\\输出',
-            creativeReferenceFolder: '',
+            creativeReferenceFolder: 'D:\\工作\\自动化工作流1\\创意拓展\\参考图',
             creativeBrowserMode: 'headed',
             renameInputFolder: 'D:\\工作\\自动化工作流1\\创意拓展\\输出',
             renameOutputFolder: 'D:\\工作\\自动化工作流1\\创意拓展\\重命名输出',
@@ -23,20 +23,43 @@
             renamePrimaryTag: '题材',
             renameSecondaryTag: '载具',
             resizeBatchInputFolder: 'D:\\工作\\自动化工作流1\\创意拓展\\重命名输出',
-            resizeBatchOutputFolder: 'D:\\工作\\自动化工作流1\\重命名\\改尺寸',
+            resizeBatchOutputFolder: 'D:\\工作\\自动化工作流1\\重命名\\本地标准化',
             resizeBatchTargetSize: '800x800',
-            logoBatchInputFolder: 'D:\\工作\\自动化工作流1\\重命名\\改尺寸',
+            logoBatchInputFolder: 'D:\\工作\\自动化工作流1\\重命名\\本地标准化',
             logoBatchOutputFolder: 'D:\\工作\\自动化工作流1\\重命名\\加LOGO',
             logoBatchFileName: '1-国内LOGO模板-800x800.png',
             packageBatchInputFolder: 'D:\\工作\\自动化工作流1\\重命名\\加LOGO',
             packageBatchOutputFolder: 'D:\\工作\\自动化工作流1\\重命名\\一键打包',
-            resizePromptTemplate: '修改图片比例，可适当调整布局排版，不要产生拉伸。需要生成4张。',
+            resizePromptTemplate: '请进行 AI 三尺寸适配，保持主体与卖点清晰，按目标画幅重新构图。',
+            deliveryInputFolder: 'D:\\工作\\自动化工作流1\\三尺寸交付\\OK图输入',
+            deliveryOutputFolder: 'D:\\工作\\自动化工作流1\\三尺寸交付\\输出',
+            deliveryProcessMode: 'full-delivery',
+            deliveryCandidateCount: 4,
+            deliveryTargetSizes: ['800x800', '1280x720', '1080x1920'],
+            deliveryCandidateCountsBySize: {
+                '800x800': 4,
+                '1280x720': 4,
+                '1080x1920': 4
+            },
+            deliveryLogoFolder: 'D:\\工作\\GOF\\LOGO模版',
+            deliveryNamingPrefix: 'GOFCNIM',
+            deliveryStartNumber: '28930',
+            deliveryRegionText: 'BJ',
+            deliveryChannelText: '广点通',
+            deliveryPrimaryTag: '题材',
+            deliverySecondaryTag: '载具',
+            deliveryTertiaryTag: '',
+            deliveryTagLists: {
+                primary: ['题材'],
+                secondary: ['载具'],
+                tertiary: []
+            },
             creativePrompts: [],
             creativeTableFileName: '',
             doubaoPromptTemplate: '',
             doubaoModelId: '',
             workflowPromptGeneration: {
-                provider: 'doubao',
+                provider: 'lumos',
                 lumos: {
                     model: '',
                     baseUrl: '',
@@ -54,13 +77,15 @@
             },
             resizeLegilGeneration: {
                 imageModel: 'nano-banana-2',
-                aspectRatio: '16:9',
+                aspectRatio: '1:1',
+                aspectRatios: ['1:1', '16:9', '9:16'],
                 resolution: '1K',
-                outputQuantity: 1
+                outputQuantity: 4
             },
             resizeJimengGeneration: {
                 imageModel: 'image-5-lite',
                 aspectRatio: '16:9',
+                aspectRatios: ['16:9'],
                 resolution: '2k',
                 outputQuantity: 4,
                 concurrency: 1,
@@ -69,8 +94,8 @@
             creativeLegilGeneration: {
                 imageModel: 'nano-banana-2',
                 aspectRatio: '1:1',
-                resolution: '1K',
-                outputQuantity: 1
+                resolution: '2K',
+                outputQuantity: 4
             },
             notifications: {
                 feishuEnabled: true,
@@ -82,7 +107,7 @@
                 legilScreenshotEnabled: true,
                 autoRecoveryEnabled: true,
                 pauseOnConsecutiveFailures: true,
-                consecutiveFailureThreshold: 3,
+                consecutiveFailureThreshold: 5,
                 watchdogAutoRestartEnabled: true
             }
         };
@@ -91,18 +116,20 @@
             referenceFolder: 'D:\\工作\\自动化工作流1\\批量产图\\输入',
             legilReferenceFolder: 'D:\\工作\\自动化工作流1\\批量产图\\参考图',
             saveFolder: 'D:\\工作\\自动化工作流1\\批量产图\\输出',
-            resizeInputFolder: 'D:\\工作\\自动化工作流1\\即梦AI批量改尺寸\\输入',
-            resizeOutputFolder: 'D:\\工作\\自动化工作流1\\即梦AI批量改尺寸\\输出',
+            resizeInputFolder: 'D:\\工作\\自动化工作流1\\三尺寸交付\\OK图输入',
+            resizeOutputFolder: 'D:\\工作\\自动化工作流1\\三尺寸交付\\输出',
             creativeOutputFolder: 'D:\\工作\\自动化工作流1\\创意拓展\\输出',
-            creativeReferenceFolder: '',
+            creativeReferenceFolder: 'D:\\工作\\自动化工作流1\\创意拓展\\参考图',
             renameInputFolder: 'D:\\工作\\自动化工作流1\\创意拓展\\输出',
             renameOutputFolder: 'D:\\工作\\自动化工作流1\\创意拓展\\重命名输出',
             resizeBatchInputFolder: 'D:\\工作\\自动化工作流1\\创意拓展\\重命名输出',
-            resizeBatchOutputFolder: 'D:\\工作\\自动化工作流1\\重命名\\改尺寸',
-            logoBatchInputFolder: 'D:\\工作\\自动化工作流1\\重命名\\改尺寸',
+            resizeBatchOutputFolder: 'D:\\工作\\自动化工作流1\\重命名\\本地标准化',
+            logoBatchInputFolder: 'D:\\工作\\自动化工作流1\\重命名\\本地标准化',
             logoBatchOutputFolder: 'D:\\工作\\自动化工作流1\\重命名\\加LOGO',
             packageBatchInputFolder: 'D:\\工作\\自动化工作流1\\重命名\\加LOGO',
-            packageBatchOutputFolder: 'D:\\工作\\自动化工作流1\\重命名\\一键打包'
+            packageBatchOutputFolder: 'D:\\工作\\自动化工作流1\\重命名\\一键打包',
+            deliveryInputFolder: 'D:\\工作\\自动化工作流1\\三尺寸交付\\OK图输入',
+            deliveryOutputFolder: 'D:\\工作\\自动化工作流1\\三尺寸交付\\输出'
         };
         const folderHistoryKey = 'ai-image-automation-folder-history-v1';
         const folderHistoryLimit = 8;
@@ -111,6 +138,7 @@
         let eventSource = null;
         let progressInterval = null;
         let resizeStatusInterval = null;
+        let resizeResumeInfo = null;
         let creativeStatusInterval = null;
         let creativeLastRunIndexes = [];
         let creativeResumeIndexes = [];
@@ -120,12 +148,14 @@
         let creativeAgentServerStatus = null;
         let creativeAgentCurrentRunId = '';
         let creativeAgentStatusInterval = null;
+        let runCenterStatusInterval = null;
         let workflowResumeInfo = null;
         const maxLogEntries = 1000;
 
         // Initialize
         document.addEventListener('DOMContentLoaded', () => {
             addLog('系统初始化完成', 'system');
+            moveGlobalConfigCards();
             initFolderControls();
             connectLogStream();
             checkBrowserStatus();
@@ -134,10 +164,11 @@
             loadNotificationConfig();
             loadDoubaoConfig();
             loadLegilGenerationConfig();
-            loadResizeConfig();
-            checkJimengStatus({ silent: true });
             loadCreativeConfig().finally(refreshCreativeResumeControls);
             loadCreativeAgentStatus();
+            if (typeof initRunCenter === 'function') {
+                initRunCenter();
+            }
             refreshWorkflowResumeControls();
             const promptTextarea = document.getElementById('doubaoPromptTemplate');
             if (promptTextarea) {
@@ -147,12 +178,9 @@
             if (lumosPromptTextarea) {
                 lumosPromptTextarea.addEventListener('input', updateLumosPromptCount);
             }
-            const resizePromptTextarea = document.getElementById('resizePromptTemplate');
-            if (resizePromptTextarea) {
-                resizePromptTextarea.addEventListener('input', updateResizePromptCount);
-                resizePromptTextarea.addEventListener('blur', () => saveResizeConfig({ silent: true }));
+            if (typeof initDeliveryPage === 'function') {
+                initDeliveryPage();
             }
-            initCreativeTableDropzone();
             if (typeof initRenamePage === 'function') {
                 initRenamePage();
             }

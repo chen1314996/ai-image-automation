@@ -1,15 +1,18 @@
 schema_version: "agent.v1"
 name: "frozen-apocalypse-creative-expansion-agent"
 display_name: "冰封末世广告创意拓展Agent"
-version: "0.1.0"
+version: "0.3.0"
 language: "zh-CN"
 domain: "图片广告创意开发 / 3D渲染广告图方向拓展"
 entry_instruction: "instructions.md"
-default_output_format: "markdown_tables"
+project_settings: "PROJECT_SETTINGS.md"
+default_output_format: "markdown_tables_with_candidate_json"
 
 summary: >
-  面向冰封末世题材广告素材的创意拓展 Agent。它先拆解用户已有参考方向为什么成立，
-  再生成批量迭代策略，最后扩展出高差异新方向与可直接用于出图的中文提示词。
+  面向无尽冬日/冰封末世题材广告素材的创意拓展 Agent。它读取项目当前设定，
+  基于方向种子表、TOP 素材信号和参考图线索，生成适配 Legil Nano Banana 2
+  的高差异新方向、八维标签与可直接用于出图的中文提示词。Agent 只负责候选方向
+  与 prompt，Prompt Gate、Legil 队列、资产索引和反馈沉淀由项目程序执行。
 
 accepted_inputs:
   - "参考图、拼图、方向截图、表格截图"
@@ -33,6 +36,11 @@ skills:
     stage: "3_new_direction_expansion"
     required_in_default_workflow: true
     responsibility: "基于前两层结论生成新方向拓展表，每个方向附 5 组详细中文出图提示词。"
+  - name: "legil-run-once-prompt-contract"
+    path: "skills/legil-run-once-prompt-contract"
+    stage: "4_legil_prompt_contract"
+    required_in_default_workflow: true
+    responsibility: "约束输出稳定适配 run-once 自动创意、Legil Nano Banana 2、1:1、2K、每 prompt 4 张和程序解析表头。"
   - name: "strict-table-direction-iteration"
     path: "skills/strict-table-direction-iteration"
     stage: "constraint"
@@ -50,6 +58,7 @@ workflow:
     - "调用 reference-analysis-table，输出参考图分析表。"
     - "将参考分析结论作为基础，调用 batch-iteration-strategy-table，输出 100组素材迭代策略总表和逐方向详细迭代策略表。"
     - "将参考分析结论与详细迭代策略共同作为依据，调用 new-direction-expansion-table，输出新方向拓展表。"
+    - "调用 legil-run-once-prompt-contract，检查表头、prompt 数量、Legil 参数、方图构图和生图可执行性。"
     - "如任务规模较大，使用 batch-creative-expansion-accelerator 做去重和系列化检查。"
   do_not:
     - "不要跳过参考分析直接生成新方向。"
@@ -58,6 +67,7 @@ workflow:
     - "不要默认加入强科幻、赛博、悬浮设备、激光 UI 或未来机甲。"
 
 output_contract:
+  dual_format_required: true
   sections:
     - name: "第一部分：参考图分析表"
       required_by_default: true
@@ -77,16 +87,56 @@ output_contract:
     - "提示词3"
     - "提示词4"
     - "提示词5"
+  run_once_mode:
+    preferred_sections:
+      - name: "新方向拓展表"
+        required_by_default: true
+    default_source_directions: 1
+    default_new_directions: 5
+    default_prompts_per_new_direction: 5
+    legil_generation:
+      image_model: "nano-banana-2"
+      image_model_label: "Nano Banana 2"
+      aspect_ratio: "1:1"
+      resolution: "2K"
+      output_quantity: 4
+  candidate_direction_json:
+    top_level_field: "candidateDirections"
+    required_fields:
+      - "type"
+      - "sourcePath"
+      - "targetLevel"
+      - "label"
+      - "description"
+      - "dimensions"
+      - "duplicateRisk"
+      - "reason"
+      - "prompts"
+    dimension_fields:
+      - "mood"
+      - "perspective"
+      - "time"
+      - "narrative"
+      - "scale"
+      - "material"
+      - "subjectRelation"
+      - "hook"
+    prompt_fields:
+      - "title"
+      - "prompt"
 
 quality_gates:
+  - "必须同时输出人工可读的 Markdown 新方向拓展表和程序可解析的 candidateDirections JSON。"
   - "每个新方向都必须能看出与原参考的主体关系、场景机制、叙事焦点、镜头语言或广告表达变化。"
+  - "每个新方向必须标记氛围、视角、时间天气、叙事动作、规模、材质质感、主体关系、广告钩子。"
   - "同一方向下的 5 组提示词不能只是近义改写，主体和场景机制都要明显变化。"
   - "整批方向名称不能落入同一套抽象命名模板。"
   - "所有提示词都要中文、完整、可视化、可直接用于高质量 3D 广告图出图。"
+  - "禁止默认使用真实品牌、强赛博、高科技 UI、枪支、军事强相关物品、悬浮设备、机甲、激光界面、大面积英文或二次元赛璐璐。"
   - "默认保持冰封末世世界观、3D渲染、高完成度商业广告海报质感。"
 
 integration:
   recommended_runtime: "由已有项目决定；本包默认提供 TypeScript 适配器。"
   adapter: "integration/creativeExpansionAgent.ts"
   request_example: "examples/request.example.md"
-  response_style: "Markdown 表格优先；如项目需要结构化存储，可在调用层要求 JSON。"
+  response_style: "Markdown 表格优先，必须附 candidateDirections JSON；调用层会同时解析两种格式。"

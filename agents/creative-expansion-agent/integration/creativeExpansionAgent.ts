@@ -19,6 +19,7 @@ export type CreativeExpansionInput = {
 
 export type CreativeExpansionAgentBundle = {
   instructions: string;
+  projectSettings: string;
   skills: Record<string, string>;
 };
 
@@ -26,6 +27,7 @@ const CORE_SKILLS = [
   "reference-analysis-table",
   "batch-iteration-strategy-table",
   "new-direction-expansion-table",
+  "legil-run-once-prompt-contract",
 ] as const;
 
 const OPTIONAL_SKILLS = [
@@ -37,6 +39,10 @@ export function loadCreativeExpansionAgent(
   agentRoot = path.resolve(process.cwd(), "creative-expansion-agent"),
 ): CreativeExpansionAgentBundle {
   const instructions = fs.readFileSync(path.join(agentRoot, "instructions.md"), "utf8");
+  const projectSettingsPath = path.join(agentRoot, "PROJECT_SETTINGS.md");
+  const projectSettings = fs.existsSync(projectSettingsPath)
+    ? fs.readFileSync(projectSettingsPath, "utf8")
+    : "";
   const skillNames = [...CORE_SKILLS, ...OPTIONAL_SKILLS];
   const skills: Record<string, string> = {};
 
@@ -45,7 +51,7 @@ export function loadCreativeExpansionAgent(
     skills[skillName] = fs.readFileSync(skillPath, "utf8");
   }
 
-  return { instructions, skills };
+  return { instructions, projectSettings, skills };
 }
 
 export function selectSkills(input: CreativeExpansionInput): string[] {
@@ -80,6 +86,7 @@ export function buildCreativeExpansionMessages(input: CreativeExpansionInput, ag
 
   const developerPrompt = [
     bundle.instructions,
+    bundle.projectSettings ? `\n\n# Current Project Settings\n\n${bundle.projectSettings}` : "",
     "\n\n# Loaded Skills",
     selectedSkills,
     "\n\n# Runtime Rule",
@@ -139,7 +146,7 @@ export function buildUserPrompt(input: CreativeExpansionInput, selectedSkillName
     "# Output Requirements",
     input.outputMode === "markdown_and_json"
       ? "First output the default four-part Markdown tables, then output JSON with matching fields."
-      : "Output the default four-part Markdown tables.",
+      : "If this is a run-once / creative-auto / Legil generation task, prioritize the 新方向拓展表 with stable prompt columns. Otherwise output the default four-part Markdown tables.",
   );
 
   return parts.join("\n");

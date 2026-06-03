@@ -4,15 +4,21 @@
 module.exports = function registerJimengRoutes(app, context) {
     const {
         appConfig,
+        buildResizeJobs,
+        clearResizeResumeState,
         DEFAULT_JIMENG_RESIZE_CONFIG,
         fs,
+        getResizeAspectRatiosFromSettings,
+        getResizeResumeInfo,
         getJimengGenerationOptions,
         jimengBrowserService,
         listImageFilesInFolder,
         logger,
         normalizeInputPath,
         normalizeJimengResizeConfig,
-        persistRuntimeConfig
+        persistRuntimeConfig,
+        setResizeResumeState,
+        updateResizeResumeState
     } = context;
 
     app.get('/api/jimeng/status', async (req, res) => {
@@ -109,17 +115,59 @@ module.exports = function registerJimengRoutes(app, context) {
     });
 
     app.post('/api/jimeng/resize-batch', async (req, res) => {
-        const resizeConfig = normalizeJimengResizeConfig(
-            req.body || {},
+        const requestBody = req.body || {};
+        const resumeRequested = requestBody.resumeMode === true ||
+            String(requestBody.resumeMode || '').toLowerCase() === 'true' ||
+            Boolean(String(requestBody.resumeRunId || '').trim());
+        const resumeInfo = resumeRequested ? getResizeResumeInfo(true) : null;
+        let resizeConfig = normalizeJimengResizeConfig(
+            requestBody,
             appConfig.jimengResize || DEFAULT_JIMENG_RESIZE_CONFIG
         );
+        let resumeBase = null;
+        if (resumeRequested) {
+            if (!resumeInfo || !resumeInfo.hasResume || resumeInfo.provider !== 'jimeng' || !Array.isArray(resumeInfo.jobs)) {
+                return res.json({
+                    success: false,
+                    message: '没有可继续的即梦改尺寸任务'
+                });
+            }
+            const resumeRunId = String(requestBody.resumeRunId || '').trim();
+            if (resumeRunId && resumeInfo.runId && resumeRunId !== resumeInfo.runId) {
+                return res.json({
+                    success: false,
+                    message: '可继续任务已变化，请刷新页面后重试'
+                });
+            }
+            resizeConfig = normalizeJimengResizeConfig({
+                inputFolder: resumeInfo.inputFolder,
+                outputFolder: resumeInfo.outputFolder,
+                browserMode: resumeInfo.browserMode,
+                promptTemplate: resumeInfo.promptTemplate,
+                generationSettings: resumeInfo.generationSettings
+            }, appConfig.jimengResize || DEFAULT_JIMENG_RESIZE_CONFIG);
+            resumeBase = {
+                runId: resumeInfo.runId,
+                jobs: resumeInfo.jobs,
+                nextIndex: Number(resumeInfo.nextIndex) || 0,
+                total: Number(resumeInfo.total) || resumeInfo.jobs.length,
+                totalImages: Number(resumeInfo.totalImages) || 0,
+                totalAspectRatios: Number(resumeInfo.totalAspectRatios) || 0,
+                completed: Number(resumeInfo.completed) || 0,
+                success: Number(resumeInfo.success) || 0,
+                failed: Number(resumeInfo.failed) || 0,
+                saved: Number(resumeInfo.saved) || 0,
+                outputTotal: Number(resumeInfo.progress && resumeInfo.progress.outputTotal) || 0
+            };
+        }
         const promptText = String(resizeConfig.promptTemplate || '').trim();
 
         console.log('\n🖼️ 收到即梦 AI 网页批量改尺寸请求');
         console.log('   输入文件夹:', resizeConfig.inputFolder);
         console.log('   输出文件夹:', resizeConfig.outputFolder);
         console.log('   运行模式:', resizeConfig.browserMode);
-        console.log('   处理方式: 单页顺序生成，每张输入图保存4张');
+        console.log('   宽高比:', (resizeConfig.generationSettings.aspectRatios || [resizeConfig.generationSettings.aspectRatio]).join('、'));
+        console.log('   处理方式: 单页顺序生成，每张输入图按所选宽高比依次保存4张');
 
         if (jimengBrowserService.isRunning()) {
             return res.json({
@@ -155,11 +203,19 @@ module.exports = function registerJimengRoutes(app, context) {
                 });
             }
 
-            const imageFiles = listImageFilesInFolder(inputFolder);
+            const imageFiles = resumeBase
+                ? Array.from(new Set(resumeBase.jobs.map(job => job.imagePath)))
+                : listImageFilesInFolder(inputFolder);
             if (imageFiles.length === 0) {
                 return res.json({
                     success: false,
                     message: '输入文件夹中没有找到图片'
+                });
+            }
+            if (resumeBase && resumeBase.jobs.slice(resumeBase.nextIndex).length === 0) {
+                return res.json({
+                    success: false,
+                    message: '没有剩余的即梦改尺寸任务可继续'
                 });
             }
 
@@ -185,8 +241,25 @@ module.exports = function registerJimengRoutes(app, context) {
             appConfig.jimengResize = resizeConfig;
             persistRuntimeConfig({ jimengResize: appConfig.jimengResize });
 
+            const aspectRatios = getResizeAspectRatiosFromSettings(resizeConfig.generationSettings);
+            const allResizeJobs = resumeBase ? resumeBase.jobs : buildResizeJobs(imageFiles, aspectRatios);
+            if (allResizeJobs.length === 0) {
+                return res.json({
+                    success: false,
+                    message: '没有可执行的即梦改尺寸任务'
+                });
+            }
+
             logger.system('即梦 AI 改尺寸使用独立浏览器会话，可与 Legil 量产/创意拓展同时运行。');
-            const result = jimengBrowserService.startResizeBatch(resizeConfig, imageFiles);
+            const result = jimengBrowserService.startResizeBatch(resizeConfig, imageFiles, {
+                jobs: allResizeJobs,
+                resumeNextIndex: resumeBase ? resumeBase.nextIndex : 0,
+                resumeBase,
+                runId: resumeBase && resumeBase.runId ? resumeBase.runId : '',
+                onSetResumeState: setResizeResumeState,
+                onUpdateResumeState: updateResizeResumeState,
+                onClearResumeState: clearResizeResumeState
+            });
             res.json(result);
         } catch (error) {
             console.error('即梦 AI 改尺寸启动失败:', error);

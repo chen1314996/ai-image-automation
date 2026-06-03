@@ -1,0 +1,578 @@
+body.task-workbook-mode #doubaoStatusItem {
+    display: none;
+}
+
+#taskWorkbookPage {
+    grid-column: 1 / -1;
+    min-width: 0;
+    width: 100%;
+}
+
+.task-workbook-shell {
+    display: grid;
+    gap: 16px;
+    min-width: 0;
+}
+
+.task-workbook-shell .card {
+    min-width: 0;
+    border-color: rgba(255, 255, 255, 0.075);
+    background:
+        linear-gradient(180deg, rgba(18, 24, 30, 0.92), rgba(10, 14, 18, 0.86));
+    color: var(--flat-text, var(--text-main));
+}
+
+.task-workbook-hero {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(320px, 0.55fr);
+    gap: 18px;
+    align-items: center;
+    overflow: hidden;
+    border-color: rgba(14, 165, 233, 0.22);
+}
+
+.task-workbook-hero-copy p {
+    margin: 10px 0 0;
+    color: var(--flat-muted, var(--text-muted));
+    font-size: 14px;
+    line-height: 1.7;
+}
+
+.task-workbook-metrics,
+.task-workbook-vision-stats {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.task-workbook-metrics div,
+.task-workbook-vision-stats div,
+.task-workbook-import-item,
+.task-workbook-group-list,
+.task-workbook-direction-list,
+.task-workbook-detail,
+.task-workbook-group-item,
+.task-workbook-direction-card {
+    border: 1px solid rgba(255, 255, 255, 0.075);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.035);
+}
+
+.task-workbook-metrics div,
+.task-workbook-vision-stats div {
+    min-width: 0;
+    min-height: 74px;
+    padding: 12px;
+}
+
+.task-workbook-metrics strong,
+.task-workbook-vision-stats strong {
+    display: block;
+    margin-top: 3px;
+    color: rgba(255, 255, 255, 0.92);
+    font-size: 22px;
+    line-height: 1.1;
+}
+
+.task-workbook-metrics span,
+.task-workbook-vision-stats span {
+    display: block;
+    margin-top: 6px;
+    color: #9bd8d0;
+    font-size: 12px;
+    font-weight: 800;
+    line-height: 1.45;
+}
+
+.task-workbook-grid {
+    display: grid;
+    grid-template-columns: minmax(320px, 0.9fr) minmax(340px, 1.1fr);
+    gap: 16px;
+}
+
+.task-workbook-import-list {
+    display: grid;
+    gap: 10px;
+    max-height: 290px;
+    overflow: auto;
+    color: var(--flat-muted, var(--text-muted));
+}
+
+.task-workbook-import-item {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 12px;
+    align-items: center;
+    padding: 12px;
+}
+
+.task-workbook-import-item.is-current {
+    border-color: rgba(34, 197, 94, 0.52);
+    box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.12);
+}
+
+.task-workbook-import-title {
+    color: rgba(255, 255, 255, 0.9);
+    font-weight: 900;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.task-workbook-import-meta {
+    margin-top: 4px;
+    color: var(--flat-muted, var(--text-muted));
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.task-workbook-import-actions,
+.task-workbook-card-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: flex-end;
+}
+
+.task-workbook-progress {
+    display: grid;
+    gap: 12px;
+}
+
+.task-workbook-progress .progress-label {
+    color: rgba(255, 255, 255, 0.84);
+    font-size: 13px;
+    font-weight: 800;
+}
+
+.task-workbook-progress .progress-bar {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.task-workbook-progress .progress-fill {
+    background: linear-gradient(90deg, rgba(14, 165, 233, 0.96), rgba(34, 197, 94, 0.9));
+}
+
+.task-workbook-pool-head,
+.task-workbook-toolbar,
+.task-workbook-selection-meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.task-workbook-toolbar {
+    margin-top: 16px;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+}
+
+.task-workbook-toolbar input,
+.task-workbook-toolbar select {
+    min-height: 42px;
+    border: 1px solid rgba(255, 255, 255, 0.075);
+    border-radius: 8px;
+    background: rgba(8, 12, 16, 0.44);
+    color: rgba(241, 245, 249, 0.9);
+    font-weight: 800;
+}
+
+.task-workbook-toolbar input::placeholder {
+    color: rgba(148, 163, 184, 0.74);
+}
+
+.task-workbook-toolbar input {
+    flex: 1 1 320px;
+}
+
+.task-workbook-toolbar select {
+    flex: 0 0 240px;
+}
+
+.task-workbook-selection-meta {
+    justify-content: flex-start;
+    min-height: 42px;
+    margin: 12px 0;
+    padding: 8px 10px;
+    border: 1px solid rgba(255, 255, 255, 0.075);
+    border-radius: 8px;
+    background: rgba(8, 12, 16, 0.44);
+    color: rgba(226, 232, 240, 0.78);
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.task-workbook-pool-layout {
+    display: grid;
+    grid-template-columns: 280px minmax(360px, 1fr) 360px;
+    gap: 14px;
+    align-items: start;
+}
+
+.task-workbook-group-list,
+.task-workbook-direction-list,
+.task-workbook-detail {
+    min-height: 360px;
+    max-height: 680px;
+    overflow: auto;
+    padding: 12px;
+    color: var(--flat-muted, var(--text-muted));
+    font-size: 13px;
+}
+
+.task-workbook-group-list {
+    display: grid;
+    align-content: start;
+    gap: 8px;
+}
+
+.task-workbook-group-item {
+    width: 100%;
+    display: grid;
+    gap: 5px;
+    text-align: left;
+    padding: 10px;
+    color: inherit;
+    cursor: pointer;
+}
+
+.task-workbook-group-item:hover {
+    border-color: rgba(14, 165, 233, 0.28);
+}
+
+.task-workbook-group-item.active {
+    border-color: rgba(14, 165, 233, 0.46);
+    background: rgba(14, 165, 233, 0.13);
+}
+
+.task-workbook-group-item strong {
+    color: rgba(255, 255, 255, 0.9);
+    font-size: 13px;
+    font-weight: 900;
+    line-height: 1.35;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.task-workbook-group-item span {
+    color: var(--flat-muted, var(--text-muted));
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.task-workbook-direction-list {
+    display: grid;
+    align-content: start;
+    gap: 12px;
+}
+
+.task-workbook-direction-card {
+    display: grid;
+    gap: 10px;
+    padding: 12px;
+    border-left-width: 4px;
+    cursor: pointer;
+    transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.task-workbook-direction-card:hover {
+    border-color: rgba(14, 165, 233, 0.3);
+    background: rgba(255, 255, 255, 0.055);
+}
+
+.task-workbook-direction-card:focus-visible {
+    outline: 2px solid rgba(14, 165, 233, 0.6);
+    outline-offset: 2px;
+}
+
+.task-workbook-direction-card.is-ready {
+    border-left-color: rgba(34, 197, 94, 0.88);
+}
+
+.task-workbook-direction-card.is-risky,
+.task-workbook-direction-card.is-missing {
+    border-left-color: rgba(249, 115, 22, 0.9);
+}
+
+.task-workbook-direction-card.is-pending {
+    border-left-color: rgba(148, 163, 184, 0.82);
+}
+
+.task-workbook-direction-card.is-selected {
+    border-color: rgba(34, 197, 94, 0.48);
+    box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.12);
+}
+
+.task-workbook-direction-card.is-active {
+    border-color: rgba(14, 165, 233, 0.56);
+    background: rgba(14, 165, 233, 0.1);
+    box-shadow: 0 0 0 2px rgba(14, 165, 233, 0.12);
+}
+
+.task-workbook-direction-card.is-active.is-selected {
+    box-shadow:
+        0 0 0 2px rgba(14, 165, 233, 0.12),
+        0 0 0 4px rgba(34, 197, 94, 0.1);
+}
+
+.task-workbook-direction-head {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 10px;
+    align-items: start;
+}
+
+.task-workbook-direction-head input {
+    margin-top: 3px;
+}
+
+.task-workbook-direction-head strong,
+.task-workbook-detail h3 {
+    display: block;
+    color: rgba(255, 255, 255, 0.9);
+    font-size: 14px;
+    font-weight: 900;
+    line-height: 1.4;
+}
+
+.task-workbook-direction-head span {
+    display: block;
+    margin-top: 3px;
+    color: var(--flat-muted, var(--text-muted));
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.task-workbook-status {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 72px;
+    border-radius: 999px;
+    padding: 5px 8px;
+    font-size: 12px;
+    font-weight: 900;
+    white-space: nowrap;
+}
+
+.task-workbook-status.is-ready {
+    color: #dcfce7;
+    background: rgba(34, 197, 94, 0.16);
+}
+
+.task-workbook-status.is-risky,
+.task-workbook-status.is-missing {
+    color: #fed7aa;
+    background: rgba(249, 115, 22, 0.16);
+}
+
+.task-workbook-status.is-pending {
+    color: rgba(226, 232, 240, 0.82);
+    background: rgba(148, 163, 184, 0.14);
+}
+
+.task-workbook-direction-desc,
+.task-workbook-vision-summary {
+    color: rgba(226, 232, 240, 0.78);
+    line-height: 1.55;
+    font-size: 13px;
+}
+
+.task-workbook-direction-desc {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.task-workbook-thumbs,
+.task-workbook-detail-images {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.task-workbook-thumbs img {
+    width: 58px;
+    height: 58px;
+    object-fit: cover;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(8, 12, 16, 0.56);
+    cursor: zoom-in;
+}
+
+.task-workbook-detail-images img {
+    width: calc(50% - 4px);
+    aspect-ratio: 1 / 1;
+    object-fit: cover;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(8, 12, 16, 0.56);
+    cursor: zoom-in;
+}
+
+.task-workbook-no-image {
+    color: #fed7aa;
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.task-workbook-detail h3 {
+    margin: 0;
+}
+
+.task-workbook-detail-meta {
+    margin: 6px 0 12px;
+    color: var(--flat-muted, var(--text-muted));
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.task-workbook-detail-row {
+    display: grid;
+    gap: 5px;
+    padding: 10px 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.075);
+}
+
+.task-workbook-detail-row span {
+    color: var(--flat-muted, var(--text-muted));
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.task-workbook-detail-row strong {
+    color: rgba(255, 255, 255, 0.88);
+    line-height: 1.55;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+body.task-workbook-preview-open {
+    overflow: hidden;
+}
+
+.task-workbook-image-preview[hidden] {
+    display: none;
+}
+
+.task-workbook-image-preview {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    display: grid;
+    place-items: center;
+    padding: 28px;
+    background: rgba(2, 6, 10, 0.82);
+    backdrop-filter: blur(12px);
+}
+
+.task-workbook-image-preview-dialog {
+    position: relative;
+    display: grid;
+    grid-template-rows: minmax(0, 1fr) auto;
+    gap: 12px;
+    width: min(1120px, 96vw);
+    height: min(900px, 92vh);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 8px;
+    background: linear-gradient(180deg, rgba(18, 24, 30, 0.96), rgba(5, 9, 13, 0.94));
+    box-shadow: 0 26px 80px rgba(0, 0, 0, 0.55);
+    overflow: hidden;
+}
+
+.task-workbook-image-preview-close {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    z-index: 2;
+    width: 38px;
+    height: 38px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 8px;
+    background: rgba(5, 9, 13, 0.72);
+    color: rgba(255, 255, 255, 0.9);
+    font-size: 26px;
+    line-height: 1;
+    cursor: pointer;
+    backdrop-filter: blur(10px);
+}
+
+.task-workbook-image-preview-close:hover {
+    border-color: rgba(14, 165, 233, 0.42);
+    background: rgba(14, 165, 233, 0.14);
+}
+
+.task-workbook-image-preview-frame {
+    display: grid;
+    place-items: center;
+    min-height: 0;
+    padding: 18px;
+}
+
+.task-workbook-image-preview-frame img {
+    display: block;
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    border-radius: 8px;
+    background: rgba(0, 0, 0, 0.2);
+}
+
+.task-workbook-image-preview-meta {
+    display: grid;
+    gap: 4px;
+    padding: 12px 16px 16px;
+    border-top: 1px solid rgba(255, 255, 255, 0.075);
+    background: rgba(8, 12, 16, 0.52);
+}
+
+.task-workbook-image-preview-meta strong {
+    color: rgba(255, 255, 255, 0.92);
+    font-size: 14px;
+    font-weight: 900;
+}
+
+.task-workbook-image-preview-meta span {
+    color: var(--flat-muted, var(--text-muted));
+    font-size: 12px;
+    font-weight: 800;
+}
+
+@media (max-width: 1180px) {
+    .task-workbook-pool-layout {
+        grid-template-columns: 240px minmax(0, 1fr);
+    }
+
+    .task-workbook-detail {
+        grid-column: 1 / -1;
+        max-height: none;
+    }
+}
+
+@media (max-width: 820px) {
+    .task-workbook-hero,
+    .task-workbook-grid,
+    .task-workbook-pool-layout {
+        grid-template-columns: 1fr;
+    }
+
+    .task-workbook-metrics,
+    .task-workbook-vision-stats {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .task-workbook-pool-head,
+    .task-workbook-toolbar {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .task-workbook-toolbar input,
+    .task-workbook-toolbar select {
+        width: 100%;
+        flex: 1 1 auto;
+    }
+}

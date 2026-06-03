@@ -17,11 +17,11 @@
         }
 
         function normalizePromptProvider(provider) {
-            return provider === 'lumos' ? 'lumos' : 'doubao';
+            return 'lumos';
         }
 
         function getPromptProviderLabel(provider = config.workflowPromptGeneration.provider) {
-            return normalizePromptProvider(provider) === 'lumos' ? 'Lumos Winky' : '豆包 / 火山方舟';
+            return 'Lumos Winky';
         }
 
         function getSelectedLumosModel() {
@@ -63,7 +63,7 @@
         }
 
         function getWorkflowPromptGenerationFromForm() {
-            const current = config.workflowPromptGeneration || { provider: 'doubao', lumos: {} };
+            const current = config.workflowPromptGeneration || { provider: 'lumos', lumos: {} };
             const lumos = current.lumos || {};
             const model = getSelectedLumosModel() || lumos.model || '';
             const baseUrl = document.getElementById('lumosPromptApiUrl')?.value.trim() || lumos.baseUrl || '';
@@ -189,11 +189,8 @@
 
         function getSelectedPromptProviderReady() {
             const provider = normalizePromptProvider(config.workflowPromptGeneration?.provider);
-            if (provider === 'lumos') {
-                const lumos = config.workflowPromptGeneration.lumos || {};
-                return Boolean(lumos.apiKeyConfigured && getSelectedLumosModel());
-            }
-            return Boolean(config.doubaoModelId);
+            const lumos = config.workflowPromptGeneration.lumos || {};
+            return Boolean(lumos.apiKeyConfigured && getSelectedLumosModel());
         }
 
         function updatePromptGenerationInfo() {
@@ -204,24 +201,17 @@
             updateStatus('doubao', ready, ready ? `${label}已配置` : `${label}待配置`);
 
             if (infoBox) {
-                if (provider === 'lumos') {
-                    const model = getSelectedLumosModel() || '未选择';
-                    infoBox.className = ready ? 'info-box success' : 'info-box error';
-                    infoBox.textContent = ready
-                        ? `✅ 当前提示词模型：Lumos Winky，模型：${model}`
-                        : '❌ 当前选择 Lumos Winky，请确认后端密钥已配置，并从下拉列表选择模型';
-                } else {
-                    infoBox.className = ready ? 'info-box success' : 'info-box error';
-                    infoBox.textContent = ready
-                        ? `✅ 当前提示词模型：豆包 / 火山方舟，模型ID：${config.doubaoModelId || '未填写'}`
-                        : '❌ 当前选择豆包，请确认 API Key 和模型 ID 已配置';
-                }
+                const model = getSelectedLumosModel() || '未选择';
+                infoBox.className = ready ? 'info-box success' : 'info-box error';
+                infoBox.textContent = ready
+                    ? `✅ 当前提示词模型：Lumos Winky，模型：${model}`
+                    : '❌ 当前选择 Lumos Winky，请确认后端密钥已配置，并从下拉列表选择模型';
             }
         }
 
         function setPromptProvider(provider) {
-            config.workflowPromptGeneration = config.workflowPromptGeneration || { provider: 'doubao', lumos: {} };
-            config.workflowPromptGeneration.provider = normalizePromptProvider(provider);
+            config.workflowPromptGeneration = config.workflowPromptGeneration || { provider: 'lumos', lumos: {} };
+            config.workflowPromptGeneration.provider = 'lumos';
             updatePromptProviderActiveState();
             updatePromptProviderVisibility();
             updatePromptGenerationInfo();
@@ -301,7 +291,7 @@
                 infoBox.textContent = '保存提示词模型配置中...';
             }
 
-            if (provider === 'doubao') {
+            if (false && provider === 'doubao') {
                 const doubaoSaved = await saveDoubaoConfig({ silent: true });
                 if (!doubaoSaved) {
                     if (!silent) showToast('请先检查豆包配置', 'error');
@@ -619,8 +609,12 @@
         function syncResizeProviderFormState(provider = config.resizeProvider) {
             const stateMap = ensureResizeProviderFormState();
             const normalizedProvider = normalizeResizeProvider(provider);
-            const inputFolder = document.getElementById('resizeInputFolder')?.value.trim() || config.resizeInputFolder;
-            const outputFolder = document.getElementById('resizeOutputFolder')?.value.trim() || config.resizeOutputFolder;
+            const inputFolder = document.getElementById('resizeInputFolder')?.value.trim()
+                || document.getElementById('deliveryInputFolder')?.value.trim()
+                || config.resizeInputFolder;
+            const outputFolder = document.getElementById('resizeOutputFolder')?.value.trim()
+                || document.getElementById('deliveryOutputFolder')?.value.trim()
+                || config.resizeOutputFolder;
             const promptTemplate = document.getElementById('resizePromptTemplate')?.value || config.resizePromptTemplate || '';
             stateMap[normalizedProvider] = {
                 inputFolder,
@@ -775,7 +769,7 @@
                         generationSettings
                     })
                 });
-                const data = await readJsonResponse(res, '保存改尺寸配置失败，请重启服务器后刷新页面');
+                const data = await readJsonResponse(res, '保存 Legil 适配配置失败，请重启服务器后刷新页面');
                 if (!data.success || !data.config) {
                     throw new Error(data.message || '保存失败');
                 }
@@ -795,33 +789,91 @@
 
                 if (infoBox && !silent) {
                     infoBox.className = 'info-box success';
-                    infoBox.textContent = `✅ ${getResizeProviderLabel(provider)} 改尺寸配置已保存`;
+                    infoBox.textContent = `✅ ${getResizeProviderLabel(provider)} 适配配置已保存`;
                 }
-                if (!silent) showToast(`${getResizeProviderLabel(provider)} 改尺寸配置已保存`);
+                if (!silent) showToast(`${getResizeProviderLabel(provider)} 适配配置已保存`);
                 return true;
             } catch (e) {
                 if (infoBox && !silent) {
                     infoBox.className = 'info-box error';
                     infoBox.textContent = '❌ ' + e.message;
                 }
-                if (!silent) showToast(e.message || '保存改尺寸配置失败', 'error');
+                if (!silent) showToast(e.message || '保存 Legil 适配配置失败', 'error');
                 return false;
             }
         }
 
+        function normalizeResizeAspectRatios(settings = {}, fallbackRatio = '16:9') {
+            const source = settings && typeof settings === 'object' ? settings : {};
+            const rawValues = Array.isArray(source.aspectRatios) && source.aspectRatios.length
+                ? source.aspectRatios
+                : [source.aspectRatio || fallbackRatio];
+            const seen = new Set();
+            const selected = rawValues
+                .map(value => String(value || '').trim())
+                .filter(Boolean)
+                .filter(value => {
+                    if (seen.has(value)) return false;
+                    seen.add(value);
+                    return true;
+                });
+            return selected.length ? selected : [fallbackRatio];
+        }
+
+        function getResizeSelectedAspectRatios(settings = {}) {
+            return normalizeResizeAspectRatios(settings, settings.aspectRatio || '16:9');
+        }
+
+        function toggleResizeAspectRatio(settings, value, selector) {
+            const selectedSet = new Set(getResizeSelectedAspectRatios(settings));
+            const valueText = String(value || '').trim();
+            if (!valueText) return;
+
+            if (selectedSet.has(valueText) && selectedSet.size > 1) {
+                selectedSet.delete(valueText);
+            } else {
+                selectedSet.add(valueText);
+            }
+
+            const optionOrder = Array.from(document.querySelectorAll(selector))
+                .map(button => String(button.dataset.value || '').trim())
+                .filter(Boolean);
+            const nextRatios = optionOrder.length
+                ? optionOrder.filter(option => selectedSet.has(option))
+                : Array.from(selectedSet);
+            const safeRatios = nextRatios.length ? nextRatios : [valueText];
+
+            settings.aspectRatios = safeRatios;
+            settings.aspectRatio = safeRatios[0];
+        }
+
+        function getResizeAspectRatioSummary(settings = {}) {
+            return getResizeSelectedAspectRatios(settings).join('、');
+        }
+
         function normalizeResizeLegilGenerationFromSettings(settings = {}) {
+            const aspectRatios = normalizeResizeAspectRatios(
+                settings,
+                settings.aspectRatio || config.resizeLegilGeneration.aspectRatio || '16:9'
+            );
             return {
                 imageModel: settings.imageModel || config.resizeLegilGeneration.imageModel || 'nano-banana-2',
-                aspectRatio: settings.aspectRatio || config.resizeLegilGeneration.aspectRatio || '16:9',
+                aspectRatio: aspectRatios[0],
+                aspectRatios,
                 resolution: settings.resolution || config.resizeLegilGeneration.resolution || '1K',
                 outputQuantity: Number(settings.outputQuantity) || Number(config.resizeLegilGeneration.outputQuantity) || 1
             };
         }
 
         function normalizeResizeJimengGenerationFromSettings(settings = {}) {
+            const aspectRatios = normalizeResizeAspectRatios(
+                settings,
+                settings.aspectRatio || config.resizeJimengGeneration.aspectRatio || '16:9'
+            );
             return {
                 imageModel: settings.imageModel || config.resizeJimengGeneration.imageModel || 'image-5-lite',
-                aspectRatio: settings.aspectRatio || config.resizeJimengGeneration.aspectRatio || '16:9',
+                aspectRatio: aspectRatios[0],
+                aspectRatios,
                 resolution: settings.resolution || config.resizeJimengGeneration.resolution || '2k',
                 outputQuantity: 4,
                 concurrency: 1,
@@ -830,14 +882,28 @@
         }
 
         function setResizeLegilGenerationValue(key, value) {
-            config.resizeLegilGeneration[key] = key === 'outputQuantity' ? Number(value) : value;
+            if (key === 'aspectRatio') {
+                toggleResizeAspectRatio(config.resizeLegilGeneration, value, '[data-resize-legil-setting="aspectRatio"]');
+            } else {
+                config.resizeLegilGeneration[key] = key === 'outputQuantity' ? Number(value) : value;
+                if (key === 'outputQuantity' && typeof setDeliverySelectedCandidateCount === 'function') {
+                    setDeliverySelectedCandidateCount(Number(value));
+                }
+            }
             updateResizeLegilGenerationActiveStates();
             refreshResizeLegilGenerationSummary();
+            if (typeof updateDeliveryPreview === 'function') {
+                updateDeliveryPreview();
+            }
             saveResizeConfig({ silent: true });
         }
 
         function setResizeJimengGenerationValue(key, value) {
-            config.resizeJimengGeneration[key] = value;
+            if (key === 'aspectRatio') {
+                toggleResizeAspectRatio(config.resizeJimengGeneration, value, '[data-resize-jimeng-setting="aspectRatio"]');
+            } else {
+                config.resizeJimengGeneration[key] = value;
+            }
             config.resizeJimengGeneration.outputQuantity = 4;
             config.resizeJimengGeneration.concurrency = 1;
             updateResizeJimengGenerationActiveStates();
@@ -862,7 +928,10 @@
         function updateResizeLegilGenerationActiveStates() {
             document.querySelectorAll('[data-resize-legil-setting]').forEach(button => {
                 const key = button.dataset.resizeLegilSetting;
-                button.classList.toggle('active', String(button.dataset.value) === String(config.resizeLegilGeneration[key]));
+                const active = key === 'aspectRatio'
+                    ? getResizeSelectedAspectRatios(config.resizeLegilGeneration).includes(String(button.dataset.value))
+                    : String(button.dataset.value) === String(config.resizeLegilGeneration[key]);
+                button.classList.toggle('active', active);
             });
             updateResizeBrowserModeActiveState();
         }
@@ -870,7 +939,10 @@
         function updateResizeJimengGenerationActiveStates() {
             document.querySelectorAll('[data-resize-jimeng-setting]').forEach(button => {
                 const key = button.dataset.resizeJimengSetting;
-                button.classList.toggle('active', String(button.dataset.value) === String(config.resizeJimengGeneration[key]));
+                const active = key === 'aspectRatio'
+                    ? getResizeSelectedAspectRatios(config.resizeJimengGeneration).includes(String(button.dataset.value))
+                    : String(button.dataset.value) === String(config.resizeJimengGeneration[key]);
+                button.classList.toggle('active', active);
             });
             updateResizeBrowserModeActiveState();
         }
@@ -1042,7 +1114,7 @@
             const modelLabel = getResizeOptionLabel('[data-resize-legil-setting="imageModel"]', config.resizeLegilGeneration.imageModel, config.resizeLegilGeneration.imageModel);
             setResizeGenerationInfo(
                 'info-box success',
-                `✅ Legil改尺寸参数：${getBrowserModeLabel(config.resizeBrowserMode)} / ${modelLabel} / ${config.resizeLegilGeneration.aspectRatio} / ${config.resizeLegilGeneration.resolution} / ${config.resizeLegilGeneration.outputQuantity}张`
+                `✅ Legil AI 三尺寸适配参数：${getBrowserModeLabel(config.resizeBrowserMode)} / ${modelLabel} / ${getResizeAspectRatioSummary(config.resizeLegilGeneration)} / ${config.resizeLegilGeneration.resolution} / 每比例 ${config.resizeLegilGeneration.outputQuantity} 张`
             );
         }
 
@@ -1051,7 +1123,7 @@
             const resolutionLabel = getResizeOptionLabel('[data-resize-jimeng-setting="resolution"]', config.resizeJimengGeneration.resolution, String(config.resizeJimengGeneration.resolution).toUpperCase());
             setResizeGenerationInfo(
                 'info-box success',
-                `✅ 即梦改尺寸参数：${getBrowserModeLabel(config.resizeBrowserMode)} / ${modelLabel} / ${config.resizeJimengGeneration.aspectRatio} / ${resolutionLabel} / 单页顺序 / 每图4张`
+                `✅ 即梦改尺寸参数：${getBrowserModeLabel(config.resizeBrowserMode)} / ${modelLabel} / ${getResizeAspectRatioSummary(config.resizeJimengGeneration)} / ${resolutionLabel} / 单页顺序 / 每比例每图4张`
             );
         }
 
@@ -1139,6 +1211,9 @@
 
         function setCreativeLegilGenerationValue(key, value) {
             config.creativeLegilGeneration[key] = key === 'outputQuantity' ? Number(value) : value;
+            if (key === 'aspectRatio') {
+                config.creativeLegilGeneration.aspectRatios = [String(value)];
+            }
             updateCreativeLegilGenerationActiveStates();
             refreshCreativeLegilGenerationSummary();
         }
@@ -1218,8 +1293,11 @@
             config.creativeLegilGeneration = {
                 imageModel: settings.imageModel || 'nano-banana-2',
                 aspectRatio: settings.aspectRatio || '1:1',
-                resolution: settings.resolution || '1K',
-                outputQuantity: Number(settings.outputQuantity) || 1
+                aspectRatios: Array.isArray(settings.aspectRatios) && settings.aspectRatios.length
+                    ? settings.aspectRatios
+                    : [settings.aspectRatio || '1:1'],
+                resolution: settings.resolution || '2K',
+                outputQuantity: Number(settings.outputQuantity) || 4
             };
 
             renderCreativeLegilImageModelOptions(options.imageModels || []);
@@ -1284,6 +1362,9 @@
                     config.creativeLegilGeneration = {
                         imageModel: data.config.generationSettings.imageModel || config.creativeLegilGeneration.imageModel,
                         aspectRatio: data.config.generationSettings.aspectRatio || config.creativeLegilGeneration.aspectRatio,
+                        aspectRatios: Array.isArray(data.config.generationSettings.aspectRatios) && data.config.generationSettings.aspectRatios.length
+                            ? data.config.generationSettings.aspectRatios
+                            : [data.config.generationSettings.aspectRatio || config.creativeLegilGeneration.aspectRatio],
                         resolution: data.config.generationSettings.resolution || config.creativeLegilGeneration.resolution,
                         outputQuantity: Number(data.config.generationSettings.outputQuantity) || config.creativeLegilGeneration.outputQuantity
                     };

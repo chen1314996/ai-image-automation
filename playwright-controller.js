@@ -323,7 +323,7 @@ class BrowserController {
             legil: false
         };
 
-        console.log('\n🔄 开始打开 Legil 网站（豆包 API 无需网页）...\n');
+        console.log('\n🔄 开始打开 Legil 网站（Lumos Winky 无需网页）...\n');
 
         // 先启动浏览器
         if (!this.isBrowserActive()) {
@@ -345,7 +345,7 @@ class BrowserController {
 
         // 输出结果总结
         console.log('\n📊 打开结果：');
-        console.log('   豆包: ✅ API 模式，无需网页');
+        console.log('   提示词模型: ✅ Lumos Winky API，无需网页');
         console.log(`   Legil: ${results.legil ? '✅ 成功' : '❌ 失败'}`);
 
         return results;

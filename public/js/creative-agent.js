@@ -157,8 +157,8 @@
             setCreativeAgentInfo(
                 qualityHasErrors ? 'info-box error' : 'info-box success',
                 qualityHasErrors
-                    ? `⚠️ Agent已生成表格：${data.fileName || 'creative_agent.xlsx'}；提取到 ${promptCount} 组提示词，但质检发现严重问题`
-                    : `✅ Agent已生成表格：${data.fileName || 'creative_agent.xlsx'}；可提取 ${promptCount} 组提示词`
+                    ? `⚠️ Agent已生成 ${promptCount} 组提示词，但质检发现严重问题`
+                    : `✅ Agent已生成 ${promptCount} 组提示词，可直接发送到 Legil`
             );
 
             if (promptCount > 0 && (!Array.isArray(config.creativePrompts) || config.creativePrompts.length === 0)) {
@@ -297,8 +297,8 @@
                 throw new Error(data.message || 'Agent结果不可用');
             }
             applyCreativeAgentResult(data);
-            addLog(`✅ 创意拓展Agent生成完成：${data.fileName || ''}，提示词 ${Array.isArray(data.prompts) ? data.prompts.length : 0} 组`, 'success');
-            showToast('Agent表格已生成');
+            addLog(`✅ 创意拓展Agent生成完成：提示词 ${Array.isArray(data.prompts) ? data.prompts.length : 0} 组`, 'success');
+            showToast('Agent提示词已生成');
         }
 
         async function checkCreativeAgentTaskStatus() {
@@ -381,7 +381,7 @@
 
                 if (data.runId) {
                     setCreativeAgentTaskPanel(data.task || { phase: 'queued', currentAction: data.message });
-                    setCreativeAgentInfo('info-box loading', 'Agent任务已启动，正在后台生成表格...');
+                    setCreativeAgentInfo('info-box loading', 'Agent任务已启动，正在后台生成提示词...');
                     addLog(`创意拓展Agent任务已启动：${data.runId}`, 'system');
                     startCreativeAgentStatusPolling(data.runId);
                 } else {
@@ -427,7 +427,7 @@
 
         function downloadCreativeAgentTable() {
             if (!creativeAgentLastResult?.downloadUrl) {
-                showToast('还没有可下载的Agent表格', 'error');
+                showToast('当前 Agent 结果没有下载文件', 'error');
                 return;
             }
             window.location.href = creativeAgentLastResult.downloadUrl;
@@ -438,7 +438,7 @@
                 ? creativeAgentLastResult.prompts
                 : [];
             if (prompts.length === 0) {
-                if (!options.silent) showToast('生成表格中没有可提取的提示词', 'error');
+                if (!options.silent) showToast('Agent 结果中没有可用提示词', 'error');
                 return false;
             }
 
@@ -447,15 +447,15 @@
                 index: index + 1,
                 selected: item.selected !== false
             }));
-            config.creativeTableFileName = creativeAgentLastResult.fileName || 'Agent生成表格.xlsx';
+            config.creativeTableFileName = creativeAgentLastResult.fileName || 'Agent生成提示词';
             renderCreativePromptPreview(config.creativePrompts);
 
             const infoBox = document.getElementById('creativeTableInfo');
             if (infoBox) {
                 infoBox.className = 'info-box success';
-                infoBox.textContent = `✅ 已从Agent生成表格提取 ${config.creativePrompts.length} 组提示词`;
+                infoBox.textContent = `✅ 已加载 Agent 生成的 ${config.creativePrompts.length} 组提示词`;
             }
-            addLog(`✅ 已提取Agent生成表格提示词：${config.creativePrompts.length} 组`, 'success');
+            addLog(`✅ 已加载 Agent 生成提示词：${config.creativePrompts.length} 组`, 'success');
             if (!options.silent) showToast(`已提取 ${config.creativePrompts.length} 组提示词`);
             return true;
         }

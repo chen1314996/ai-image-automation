@@ -1,0 +1,4 @@
+interface:
+  display_name: "Legil运行一次Prompt合约"
+  short_description: "约束自动创意输出适配 Legil Nano Banana 2、1:1、2K、每 prompt 4 张"
+  default_prompt: "Use $legil-run-once-prompt-contract to make creative-auto run-once prompt tables parseable and directly usable for Legil image generation."

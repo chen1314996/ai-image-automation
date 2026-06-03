@@ -100,10 +100,6 @@
                 const reference = document.getElementById('creativeReferenceFolder');
                 if (reference) reference.value = config.creativeReferenceFolder;
             }
-            if (creativeResumeInfo.browserMode) {
-                config.creativeBrowserMode = normalizeCreativeBrowserMode(creativeResumeInfo.browserMode);
-                updateCreativeBrowserModeActiveState();
-            }
             if (creativeResumeInfo.generationSettings) {
                 config.creativeLegilGeneration = {
                     ...config.creativeLegilGeneration,
@@ -130,6 +126,10 @@
                 const total = Number(creativeResumeInfo.total) || creativeResumeIndexes.length;
                 infoBox.className = 'info-box success';
                 infoBox.textContent = `已找到上次创意拓展任务：已处理 ${completed}/${total} 组，可继续剩余 ${creativeResumeIndexes.length} 组，或开启新任务。`;
+            }
+
+            if (typeof setCreativeAutoRunning === 'function') {
+                setCreativeAutoRunning(false, typeof creativeAutoLastRun !== 'undefined' ? creativeAutoLastRun : null);
             }
         }
 
@@ -216,6 +216,16 @@
             renderCreativePromptPreview(config.creativePrompts);
         }
 
+        function getCreativePromptSaveNamePreview(item = {}) {
+            const outputNameBase = String(item.outputNameBase || '').trim();
+            if (outputNameBase) return outputNameBase;
+            const labelPath = Array.isArray(item.standardLabelPath)
+                ? item.standardLabelPath.map(part => String(part || '').trim()).filter(Boolean)
+                : [];
+            const contentTitle = String(item.contentTitle || item.newDirectionName || item.direction || '').trim();
+            return [...labelPath, contentTitle].filter(Boolean).join('_');
+        }
+
         function renderCreativePromptPreview(prompts) {
             const list = document.getElementById('creativePromptPreview');
             if (!list) return;
@@ -285,6 +295,13 @@
                 meta.appendChild(label);
                 meta.appendChild(summary);
                 card.appendChild(meta);
+                const saveNamePreview = getCreativePromptSaveNamePreview(group.prompts[0] || {});
+                if (saveNamePreview) {
+                    const saveName = document.createElement('div');
+                    saveName.className = 'creative-preview-save-name';
+                    saveName.textContent = `保存名预览：${saveNamePreview}`;
+                    card.appendChild(saveName);
+                }
                 list.appendChild(card);
             });
 

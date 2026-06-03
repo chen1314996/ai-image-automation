@@ -17,6 +17,7 @@ module.exports = function createGenerationSettingsMethods(deps) {
         isAbortRequested,
         throwIfAborted,
         interruptibleSleep,
+        withTimeout,
         normalizeImageUrl,
         isLegilOutputUrl,
         extractLegilImageUrl,
@@ -185,17 +186,66 @@ module.exports = function createGenerationSettingsMethods(deps) {
             return false;
         }
 
-        await optionElement.click();
+        const clicked = await this.clickLegilElementWithFallback(page, optionElement, `image model option ${targetLabel}`, options);
+        if (!clicked) {
+            return false;
+        }
         await interruptibleSleep(500, options);
         return true;
     },
 
-    async hasOpenImagePreviewModal(page) {
+    async clickLegilElementWithFallback(page, element, label = 'Legil element', options = {}) {
+        if (!page || page.isClosed() || !element) {
+            return false;
+        }
+
+        const clickTimeoutMs = Number(options.legilClickTimeoutMs) || 3000;
+
+        try {
+            await element.click({ timeout: clickTimeoutMs });
+            return true;
+        } catch (clickError) {
+            logger.warn(`${label} click timed out or was intercepted, trying fallback: ${String(clickError.message || clickError).split('\n')[0]}`);
+        }
+
+        const box = await element.boundingBox().catch(() => null);
+        if (box && Number.isFinite(box.x) && Number.isFinite(box.y) && box.width > 0 && box.height > 0) {
+            try {
+                await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+                return true;
+            } catch (mouseError) {
+                logger.warn(`${label} coordinate click failed, trying DOM click: ${String(mouseError.message || mouseError).split('\n')[0]}`);
+            }
+        }
+
+        try {
+            await element.evaluate((el) => {
+                if (typeof el.click === 'function') {
+                    el.click();
+                    return;
+                }
+
+                el.dispatchEvent(new MouseEvent('click', {
+                    bubbles: true,
+                    cancelable: true,
+                    view: window
+                }));
+            });
+            return true;
+        } catch (domError) {
+            logger.warn(`${label} DOM click failed: ${String(domError.message || domError).split('\n')[0]}`);
+            return false;
+        }
+    },
+
+    async hasOpenImagePreviewModal(page, options = {}) {
         if (!page || page.isClosed()) {
             return false;
         }
 
-        return page.evaluate(() => {
+        const timeoutMs = Number(options.modalDetectTimeoutMs) || 2500;
+        const assumeOpenOnTimeout = options.assumeOpenOnTimeout === true;
+        const detectPromise = page.evaluate(() => {
             const isVisible = (el) => {
                 const rect = el.getBoundingClientRect();
                 const style = window.getComputedStyle(el);
@@ -217,6 +267,14 @@ module.exports = function createGenerationSettingsMethods(deps) {
                 return !!dialog.querySelector('img');
             });
         }).catch(() => false);
+
+        return withTimeout(detectPromise, timeoutMs, 'detect image preview modal').catch(error => {
+            if (error?.code === 'OPERATION_TIMEOUT') {
+                logger.warn(`检测大图弹窗超时 ${timeoutMs}ms，改用兜底关闭流程`);
+                return assumeOpenOnTimeout;
+            }
+            return false;
+        });
     },
 
     async closeOpenPreviewModal(page, options = {}) {
@@ -224,7 +282,14 @@ module.exports = function createGenerationSettingsMethods(deps) {
             return false;
         }
 
-        const hadModal = await this.hasOpenImagePreviewModal(page);
+        const modalOptions = {
+            ...options,
+            modalDetectTimeoutMs: Number(options.modalDetectTimeoutMs) || 2500
+        };
+        const hadModal = await this.hasOpenImagePreviewModal(page, {
+            ...modalOptions,
+            assumeOpenOnTimeout: true
+        });
         if (!hadModal) {
             return false;
         }
@@ -232,7 +297,10 @@ module.exports = function createGenerationSettingsMethods(deps) {
         logger.info('检测到未关闭的大图弹窗，正在关闭...');
 
         for (let attempt = 0; attempt < 4; attempt++) {
-            const clickedClose = await page.evaluate(() => {
+            throwIfAborted(options);
+
+            const closeEvaluateTimeoutMs = Number(options.modalCloseEvaluateTimeoutMs) || 2500;
+            const clickedClose = await withTimeout(page.evaluate(() => {
                 const isVisible = (el) => {
                     const rect = el.getBoundingClientRect();
                     const style = window.getComputedStyle(el);
@@ -329,17 +397,22 @@ module.exports = function createGenerationSettingsMethods(deps) {
                         y: Math.max(0, dialogRect.top + 28)
                     }
                 };
-            }).catch(() => ({ clicked: false, box: null }));
+            }).catch(() => ({ clicked: false, box: null })), closeEvaluateTimeoutMs, 'click image preview close').catch(error => {
+                if (error?.code === 'OPERATION_TIMEOUT') {
+                    logger.warn(`关闭大图弹窗脚本超时 ${closeEvaluateTimeoutMs}ms，改用 Esc/坐标兜底`);
+                }
+                return { clicked: false, box: null };
+            });
 
             await browserController.sleep(500).catch(() => {});
-            if (!(await this.hasOpenImagePreviewModal(page))) {
+            if (!(await this.hasOpenImagePreviewModal(page, modalOptions))) {
                 logger.info('✅ 大图弹窗已关闭');
                 return true;
             }
 
             await page.keyboard.press('Escape').catch(() => {});
             await browserController.sleep(500).catch(() => {});
-            if (!(await this.hasOpenImagePreviewModal(page))) {
+            if (!(await this.hasOpenImagePreviewModal(page, modalOptions))) {
                 logger.info('✅ 大图弹窗已关闭');
                 return true;
             }
@@ -347,7 +420,7 @@ module.exports = function createGenerationSettingsMethods(deps) {
             if (clickedClose?.box) {
                 await page.mouse.click(clickedClose.box.x, clickedClose.box.y).catch(() => {});
                 await browserController.sleep(500).catch(() => {});
-                if (!(await this.hasOpenImagePreviewModal(page))) {
+                if (!(await this.hasOpenImagePreviewModal(page, modalOptions))) {
                     logger.info('✅ 大图弹窗已关闭');
                     return true;
                 }
@@ -383,7 +456,11 @@ module.exports = function createGenerationSettingsMethods(deps) {
             const triggerBox = await trigger.boundingBox().catch(() => null);
             const minTop = triggerBox ? triggerBox.y + triggerBox.height - 4 : 100;
 
-            await trigger.click();
+            const opened = await this.clickLegilElementWithFallback(page, trigger, `image model trigger ${targetLabel}`, options);
+            if (!opened) {
+                logger.warn('未找到 Legil 图生图模型切换入口，继续使用页面当前模型');
+                return false;
+            }
             await interruptibleSleep(500, options);
 
             const clicked = await this.clickImageModelOption(page, targetLabel, minTop, options);
@@ -464,7 +541,10 @@ module.exports = function createGenerationSettingsMethods(deps) {
             return false;
         }
 
-        await optionElement.click();
+        const clicked = await this.clickLegilElementWithFallback(page, optionElement, `Legil setting option ${target}`, options);
+        if (!clicked) {
+            return false;
+        }
         await interruptibleSleep(300, options);
         return true;
     },
@@ -527,9 +607,12 @@ module.exports = function createGenerationSettingsMethods(deps) {
                         const isEnabled = await button.isEnabled().catch(() => false);
                         if (isVisible && isEnabled) {
                             logger.info(`找到生成按钮: ${selector}`);
-                            await button.click();
-                            logger.info('已点击生成按钮');
-                            return true;
+                            const clicked = await this.clickLegilElementWithFallback(page, button, `generate button ${selector}`, options);
+                            if (clicked) {
+                                logger.info('已点击生成按钮');
+                                return true;
+                            }
+                            logger.warn(`生成按钮点击失败，继续尝试下一个选择器: ${selector}`);
                         }
                     }
                 } catch (e) {}

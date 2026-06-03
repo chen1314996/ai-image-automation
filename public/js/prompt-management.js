@@ -45,8 +45,11 @@
                 card.classList.add('sent');
             }
 
-            const content = typeof prompt === 'string' ? prompt : prompt.content;
+            const content = typeof prompt === 'string'
+                ? prompt
+                : (prompt.content || prompt.prompt || prompt.finalPrompt || '');
             const preview = content.substring(0, 150) + (content.length > 150 ? '...' : '');
+            const namingHint = getPromptNamingHint(prompt);
 
             card.innerHTML = `
                 <div class="prompt-header">
@@ -57,6 +60,7 @@
                     <span class="prompt-status" id="prompt-status-${number}">${isSent ? '✅ 已发送' : '⏳ 待发送'}</span>
                 </div>
                 <div class="prompt-content" id="prompt-content-${number}">${escapeHtml(content)}</div>
+                ${namingHint ? `<div class="prompt-naming-hint">${escapeHtml(namingHint)}</div>` : ''}
                 <div class="prompt-actions">
                     <button class="btn-small btn-copy" onclick="copyPrompt(${number})" title="复制到剪贴板">
                         📋 复制
@@ -68,6 +72,17 @@
             `;
 
             return card;
+        }
+
+        function getPromptNamingHint(prompt) {
+            if (!prompt || typeof prompt === 'string') return '';
+            const outputNameBase = String(prompt.outputNameBase || '').trim();
+            if (outputNameBase) return `保存名预览：${outputNameBase}`;
+            const labelPath = Array.isArray(prompt.standardLabelPath)
+                ? prompt.standardLabelPath.map(part => String(part || '').trim()).filter(Boolean).join(' / ')
+                : '';
+            if (labelPath) return `识别到标准标签：${labelPath}`;
+            return '未识别标准标签，将使用旧命名或标题命名';
         }
 
         function escapeHtml(text) {

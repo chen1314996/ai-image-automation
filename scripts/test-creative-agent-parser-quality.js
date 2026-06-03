@@ -41,6 +41,28 @@ function runParserTest() {
     assert.strictEqual(parsed.prompts[1].promptTitle, '提示词2');
 }
 
+function runParserWithCandidateMetadataColumnsTest() {
+    const workbook = createWorkbook([
+        ['参考方向', '新方向名称', '方向描述', '提示词1', '目标层级', '氛围', '视角', '广告钩子', '质量风险'],
+        [
+            '旧方向',
+            '雪夜急救箱护送',
+            '小队护送急救箱穿过暴风雪街区',
+            '主题：雪夜急救箱护送。画风：高质量3D卡通渲染。情绪氛围：紧张危机。画面内容：幸存者小队护送破损急救箱穿过冰封街道，前景有裂冰、脚印和结霜包装，中景是护送队伍与远处避难所灯光。整体基调：突出救命价值和路途危险。冰雪氛围，画面直观、主题明确，高质量3D卡通渲染，商业级游戏宣传海报风格，电影镜头感。',
+            'L4',
+            '紧张危机',
+            '远景',
+            '救命价值',
+            '低'
+        ]
+    ]);
+
+    const parsed = parseCreativePromptWorkbook('agent-with-metadata.xlsx', workbookToBase64(workbook));
+    assert.strictEqual(parsed.prompts.length, 1);
+    assert.strictEqual(parsed.prompts[0].direction, '雪夜急救箱护送');
+    assert.strictEqual(parsed.prompts[0].promptTitle, '提示词1');
+}
+
 function runDuplicatePromptDeduplicationTest() {
     const promptA = 'prompt text A with enough detail for creative image generation';
     const promptB = 'prompt text B with enough detail for creative image generation';
@@ -86,9 +108,26 @@ function runQualityTest() {
     assert.strictEqual(report.totalPrompts, 2);
     assert.ok(report.errors.some(issue => issue.code === 'malformed_prompt'));
     assert.strictEqual(report.success, false);
+    assert.strictEqual(report.status, 'error');
+}
+
+function runForbiddenTermQualityTest() {
+    const report = buildCreativeAgentQualityReport([
+        {
+            index: 1,
+            direction: '冰封补给站',
+            promptTitle: '提示词1',
+            prompt: '主题：冰封补给站。画风：高质量3D卡通渲染。情绪氛围：紧张危机。画面内容：幸存者站在带有真实品牌 logo 的补给箱旁，前景是积雪和破损包装。整体基调：商业级游戏宣传海报风格。'
+        }
+    ]);
+
+    assert.strictEqual(report.success, false);
+    assert.ok(report.errors.some(issue => issue.code === 'forbidden_term'));
 }
 
 runParserTest();
+runParserWithCandidateMetadataColumnsTest();
 runDuplicatePromptDeduplicationTest();
 runQualityTest();
+runForbiddenTermQualityTest();
 console.log('creative agent parser and quality tests passed');

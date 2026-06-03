@@ -32,6 +32,26 @@ async function interruptibleSleep(ms, options = {}) {
     }
 }
 
+async function withTimeout(promise, timeoutMs, label = 'operation') {
+    let timeoutId = null;
+    try {
+        return await Promise.race([
+            promise,
+            new Promise((_, reject) => {
+                timeoutId = setTimeout(() => {
+                    const error = new Error(`${label} timed out after ${timeoutMs}ms`);
+                    error.code = 'OPERATION_TIMEOUT';
+                    reject(error);
+                }, timeoutMs);
+            })
+        ]);
+    } finally {
+        if (timeoutId) {
+            clearTimeout(timeoutId);
+        }
+    }
+}
+
 function normalizeImageUrl(src) {
     let value = String(src || '').split('#')[0];
     for (let i = 0; i < 3; i++) {
@@ -70,6 +90,7 @@ module.exports = {
     isAbortRequested,
     throwIfAborted,
     interruptibleSleep,
+    withTimeout,
     normalizeImageUrl,
     isLegilOutputUrl,
     extractLegilImageUrl,

@@ -18,7 +18,7 @@
 
         async function openSingleWebsite(name) {
             if (name === 'doubao') {
-                showToast('豆包已改为API调用，无需打开网页');
+                showToast('提示词生成已统一走 Lumos Winky，无需打开网页');
                 return;
             }
 
@@ -47,7 +47,7 @@
         async function openBothWebsites() {
             const legilUrl = document.getElementById('legilUrl').value.trim();
 
-            addLog('正在打开Legil网站，豆包已改为API调用...', 'browser');
+            addLog('正在打开 Legil 网站，提示词生成已统一走 Lumos Winky...', 'browser');
             try {
                 const res = await fetch('/api/open-both-websites', {
                     method: 'POST',
@@ -56,7 +56,7 @@
                 });
                 const data = await res.json();
                 if (data.success) {
-                    addLog('Legil网站已打开，豆包API无需网页', 'browser');
+                    addLog('Legil 网站已打开，Lumos Winky 无需网页', 'browser');
                     loadDoubaoConfig();
                     updateStatus('legil', true, 'Legil已连接');
                     updateStatus('browser', true, '浏览器运行中');
@@ -86,7 +86,7 @@
                 if (data.success && data.status) {
                     const s = data.status;
                     if (s.browserRunning) updateStatus('browser', true, '浏览器运行中');
-                    if (s.doubaoApiConfigured) updateStatus('doubao', true, '豆包API已配置');
+                    if (s.doubaoApiConfigured) updateStatus('doubao', true, 'Lumos Winky 已配置');
                     if (!s.doubaoApiConfigured) updateStatus('doubao', false, '提示词模型待配置');
                     if (typeof updatePromptGenerationInfo === 'function') updatePromptGenerationInfo();
                     if (s.pages.legil) updateStatus('legil', true, 'Legil已连接');

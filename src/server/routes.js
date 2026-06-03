@@ -10,12 +10,19 @@ const registerJimengRoutes = require('../routes/jimeng.routes');
 const registerLegilRoutes = require('../routes/legil.routes');
 const registerWorkflowRoutes = require('../routes/workflow.routes');
 const registerCreativeAgentRoutes = require('../routes/creative-agent.routes');
+const registerCreativeKnowledgeRoutes = require('../routes/creative-knowledge.routes');
+const registerCreativeAutoRoutes = require('../routes/creative-auto.routes');
+const registerMaterialAnalysisRoutes = require('../routes/material-analysis.routes');
+const registerTaskWorkbookRoutes = require('../routes/task-workbook.routes');
+const registerDeliveryRoutes = require('../routes/delivery.routes');
 const registerRenameRoutes = require('../routes/rename.routes');
 const registerFeishuRoutes = require('../routes/feishu.routes');
 const registerHealthRoutes = require('../routes/health.routes');
 const registerLogsRoutes = require('../routes/logs.routes');
+const registerRunStateRoutes = require('../routes/run-state.routes');
 
 function registerRoutes(app, context) {
+    registerRunStateRoutes(app, context);
     registerBrowserRoutes(app, context);
     registerConfigRoutes(app, context);
     registerDoubaoRoutes(app, context);
@@ -23,6 +30,11 @@ function registerRoutes(app, context) {
     registerLegilRoutes(app, context);
     registerWorkflowRoutes(app, context);
     registerCreativeAgentRoutes(app, context);
+    registerCreativeKnowledgeRoutes(app, context);
+    registerCreativeAutoRoutes(app, context);
+    registerMaterialAnalysisRoutes(app, context);
+    registerTaskWorkbookRoutes(app, context);
+    registerDeliveryRoutes(app, context);
     registerRenameRoutes(app, context);
     registerFeishuRoutes(app, context);
     registerHealthRoutes(app, context);

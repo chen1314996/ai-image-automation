@@ -1,4 +1,4 @@
-// 平台配置辅助：豆包提示词模板、Legil 参数、文件夹历史和配置加载。
+// 平台配置辅助：Lumos Winky 提示词模板、Legil 参数、文件夹历史和配置加载。
         function updateDoubaoPromptCount() {
             const textarea = document.getElementById('doubaoPromptTemplate');
             const counter = document.getElementById('doubaoPromptCount');
@@ -14,7 +14,7 @@
                 const res = await fetch('/api/config/doubao');
                 const data = await res.json();
                 if (!data.success || !data.config) {
-                    throw new Error(data.message || '读取豆包配置失败');
+                    throw new Error(data.message || '读取 Lumos Winky 配置失败');
                 }
 
                 config.doubaoPromptTemplate = data.config.promptTemplate || '';
@@ -46,11 +46,11 @@
                 }
 
                 const doubaoReady = !!data.config.apiKeyConfigured && !!config.doubaoModelId;
-                updateStatus('doubao', doubaoReady, doubaoReady ? '豆包API已配置' : '豆包API待配置');
+                updateStatus('doubao', doubaoReady, doubaoReady ? 'Lumos Winky 已配置' : 'Lumos Winky 待配置');
 
                 if (infoBox) {
                     infoBox.className = 'info-box success';
-                    infoBox.textContent = `✅ 豆包API配置已加载，模型ID：${data.config.modelLabel || '未填写'}`;
+                    infoBox.textContent = `✅ Lumos Winky 配置已加载，模型：${data.config.modelLabel || '未填写'}`;
                 }
                 if (typeof updatePromptGenerationInfo === 'function') {
                     updatePromptGenerationInfo();
@@ -58,7 +58,7 @@
             } catch (e) {
                 if (infoBox) {
                     infoBox.className = 'info-box error';
-                    infoBox.textContent = '❌ 豆包配置读取失败';
+                    infoBox.textContent = '❌ Lumos Winky 配置读取失败';
                 }
             }
         }
@@ -74,17 +74,17 @@
             const apiKey = apiKeyInput ? apiKeyInput.value.trim() : '';
 
             if (!promptTemplate) {
-                if (!silent) showToast('豆包固定指令不能为空', 'error');
+                if (!silent) showToast('Lumos Winky 固定指令不能为空', 'error');
                 return false;
             }
 
             if (!modelId) {
-                if (!silent) showToast('请填写豆包模型 ID / Endpoint ID', 'error');
+                if (!silent) showToast('请填写 Lumos Winky 模型', 'error');
                 return false;
             }
 
             if (promptTemplate.length > 10000) {
-                if (!silent) showToast('豆包固定指令过长', 'error');
+                if (!silent) showToast('Lumos Winky 固定指令过长', 'error');
                 return false;
             }
 
@@ -110,7 +110,7 @@
                 }
 
                 if (!data.config || !data.config.apiKeyConfigured) {
-                    throw new Error('请填写火山方舟 API Key');
+                    throw new Error('请填写 Lumos Winky API Key');
                 }
 
                 config.doubaoPromptTemplate = data.config.promptTemplate;
@@ -136,18 +136,18 @@
                         : '未配置';
                 }
                 const doubaoReady = !!data.config.apiKeyConfigured && !!config.doubaoModelId;
-                updateStatus('doubao', doubaoReady, doubaoReady ? '豆包API已配置' : '豆包API待配置');
+                updateStatus('doubao', doubaoReady, doubaoReady ? 'Lumos Winky 已配置' : 'Lumos Winky 待配置');
 
                 if (infoBox) {
                     infoBox.className = 'info-box success';
-                    infoBox.textContent = `✅ 豆包API配置已保存，模型ID：${data.config.modelLabel || '未填写'}`;
+                    infoBox.textContent = `✅ Lumos Winky 配置已保存，模型：${data.config.modelLabel || '未填写'}`;
                 }
                 if (typeof updatePromptGenerationInfo === 'function') {
                     updatePromptGenerationInfo();
                 }
                 if (!silent) {
-                    showToast('豆包配置已保存');
-                    addLog(`✅ 豆包API配置已保存，模型ID：${data.config.modelLabel || '未填写'}`, 'success');
+                    showToast('Lumos Winky 配置已保存');
+                    addLog(`✅ Lumos Winky 配置已保存，模型：${data.config.modelLabel || '未填写'}`, 'success');
                 }
                 return true;
             } catch (e) {
@@ -155,7 +155,7 @@
                     infoBox.className = 'info-box error';
                     infoBox.textContent = '❌ ' + e.message;
                 }
-                if (!silent) showToast(e.message || '豆包配置保存失败', 'error');
+                if (!silent) showToast(e.message || 'Lumos Winky 配置保存失败', 'error');
                 return false;
             }
         }

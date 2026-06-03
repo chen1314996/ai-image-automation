@@ -29,30 +29,186 @@
             return provider === 'legil' ? '/api/legil/resize-batch' : '/api/jimeng/resize-batch';
         }
 
+        function getResizeWorkflowAspectRatios(settings = {}) {
+            const rawValues = Array.isArray(settings.aspectRatios) && settings.aspectRatios.length
+                ? settings.aspectRatios
+                : [settings.aspectRatio || '16:9'];
+            const seen = new Set();
+            const ratios = rawValues
+                .map(value => String(value || '').trim())
+                .filter(Boolean)
+                .filter(value => {
+                    if (seen.has(value)) return false;
+                    seen.add(value);
+                    return true;
+                });
+            return ratios.length ? ratios : ['16:9'];
+        }
+
         function getResizeWorkflowGenerationSettings(provider = getResizeWorkflowProvider()) {
             if (provider === 'legil') {
+                const aspectRatios = getResizeWorkflowAspectRatios(config.resizeLegilGeneration);
                 return {
                     ...config.resizeLegilGeneration,
+                    aspectRatio: aspectRatios[0],
+                    aspectRatios,
                     outputQuantity: Number(config.resizeLegilGeneration.outputQuantity) || 1
                 };
             }
 
+            const aspectRatios = getResizeWorkflowAspectRatios(config.resizeJimengGeneration);
             return {
                 ...config.resizeJimengGeneration,
+                aspectRatio: aspectRatios[0],
+                aspectRatios,
                 outputQuantity: 4,
                 concurrency: 1
             };
         }
 
-        async function startResizeBatchWithConfirm() {
+        function setResizeNewTaskVisible(visible) {
+            const btn = document.getElementById('resizeNewTaskBtn');
+            if (btn) btn.hidden = visible !== true;
+        }
+
+        function setResizeResumeTaskVisible(visible, remainingCount = 0) {
+            const btn = document.getElementById('resizeResumeTaskBtn');
+            if (!btn) return;
+            btn.hidden = visible !== true;
+            btn.disabled = visible !== true || remainingCount <= 0;
+            btn.textContent = remainingCount > 0 ? `继续任务（剩余 ${remainingCount} 组）` : '继续任务';
+        }
+
+        function setResizeStoppedActionsVisible(visible, remainingCount = 0) {
+            setResizeResumeTaskVisible(visible === true && remainingCount > 0, remainingCount);
+            setResizeNewTaskVisible(visible === true);
+        }
+
+        function applyResizeResumeInfo(resume) {
+            resizeResumeInfo = resume && resume.hasResume ? resume : null;
+            if (!resizeResumeInfo) {
+                setResizeStoppedActionsVisible(false);
+                return;
+            }
+
+            const provider = typeof normalizeResizeProvider === 'function'
+                ? normalizeResizeProvider(resizeResumeInfo.provider)
+                : (resizeResumeInfo.provider === 'legil' ? 'legil' : 'jimeng');
+            config.resizeProvider = provider;
+            try {
+                window.localStorage.setItem(resizeProviderStorageKey, provider);
+            } catch (e) {}
+
+            if (typeof mergeResizeProviderFormState === 'function') {
+                mergeResizeProviderFormState(provider, {
+                    inputFolder: resizeResumeInfo.inputFolder || '',
+                    outputFolder: resizeResumeInfo.outputFolder || '',
+                    promptTemplate: resizeResumeInfo.promptTemplate || '',
+                    browserMode: resizeResumeInfo.browserMode || config.resizeBrowserMode
+                });
+            }
+
+            config.resizeInputFolder = resizeResumeInfo.inputFolder || config.resizeInputFolder;
+            config.resizeOutputFolder = resizeResumeInfo.outputFolder || config.resizeOutputFolder;
+            config.resizePromptTemplate = typeof resizeResumeInfo.promptTemplate === 'string'
+                ? resizeResumeInfo.promptTemplate
+                : config.resizePromptTemplate;
+            config.resizeBrowserMode = typeof normalizeBrowserMode === 'function'
+                ? normalizeBrowserMode(resizeResumeInfo.browserMode, 'headless')
+                : (resizeResumeInfo.browserMode === 'headed' ? 'headed' : 'headless');
+
+            if (resizeResumeInfo.generationSettings) {
+                if (provider === 'legil' && typeof normalizeResizeLegilGenerationFromSettings === 'function') {
+                    config.resizeLegilGeneration = normalizeResizeLegilGenerationFromSettings(resizeResumeInfo.generationSettings);
+                    if (typeof updateResizeLegilGenerationActiveStates === 'function') updateResizeLegilGenerationActiveStates();
+                }
+                if (provider === 'jimeng' && typeof normalizeResizeJimengGenerationFromSettings === 'function') {
+                    config.resizeJimengGeneration = normalizeResizeJimengGenerationFromSettings(resizeResumeInfo.generationSettings);
+                    if (typeof updateResizeJimengGenerationActiveStates === 'function') updateResizeJimengGenerationActiveStates();
+                }
+            }
+
+            if (typeof applyResizeProviderFormState === 'function') applyResizeProviderFormState(provider);
+            if (typeof updateResizeProviderActiveState === 'function') updateResizeProviderActiveState();
+            if (typeof updateResizeProviderVisibility === 'function') updateResizeProviderVisibility();
+            if (typeof updateResizePromptLabel === 'function') updateResizePromptLabel();
+            if (typeof refreshResizeGenerationSummary === 'function') refreshResizeGenerationSummary();
+            if (resizeResumeInfo.progress) updateResizeProgress(resizeResumeInfo.progress);
+
+            const remainingCount = Number(resizeResumeInfo.remainingCount) || 0;
+            setResizeStoppedActionsVisible(true, remainingCount);
+
+            const startBtn = document.getElementById('resizeStartBtn');
+            if (startBtn) {
+                startBtn.disabled = true;
+                startBtn.textContent = '请选择继续任务或新任务';
+            }
+
+            const infoBox = document.getElementById('resizeBatchInfo');
+            if (infoBox) {
+                const completed = Number(resizeResumeInfo.completed) || 0;
+                const total = Number(resizeResumeInfo.total) || remainingCount;
+                infoBox.className = 'info-box success';
+                infoBox.textContent = `已找到上次${getResizeWorkflowProviderLabel(provider)}改尺寸任务：已处理 ${completed}/${total} 组，可继续剩余 ${remainingCount} 组，或开启新任务。`;
+            }
+        }
+
+        async function refreshResizeResumeControls() {
+            try {
+                const res = await fetch('/api/resize/resume');
+                const data = await readJsonResponse(res, '读取改尺寸恢复状态失败');
+                if (!data.success) return;
+                applyResizeResumeInfo(data.resume);
+            } catch (e) {}
+        }
+
+        async function clearResizeResumeOnServer() {
+            try {
+                await fetch('/api/resize/resume/clear', { method: 'POST' });
+            } catch (e) {}
+            resizeResumeInfo = null;
+        }
+
+        async function resumeResizeStoppedTask() {
+            if (!resizeResumeInfo || !resizeResumeInfo.hasResume) {
+                await refreshResizeResumeControls();
+                if (!resizeResumeInfo || !resizeResumeInfo.hasResume) {
+                    showToast('没有可继续的改尺寸任务', 'error');
+                    return;
+                }
+            }
+
+            applyResizeResumeInfo(resizeResumeInfo);
+            await startResizeBatchWithConfirm({
+                resumeMode: true,
+                resumeRunId: resizeResumeInfo.runId || ''
+            });
+        }
+
+        async function startResizeNewTask() {
+            await clearResizeResumeOnServer();
+            setResizeStoppedActionsVisible(false);
+            const startBtn = document.getElementById('resizeStartBtn');
+            if (startBtn) {
+                startBtn.disabled = false;
+                startBtn.textContent = '开始改尺寸';
+            }
+            await startResizeBatchWithConfirm({
+                resumeMode: false
+            });
+        }
+
+        async function startResizeBatchWithConfirm(options = {}) {
             const provider = getResizeWorkflowProvider();
             const providerLabel = getResizeWorkflowProviderLabel(provider);
             const platformLoginLine = provider === 'legil'
                 ? '✅ 已在 Legil 自动化浏览器中完成登录\n'
                 : '✅ 已在即梦自动化浏览器中完成登录\n';
+            const generationSettings = getResizeWorkflowGenerationSettings(provider);
+            const ratioText = getResizeWorkflowAspectRatios(generationSettings).join('、');
             const runLine = provider === 'legil'
-                ? `✅ Legil 会按输入图顺序改尺寸；每张输入图按当前设置生成 ${Number(config.resizeLegilGeneration.outputQuantity) || 1} 张结果\n`
-                : '✅ 即梦会单页顺序生成；每张输入图完成并保存4张结果后再处理下一张\n';
+                ? `✅ Legil 会按输入图顺序改尺寸；每张图依次完成 ${ratioText}，每个比例生成 ${Number(config.resizeLegilGeneration.outputQuantity) || 1} 张结果\n`
+                : `✅ 即梦会单页顺序生成；每张图依次完成 ${ratioText}，每个比例保存4张结果后再处理下一张\n`;
             const stopLine = provider === 'legil'
                 ? '✅ 停止任务会停止本地 Legil 改尺寸队列，正在执行的浏览器动作可能需要等待当前步骤结束\n\n'
                 : '✅ 停止任务只会停止本地队列，已提交到即梦云端的任务可能仍会继续生成\n\n';
@@ -70,10 +226,10 @@
             );
             if (!confirmed) return;
 
-            await startResizeBatch();
+            await startResizeBatch(options);
         }
 
-        async function startResizeBatch() {
+        async function startResizeBatch(options = {}) {
             const provider = getResizeWorkflowProvider();
             const providerLabel = getResizeWorkflowProviderLabel(provider);
             const taskType = getResizeWorkflowTaskType(provider);
@@ -87,6 +243,10 @@
             if (!inputFolder) return showToast('请输入改尺寸输入文件夹路径', 'error');
             if (!outputFolder) return showToast('请输入改尺寸输出文件夹路径', 'error');
             if (!promptTemplate) return showToast(`请输入发送给${providerLabel}的固定文字提示词`, 'error');
+            if (options.resumeMode !== true) {
+                resizeResumeInfo = null;
+                setResizeStoppedActionsVisible(false);
+            }
 
             addFolderHistory('resizeInputFolder', inputFolder);
             addFolderHistory('resizeOutputFolder', outputFolder);
@@ -118,7 +278,9 @@
                         outputFolder,
                         browserMode: config.resizeBrowserMode,
                         promptTemplate,
-                        generationSettings: getResizeWorkflowGenerationSettings(provider)
+                        generationSettings: getResizeWorkflowGenerationSettings(provider),
+                        resumeMode: options.resumeMode === true,
+                        resumeRunId: options.resumeRunId || ''
                     })
                 });
                 const data = await readJsonResponse(res, '启动改尺寸失败，请重启服务器后刷新页面');
@@ -128,6 +290,8 @@
                 }
 
                 resizeActiveProvider = provider;
+                resizeResumeInfo = null;
+                setResizeStoppedActionsVisible(false);
                 if (infoBox) {
                     infoBox.className = 'info-box success';
                     infoBox.textContent = `✅ 已启动${providerLabel}改尺寸：${data.totalImages || 0} 张输入图`;
@@ -259,7 +423,23 @@
                     }
                     resizeActiveProvider = null;
                     resetResizeUI();
+                    if (
+                        data.progress &&
+                        data.progress.taskType === taskType &&
+                        ['stopped', 'interrupted'].includes(String(data.progress.phase || ''))
+                    ) {
+                        await refreshResizeResumeControls();
+                    } else {
+                        resizeResumeInfo = null;
+                        setResizeStoppedActionsVisible(false);
+                    }
                 } else {
+                    const startBtn = document.getElementById('resizeStartBtn');
+                    if (startBtn) {
+                        startBtn.disabled = true;
+                        startBtn.textContent = data.stopRequested === true ? '等待停止完成...' : '运行中...';
+                    }
+                    setResizeStoppedActionsVisible(false);
                     const stopBtn = document.getElementById('resizeStopBtn');
                     if (stopBtn) {
                         const isResizeTask = data.taskType === taskType;

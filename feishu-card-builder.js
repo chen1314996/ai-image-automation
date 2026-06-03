@@ -5,12 +5,20 @@ const CARD_TOKEN_BYTES = 24;
 
 const CARD_ACTIONS = {
     status: {
-        label: '状态',
+        label: '创意状态',
         type: 'primary'
     },
     progress: {
-        label: '进度',
+        label: '创意进度',
         type: 'default'
+    },
+    start_creative_prompts: {
+        label: '生成Prompt',
+        type: 'primary'
+    },
+    start_creative_smoke: {
+        label: '小批量验证',
+        type: 'primary'
     },
     logs: {
         label: '日志',
@@ -33,10 +41,10 @@ const CARD_ACTIONS = {
         type: 'primary'
     },
     stop_creative: {
-        label: '停止创意',
+        label: '暂停创意',
         type: 'danger',
         confirmTitle: '确认停止创意拓展？',
-        confirmText: '会向当前创意拓展任务发送停止指令。'
+        confirmText: '会暂停自动创意 run，或向当前 Legil 创意拓展任务发送停止指令。'
     },
     stop_workflow: {
         label: '停止任务',
@@ -64,19 +72,20 @@ const CARD_ACTIONS = {
 
 const CONTROL_CARD_ROWS = [
     ['status', 'progress'],
-    ['start_mass', 'continue_workflow'],
-    ['stop_workflow', 'restart_server']
+    ['start_creative_prompts', 'start_creative_smoke'],
+    ['continue_creative', 'stop_creative'],
+    ['logs', 'browser_status']
 ];
 
-const DEFAULT_CARD_FOOTER = '新版后台回调按钮，不会打开浏览器。更多指令：日志、浏览器状态、继续创意、停止创意、重启工作流。';
+const DEFAULT_CARD_FOOTER = '已适配新版创意拓展页。更多指令：控制面板、运行一次自动创意、持续生图、开始量产、停止工作流、重启工作流。';
 const TEXT_COMMAND_PANEL = [
     '**常用指令**',
-    '状态 | 进度',
-    '开始量产 | 继续任务',
-    '停止工作流 | 重启服务器',
+    '创意状态 | 创意进度',
+    '生成Prompt | 小批量验证',
+    '继续创意 | 暂停创意',
     '',
     '**更多指令**',
-    '日志 | 浏览器状态 | 继续创意 | 停止创意 | 重启工作流'
+    '日志 | 浏览器状态 | 开始量产 | 停止工作流 | 重启工作流'
 ].join('\n');
 
 function ensureFeishuCliCardActionToken() {

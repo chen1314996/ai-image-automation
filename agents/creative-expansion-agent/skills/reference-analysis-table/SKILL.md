@@ -28,6 +28,7 @@ Do not use this skill as the main workflow when the task is primarily to produce
 3. Explain why each reference works at the level of subject, scene mechanism, composition, lens language, emotional tone, advertising focus, and visual memory point.
 4. Separate reusable strengths from elements that are likely to cause repetition if reused blindly.
 5. Surface the creative gaps that have not yet been covered.
+6. For this project, always separate **买量判断** and **美术判断**. A picture can be beautiful but weak for advertising, or strong for CTR but visually repetitive; keep those judgments separate.
 
 ## Required Analysis Dimensions
 
@@ -40,6 +41,8 @@ For each reference direction, explicitly analyze:
 - 情绪基调与传播记忆点是什么
 - 哪些元素值得复用
 - 哪些元素已经接近重复上限
+- 如果输入来自方向种子表，结合 `一级标签 / 二级标签 / 三级标签 / 细分标签 / 方向简述` 解释方向成立原因。
+- 如果输入来自 TOP 素材洞察，结合 CTR、花费、D7 ROI、CPI 判断其买量信号，但不要直接复刻素材名。
 
 Do not collapse this into abstract language like “氛围感强” or “有冲击力”. Every judgment must be tied to visible image logic or direction structure.
 
@@ -49,12 +52,17 @@ Default output is a table named `参考分析表`.
 
 Table columns:
 - 参考图/编号/方向名
-- 这张图为什么好
-- 核心优点拆解
-- 可复用元素
+- 买量判断_为什么容易出效果
+- 买量判断_核心优势拆解
+- 买量判断_可复用投放元素
+- 美术判断_为什么好
+- 美术判断_核心优势拆解
+- 美术判断_可复用美术元素
 - 不宜重复的部分
 
 If the user supplied many references, keep one row per reference direction. Do not merge multiple rows into a vague summary row.
+
+When the task is a backend `run-once` / `creative-auto` task, this analysis can be compact and used internally. Do not let long analysis crowd out the required `新方向拓展表`.
 
 After the table, add a short `分析结论` section that summarizes:
 - 当前参考集中最强的共性机制

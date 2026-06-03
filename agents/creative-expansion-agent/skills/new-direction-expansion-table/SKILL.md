@@ -25,6 +25,7 @@ Use `$new-direction-expansion-table` when the user:
 2. Ensure every new direction is a real direction change, not minor word substitution.
 3. Generate prompt sets that are ready for direct 3D image generation.
 4. Maintain world consistency while forcing visible differentiation.
+5. Ensure the final table can be parsed by the backend and sent directly to Legil.
 
 ## Required Output Table
 
@@ -42,6 +43,8 @@ Table columns:
 - 提示词5
 
 Each row is one new direction.
+
+For the current run-once MVP, this table is the most important output. Do not rename the columns, do not wrap the table in a code block, and do not add extra prompt columns.
 
 ## New Direction Rules
 
@@ -78,6 +81,15 @@ The subject must not keep repeating in nearly the same form.
 The scene mechanism must not keep repeating in nearly the same form.
 Changing only location nouns is not enough.
 
+Current Legil assumptions:
+
+- Model: Nano Banana 2.
+- Aspect ratio: 1:1.
+- Resolution: 2K.
+- Each prompt generates 4 images.
+
+Therefore each prompt should describe one clear square-format ad image. Do not put four alternative scenes into one prompt. Let Legil create the 4 image variants from a stable visual concept.
+
 ## Prompt Content Requirements
 
 Each prompt should be full, visual, and directly usable. Prefer covering:
@@ -90,8 +102,12 @@ Each prompt should be full, visual, and directly usable. Prefer covering:
 - 材质与细节
 - 情绪氛围
 - 3D渲染特征
+- 广告点击点或传播动机
+- 方图构图中的主视觉中心
 
 Unless the user explicitly asks otherwise, keep the ending suffix aligned with the agent's default frozen-post-apocalypse commercial 3D poster style.
+
+Avoid relying on tiny text, dense UI, real brands, cyber interfaces, mechs, floating holograms, or futuristic laser screens unless the source direction explicitly asks for them.
 
 ## Decision Rules
 

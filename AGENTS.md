@@ -14,6 +14,13 @@ This is an **AI Image Generation Automation Platform** that automates the workfl
 
 **Tech Stack:** Node.js + Express + Playwright + HTML Frontend with SSE (Server-Sent Events) for real-time logging
 
+## LLM Provider Rule
+
+- All new or modified LLM-related features must use **Lumos Winky** as the LLM gateway.
+- Reuse the existing Winky configuration fields: `WINKY_API_KEY`, `WINKY_API_BASE_URL`, `WINKY_MODEL`, `WINKY_PROVIDER`, or the matching local `automation-secrets.json` keys.
+- Do not add or keep Volcengine / Ark / Doubao model calls for LLM features. Historical Doubao-named APIs may remain as compatibility wrappers, but their implementation must route through Lumos Winky.
+- For vision-capable LLM tasks, send images through the Lumos Winky OpenAI-compatible chat completions format with `image_url`.
+
 ## Running the Project
 
 ```bash

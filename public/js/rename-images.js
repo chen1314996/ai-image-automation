@@ -335,15 +335,18 @@
 
         function updateRenameExample() {
             const payload = getRenamePayload();
-            const sampleChinese = '第一人称驾驶载具上的雪夜护送';
+            const sampleBusinessName = [
+                payload.primaryTag || '题材',
+                payload.secondaryTag || '探索发现',
+                '三级标签',
+                '细分命名'
+            ].filter(Boolean).join('_');
             const sampleDimensions = '800x800';
             const example = [
                 `${payload.fixedPrefix}${payload.startNumber || '28930'}`,
                 payload.regionText || 'BJ',
                 payload.channelText || '广点通',
-                payload.primaryTag || '题材',
-                payload.secondaryTag || '载具',
-                sampleChinese,
+                sampleBusinessName,
                 sampleDimensions
             ].filter(Boolean).join('_') + '.png';
             const target = document.getElementById('renameExampleName');
@@ -493,7 +496,10 @@
             const outputText = data.copiedCount !== undefined
                 ? `已输出 ${copied} / 可处理 ${ready} / 跳过 ${skipped} / 失败 ${failed}`
                 : `共 ${total} 张 / 可处理 ${ready} / 跳过 ${skipped}`;
-            setRenameStats(outputText);
+            const traceText = data.trace && Number(data.trace.derivativeCount)
+                ? ` / 追溯 ${Number(data.trace.derivativeCount)}`
+                : '';
+            setRenameStats(outputText + traceText);
 
             const items = Array.isArray(data.items) ? data.items : [];
             const skippedItems = Array.isArray(data.skipped) ? data.skipped : [];
@@ -753,7 +759,10 @@
             const outputText = data.resizedCount !== undefined
                 ? `已输出 ${resized} / 可处理 ${ready} / 跳过 ${skipped} / 失败 ${failed}`
                 : `共 ${total} 张 / 可处理 ${ready} / 跳过 ${skipped}`;
-            setResizeBatchStats(outputText);
+            const traceText = data.trace && Number(data.trace.derivativeCount)
+                ? ` / 追溯 ${Number(data.trace.derivativeCount)}`
+                : '';
+            setResizeBatchStats(outputText + traceText);
 
             const items = Array.isArray(data.items) ? data.items : [];
             const skippedItems = Array.isArray(data.skipped) ? data.skipped : [];
@@ -996,7 +1005,10 @@
             const outputText = data.appliedCount !== undefined
                 ? `已输出 ${applied} / 可处理 ${ready} / 跳过 ${skipped} / 失败 ${failed}`
                 : `共 ${total} 张 / 可处理 ${ready} / 跳过 ${skipped}`;
-            setLogoBatchStats(outputText);
+            const traceText = data.trace && Number(data.trace.derivativeCount)
+                ? ` / 追溯 ${Number(data.trace.derivativeCount)}`
+                : '';
+            setLogoBatchStats(outputText + traceText);
 
             const items = Array.isArray(data.items) ? data.items : [];
             const skippedItems = Array.isArray(data.skipped) ? data.skipped : [];
@@ -1230,7 +1242,10 @@
             const outputText = data.packagedCount !== undefined
                 ? `已打包 ${packaged} 组 / 可打包 ${ready} 组 / 跳过 ${skipped} 项 / 失败 ${failed} 组`
                 : `共 ${totalImages} 张 / ${totalGroups} 组 / 可打包 ${ready} 组 / 跳过 ${skipped} 项`;
-            setPackageBatchStats(outputText);
+            const traceText = data.trace && Number(data.trace.derivativeCount)
+                ? ` / 追溯 ${Number(data.trace.derivativeCount)}`
+                : '';
+            setPackageBatchStats(outputText + traceText);
 
             const items = Array.isArray(data.items) ? data.items : [];
             const skippedItems = Array.isArray(data.skipped) ? data.skipped : [];

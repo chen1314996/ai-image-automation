@@ -26,6 +26,8 @@ Use `$batch-iteration-strategy-table` when the user:
 2. Decide which axes are suitable for large-scale expansion and which are dangerous because they create only superficial variation.
 3. Distinguish between expansion dimensions that change the creative proposition and dimensions that only change surface styling.
 4. Provide actionable per-direction iteration strategy, not only a total summary table.
+5. For the current project, convert TOP material signals into expansion priorities: CTR means click hook strength, spend means validated scale, D7 ROI means downstream quality, CPI means cost risk.
+6. For the first run-once MVP, default to one selected source direction, five new directions, and five prompts per new direction unless the caller asks for a smaller smoke test.
 
 ## Required Output Structure
 
@@ -80,6 +82,8 @@ For each direction, the `建议重点扩展的迭代轴` must be executable, for
 - 静态陈列改为追逐、潜入、坍塌、撤离、修复、苏醒
 - 中景叙事改为大全景压迫感或近景冲击特写
 - 单核卖点改为材质卖点、稀缺卖点、规模卖点、情绪卖点、文明残响卖点
+- TOP 素材强的方向可以延续“有效机制”，但必须换主体关系、动作机制、镜头或空间结构，避免复刻旧素材。
+- TOP 素材弱或过度重复的方向要标出风险，避免继续堆同类 prompt。
 
 The `每个子方向的具体画面建议` cannot be one-word bullets. They must be concrete visual suggestions that clearly indicate what kinds of scenes should be generated next.
 
@@ -90,6 +94,7 @@ The `每个子方向的具体画面建议` cannot be one-word bullets. They must
 - Do not replace detailed per-direction strategy with a single summary paragraph.
 - Do not treat “changing background location” as meaningful iteration if scene mechanism, conflict structure, and ad focus stay the same.
 - Call out when a direction is visually strong but not scalable.
+- In `creative-auto` run-once mode, keep strategy concise and make it usable as the `来源于哪条详细迭代策略` field in the final table.
 
 ## Quality Bar
 
