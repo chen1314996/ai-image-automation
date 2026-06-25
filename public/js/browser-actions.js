@@ -36,8 +36,11 @@
                 const data = await res.json();
                 if (data.success) {
                     addLog(`${name} 已打开`, 'browser');
-                    updateStatus(name, true, 'Legil已连接');
+                    updateStatus(name, true, '生图平台已连接');
                     updateStatus('browser', true, '浏览器运行中');
+                    if (typeof refreshRunCenterStatus === 'function') refreshRunCenterStatus();
+                } else {
+                    showToast(data.message || '打开失败', 'error');
                 }
             } catch (e) {
                 showToast('打开失败', 'error');
@@ -58,8 +61,9 @@
                 if (data.success) {
                     addLog('Legil 网站已打开，Lumos Winky 无需网页', 'browser');
                     loadDoubaoConfig();
-                    updateStatus('legil', true, 'Legil已连接');
+                    updateStatus('legil', true, '生图平台已连接');
                     updateStatus('browser', true, '浏览器运行中');
+                    if (typeof refreshRunCenterStatus === 'function') refreshRunCenterStatus();
                 } else {
                     showToast(data.message || '打开失败', 'error');
                 }
@@ -71,12 +75,19 @@
         async function closeBrowser() {
             addLog('正在关闭浏览器...', 'browser');
             try {
-                await fetch('/api/close-browser', { method: 'POST' });
+                const res = await fetch('/api/close-browser', { method: 'POST' });
+                const data = await readJsonResponse(res, '关闭浏览器失败');
+                if (!data.success) {
+                    throw new Error(data.message || '关闭浏览器失败');
+                }
                 addLog('浏览器已关闭', 'browser');
                 updateStatus('browser', false, '浏览器未启动');
-                updateStatus('legil', false, 'Legil未连接');
+                updateStatus('legil', false, '生图平台未连接');
                 loadDoubaoConfig();
-            } catch (e) {}
+                if (typeof refreshRunCenterStatus === 'function') refreshRunCenterStatus();
+            } catch (e) {
+                showToast(e.message || '关闭浏览器失败', 'error');
+            }
         }
 
         async function checkBrowserStatus() {
@@ -85,11 +96,11 @@
                 const data = await res.json();
                 if (data.success && data.status) {
                     const s = data.status;
-                    if (s.browserRunning) updateStatus('browser', true, '浏览器运行中');
+                    updateStatus('browser', Boolean(s.browserRunning), s.browserRunning ? '浏览器运行中' : '浏览器未启动');
                     if (s.doubaoApiConfigured) updateStatus('doubao', true, 'Lumos Winky 已配置');
                     if (!s.doubaoApiConfigured) updateStatus('doubao', false, '提示词模型待配置');
                     if (typeof updatePromptGenerationInfo === 'function') updatePromptGenerationInfo();
-                    if (s.pages.legil) updateStatus('legil', true, 'Legil已连接');
+                    updateStatus('legil', Boolean(s.pages && s.pages.legil), s.pages && s.pages.legil ? '生图平台已连接' : '生图平台未连接');
                 }
             } catch (e) {}
         }

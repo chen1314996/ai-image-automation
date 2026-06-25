@@ -6,6 +6,18 @@ const {
 const {
     DEFAULT_FORBIDDEN_TERMS
 } = require('./prompt-gate');
+const {
+    buildStyleInstruction,
+    countConcreteVisualProps,
+    enrichPromptVisualSpecificity,
+    getCreativePromptStyle,
+    hasForcedStyleForStyleFree,
+    hasGenerationParameterText,
+    hasGenericVisualAction,
+    hasStructuredPromptLabels,
+    normalizeCreativePromptStyle,
+    sanitizeLegilPromptText
+} = require('./prompt-style');
 
 const PROMPT_SCHEMA_VERSION = 1;
 const TRANSLATION_VERSION = 's5-prompt-translator-v1';
@@ -50,6 +62,42 @@ const STYLE_VARIANTS = [
     '精品休闲游戏宣传图风格，角色表情和道具信息清楚，色彩对比明确',
     '末日生存题材 3D 海报风格，画面直观，主体明确，商业完成度高'
 ];
+
+const PROP_DETAIL_VARIANTS = {
+    cinematic_photo: [
+        '罐头、药品、电池、破旧背包和散落绷带',
+        '结冰工具箱、手电、破损地图和备用电池包',
+        '旧补给箱、药盒、绳索和结冰指示牌'
+    ],
+    commercial_3d: [
+        '发光能源芯、厚实补给箱、钥匙卡和冰霜金属箱',
+        '醒目的补给箱、电池包、手电和发光取暖芯',
+        '画面中心的能源芯、金属箱盖、钥匙卡和散落罐头'
+    ],
+    style_free: [
+        '罐头、药品、电池、破旧背包和散落绷带',
+        '结冰工具箱、手电、破损地图和备用电池包',
+        '旧补给箱、药盒、绳索和结冰指示牌'
+    ]
+};
+
+const ACTION_DETAIL_VARIANTS = {
+    cinematic_photo: [
+        '在暖色应急灯下把罐头、药品和电池从破旧背包里分类装箱',
+        '用手电照亮倒塌货架，从积雪下翻出罐头、药盒和备用电池',
+        '蹲在结冰地面旁，把散落绷带、电池包和旧地图收进补给箱'
+    ],
+    commercial_3d: [
+        '把发光能源芯、厚实补给箱和钥匙卡摆到画面中心的破损箱盖上',
+        '用手电照亮倒塌货架，从积雪下翻出发光能源芯、补给箱和电池包',
+        '将醒目的取暖芯、电池包和钥匙卡集中到前景补给箱旁'
+    ],
+    style_free: [
+        '在暖色应急灯下把罐头、药品和电池从破旧背包里分类装箱',
+        '用手电照亮倒塌货架，从积雪下翻出罐头、药盒和备用电池',
+        '蹲在结冰地面旁，把散落绷带、电池包和旧地图收进补给箱'
+    ]
+};
 
 function safeArray(value) {
     return Array.isArray(value) ? value : [];
@@ -285,6 +333,8 @@ function formatMemoryRulesForTranslator(memoryRules = [], limit = 12) {
 function buildPromptTranslationMessages({ sourcePrompts, directionDefinitions, selected, payload = {}, config = {}, forbiddenTerms = [], memoryRules = [] }) {
     const direction = selected && selected.direction ? selected.direction : {};
     const generationSettings = config.generationSettings || {};
+    const creativePromptStyle = normalizeCreativePromptStyle(payload.creativePromptStyle || config.creativePromptStyle);
+    const styleOption = getCreativePromptStyle(creativePromptStyle);
     const expectedPromptCount = safeArray(sourcePrompts).length;
     const compactPrompts = safeArray(sourcePrompts).map((item, index) => ({
         index: Number(item && item.index) || index + 1,
@@ -294,6 +344,18 @@ function buildPromptTranslationMessages({ sourcePrompts, directionDefinitions, s
         sourcePromptCandidate: item && item.prompt ? item.prompt : '',
         selected: !item || item.selected !== false
     }));
+    const naturalPromptRules = [
+        '',
+        '# New Legil Final Prompt Rules',
+        'finalPrompt 必须是一段自然中文镜头描述，不要写成“主题：/画风：/画面内容：/核心构图：”这种字段模板。',
+        'finalPrompt 必须先绑定参考图角色，表达“以参考图角色为基础，保持角色造型和服装特征”。',
+        'finalPrompt 必须包含明确场景、明确动作、前景或关键道具、光线或氛围、构图或画面中心。',
+        'finalPrompt 不要只写“整理物资 / 寻找补给 / 收集资源 / 探索场景”这类泛动作；必须写清楚整理或寻找的具体物品，例如罐头、药品、电池、背包、绷带、补给箱、能源芯、钥匙卡等至少 2-3 个可见物。',
+        'finalPrompt 不要包含宽高比、1:1、方图、正方形构图、输出几张、生成几张、分辨率、2K、4K、画幅比例等生图参数。',
+        'finalPrompt 建议 80-180 个中文字符，复杂场景最多 240 个中文字符。',
+        'finalPrompt 默认以“不要文字，不要水印。”收尾。',
+        buildStyleInstruction(creativePromptStyle)
+    ];
     const systemPrompt = [
         '你是 Prompt Translator Agent，职责是把“方向定义”转译成可直接交给 Legil 生图的中文长 prompt。',
         '你不是创意拓展 Agent：不要新增方向数量，不要改写方向层级，不要输出策划解释。',
@@ -301,13 +363,14 @@ function buildPromptTranslationMessages({ sourcePrompts, directionDefinitions, s
         'JSON 顶层格式固定为 {"prompts":[...]}。',
         `每个 prompts item 必须包含字段：${REQUIRED_FIELDS.join(', ')}。`,
         'finalPrompt 必须是中文长 prompt，具体说明主体、动作、场景、镜头、光线、画风、文字规则和画面要求。',
+        '动作必须具体到“做什么、拿什么、放在哪里”：例如“把罐头、药品和电池从破旧背包里分类装箱”，不要停留在“整理物资”。',
         '如果 sourcePromptCandidate 已经是完整、具体、可直接出图的中文长 prompt，请最大限度保留原始画面表达，只补足缺失字段，不要改写成机械模板。',
         'finalPrompt 不能只换词，必须让同一方向下的多条 prompt 有更明显的画面差异：动作节点、空间位置、镜头景别、关键道具或危机/奖励关系至少改变两项。',
         '差异化不能脱离当前体系：保留冰雪末世求生、3D 卡通游戏广告图、明确主体动作和可读点击点，禁止漂移到无关题材、纯风景或写实品牌广告。',
         'finalPrompt 不要写“不要/禁止/避免某元素”这种负面禁用描述，直接把禁用元素从画面中排除。',
         'mustAvoid 字段可以记录禁用规则，但 finalPrompt 里不能出现这些禁用词本身。',
         '每条 prompt 要保留 sourceDirectionId 和 newDirectionName，方便追溯。'
-    ].join('\n');
+    ].concat(naturalPromptRules).join('\n');
     const userPrompt = [
         '# Source Direction',
         JSON.stringify({
@@ -333,6 +396,8 @@ function buildPromptTranslationMessages({ sourcePrompts, directionDefinitions, s
             aspectRatio: generationSettings.aspectRatio || '1:1',
             resolution: generationSettings.resolution || '2K',
             outputQuantity: generationSettings.outputQuantity || '',
+            creativePromptStyle,
+            creativePromptStyleLabel: styleOption.label,
             expectedPromptCount
         }, null, 2),
         '',
@@ -410,7 +475,7 @@ async function callPromptTranslationAgent({ messages, translatorConfig = {}, tra
     return extractJsonObject(extractModelText(response && response.data ? response.data : response));
 }
 
-function normalizeAgentPromptItems(agentResult, sourcePrompts, selected) {
+function normalizeAgentPromptItems(agentResult, sourcePrompts, selected, creativePromptStyle = 'cinematic_photo') {
     const agentPrompts = safeArray(agentResult && agentResult.prompts);
     if (!agentPrompts.length) {
         throw new Error('Prompt Translator Agent returned 0 prompts');
@@ -423,7 +488,7 @@ function normalizeAgentPromptItems(agentResult, sourcePrompts, selected) {
             return candidateIndex === sourceIndex;
         });
         const agentItem = byIndex || agentPrompts[index] || {};
-        const finalPrompt = sanitizePromptText(firstNonEmpty(agentItem.finalPrompt, agentItem.prompt));
+        const finalPrompt = firstNonEmpty(agentItem.finalPrompt, agentItem.prompt);
         return {
             ...(source || {}),
             ...(agentItem || {}),
@@ -434,7 +499,8 @@ function normalizeAgentPromptItems(agentResult, sourcePrompts, selected) {
             promptTitle: firstNonEmpty(agentItem.promptTitle, source && source.promptTitle, `Prompt ${sourceIndex}`),
             sourcePrompt: sanitizePromptText(firstNonEmpty(source && source.sourcePrompt, source && source.prompt, source && source.finalPrompt)),
             finalPrompt,
-            prompt: finalPrompt || sanitizePromptText(firstNonEmpty(source && source.prompt, source && source.finalPrompt)),
+            prompt: finalPrompt || firstNonEmpty(source && source.prompt, source && source.finalPrompt),
+            creativePromptStyle,
             selected: !source || source.selected !== false
         };
     });
@@ -444,7 +510,7 @@ function compactErrorMessage(error) {
     return normalizeText(error && error.message ? error.message : String(error || 'Unknown error')).slice(0, 500);
 }
 
-function buildFallbackAgentPromptItems(sourcePrompts, selected) {
+function buildFallbackAgentPromptItems(sourcePrompts, selected, creativePromptStyle = 'cinematic_photo') {
     return safeArray(sourcePrompts).map((source, index) => {
         const sourceIndex = Number(source && source.index) || index + 1;
         const sourcePrompt = sanitizePromptText(firstNonEmpty(
@@ -460,33 +526,40 @@ function buildFallbackAgentPromptItems(sourcePrompts, selected) {
             newDirectionName: firstNonEmpty(source && source.newDirectionName, source && source.direction, buildDirectionName(source || {}, selected)),
             promptTitle: firstNonEmpty(source && source.promptTitle, `Prompt ${sourceIndex}`),
             sourcePrompt,
-            finalPrompt: sanitizePromptText(firstNonEmpty(source && source.finalPrompt, sourcePrompt)),
-            prompt: sanitizePromptText(firstNonEmpty(source && source.prompt, source && source.finalPrompt, sourcePrompt)),
+            finalPrompt: firstNonEmpty(source && source.finalPrompt, sourcePrompt),
+            prompt: firstNonEmpty(source && source.prompt, source && source.finalPrompt, sourcePrompt),
+            creativePromptStyle,
             selected: !source || source.selected !== false
         };
     });
 }
 
-function isMatureSourcePrompt(prompt) {
-    const text = sanitizePromptText(prompt);
-    if (text.length < 160) {
+function isMatureSourcePrompt(prompt, creativePromptStyle = 'cinematic_photo') {
+    const text = sanitizeLegilPromptText(prompt, creativePromptStyle);
+    if (text.length < 80) {
         return false;
     }
-    if (!text.includes('主题') || !text.includes('画风')) {
+    if (hasStructuredPromptLabels(text) || hasGenerationParameterText(text)) {
         return false;
     }
-    const richnessSignals = ['情绪氛围', '画面内容', '整体基调', '镜头', '场景', '光线', '构图'];
+    if (normalizeCreativePromptStyle(creativePromptStyle) === 'style_free' && hasForcedStyleForStyleFree(text)) {
+        return false;
+    }
+    if (hasGenericVisualAction(text) || countConcreteVisualProps(text) < 3) {
+        return false;
+    }
+    const richnessSignals = ['参考图', '角色', '造型', '服装', '场景', '动作', '前景', '道具', '光线', '氛围', '构图', '画面中心'];
     return richnessSignals.filter(signal => text.includes(signal)).length >= 3;
 }
 
-function shouldPreserveSourcePrompts(sourcePrompts = [], forbiddenTerms = []) {
+function shouldPreserveSourcePrompts(sourcePrompts = [], forbiddenTerms = [], creativePromptStyle = 'cinematic_photo') {
     const prompts = safeArray(sourcePrompts);
     if (!prompts.length) {
         return false;
     }
     return prompts.every(item => {
         const prompt = firstNonEmpty(item && item.finalPrompt, item && item.prompt, item && item.sourcePrompt);
-        return isMatureSourcePrompt(prompt) && !findForbiddenTerm(prompt, forbiddenTerms);
+        return isMatureSourcePrompt(prompt, creativePromptStyle) && !findForbiddenTerm(prompt, forbiddenTerms);
     });
 }
 
@@ -515,6 +588,11 @@ function pickVariant(variants, index) {
     return variants[Math.max(0, Number(index) - 1) % variants.length];
 }
 
+function pickStyleVariant(variantsByStyle, style, index) {
+    const normalizedStyle = normalizeCreativePromptStyle(style);
+    return pickVariant(variantsByStyle[normalizedStyle] || variantsByStyle.cinematic_photo || [], index);
+}
+
 function buildStructuredFields(item, selected, context = {}) {
     const direction = selected && selected.direction ? selected.direction : {};
     const rawPrompt = sanitizePromptText(firstNonEmpty(item && item.sourcePrompt, item && item.prompt));
@@ -533,12 +611,19 @@ function buildStructuredFields(item, selected, context = {}) {
         extractByLabels(rawPrompt, ['主体', '主题', '画面主体', '主角'], 80),
         newDirectionName
     );
-    const action = firstNonEmpty(
+    const creativePromptStyle = normalizeCreativePromptStyle(context.creativePromptStyle);
+    const fallbackAction = pickStyleVariant(ACTION_DETAIL_VARIANTS, creativePromptStyle, context.index);
+    const fallbackProps = pickStyleVariant(PROP_DETAIL_VARIANTS, creativePromptStyle, context.index);
+    const rawAction = firstNonEmpty(
         item && item.action,
         extractByLabels(rawPrompt, ['动作', '行为', '画面动作', '画面内容'], 120),
         sentenceAt(rawPrompt, 1, 120),
+        fallbackAction,
         `${newDirectionName}中发生一个清楚可读的关键行动`
     );
+    const action = hasGenericVisualAction(rawAction) && countConcreteVisualProps(rawAction) < 3
+        ? enrichPromptVisualSpecificity(rawAction, creativePromptStyle)
+        : rawAction;
     const scene = firstNonEmpty(
         item && item.scene,
         extractByLabels(rawPrompt, ['场景', '环境', '地点', '背景'], 120),
@@ -564,6 +649,14 @@ function buildStructuredFields(item, selected, context = {}) {
     const textRule = firstNonEmpty(
         item && item.textRule,
         '如需文字，只出现短中文关键词，清晰可读，不使用真实品牌 logo，不出现大面积英文'
+    );
+    const keyProps = firstNonEmpty(
+        item && item.keyProps,
+        item && item.foreground,
+        item && item.material,
+        extractByLabels(rawPrompt, ['前景', '道具', '关键道具', '物资', '补给'], 120),
+        countConcreteVisualProps(action) >= 3 ? action : '',
+        fallbackProps
     );
     const mustKeep = uniqueStrings([
         ...normalizeList(direction.mustKeep),
@@ -594,6 +687,7 @@ function buildStructuredFields(item, selected, context = {}) {
         lighting,
         visualStyle,
         textRule,
+        keyProps,
         mustKeep,
         mustAvoid,
         sourcePrompt: rawPrompt,
@@ -601,23 +695,38 @@ function buildStructuredFields(item, selected, context = {}) {
     };
 }
 
-function buildFinalPrompt(fields, forbiddenTerms = []) {
-    const mustKeepText = safeArray(fields.mustKeep).length
-        ? `必须保留：${safeArray(fields.mustKeep).slice(0, 4).join('；')}。`
+function buildFinalPrompt(fields, forbiddenTerms = [], creativePromptStyle = 'cinematic_photo') {
+    const style = getCreativePromptStyle(creativePromptStyle);
+    const subject = firstNonEmpty(fields.subject, fields.newDirectionName, '参考图角色');
+    const action = firstNonEmpty(fields.action, `${subject}正在完成一个清晰可读的关键动作`);
+    const scene = firstNonEmpty(fields.scene, '具有明确空间关系的场景');
+    const lighting = firstNonEmpty(fields.lighting, '自然光影突出角色轮廓和环境氛围');
+    const camera = firstNonEmpty(fields.camera, '画面中心清晰，构图稳定');
+    const keepText = safeArray(fields.mustKeep).length
+        ? `保留${safeArray(fields.mustKeep).slice(0, 3).join('、')}，`
         : '';
-    const finalPrompt = [
-        `主题：${fields.subject}。`,
-        `画面动作：${fields.action}。`,
-        `场景：${fields.scene}。`,
-        `镜头：${fields.camera}。`,
-        `光线：${fields.lighting}。`,
-        `画风：${fields.visualStyle}。`,
-        `文字规则：${fields.textRule}。`,
-        mustKeepText,
-        '画面要求：1:1 方图，主体清楚，动作可读，前中后景关系明确，材质细节具体，缩略图下也能看懂核心冲突，适合 Legil 直接生图。'
-    ].filter(Boolean).join('');
+    const propText = firstNonEmpty(
+        fields.keyProps,
+        fields.material,
+        fields.foreground,
+        '与场景相关的关键道具和材质细节'
+    );
+    const normalizedAction = action.startsWith(subject) ? action.slice(subject.length) : action;
+    const styleTerms = safeArray(style.terms).slice(0, 4).join('，');
+    const rawPrompt = [
+        `${style.lead}：`,
+        `${keepText}${scene}，`,
+        `${subject}${normalizedAction}，`,
+        `前景有${propText}，`,
+        `${lighting}，`,
+        `${camera}，`,
+        styleTerms ? `${styleTerms}。` : '细节丰富。'
+    ].join('');
 
-    return stripForbiddenTerms(finalPrompt, forbiddenTerms);
+    return sanitizeLegilPromptText(
+        enrichPromptVisualSpecificity(stripForbiddenTerms(rawPrompt, forbiddenTerms), creativePromptStyle),
+        creativePromptStyle
+    );
 }
 
 function selfCheckPrompt(promptItem, forbiddenTerms = []) {
@@ -637,7 +746,8 @@ function selfCheckPrompt(promptItem, forbiddenTerms = []) {
     });
 
     const finalPrompt = normalizeText(promptItem.finalPrompt);
-    if (finalPrompt.length < 120) {
+    const creativePromptStyle = normalizeCreativePromptStyle(promptItem.creativePromptStyle);
+    if (finalPrompt.length < 60) {
         errors.push({
             code: 'short_final_prompt',
             field: 'finalPrompt',
@@ -645,11 +755,67 @@ function selfCheckPrompt(promptItem, forbiddenTerms = []) {
         });
     }
 
-    if (!finalPrompt.includes('主题') || !finalPrompt.includes('画风')) {
-        errors.push({
-            code: 'missing_prompt_structure',
+    if (finalPrompt.length >= 60 && finalPrompt.length < 80) {
+        warnings.push({
+            code: 'short_final_prompt',
             field: 'finalPrompt',
-            message: 'finalPrompt 缺少“主题/画风”等结构化提示'
+            message: `finalPrompt 信息略少：${finalPrompt.length} 字`
+        });
+    }
+
+    if (finalPrompt.length > 240) {
+        warnings.push({
+            code: 'long_final_prompt',
+            field: 'finalPrompt',
+            message: `finalPrompt 偏长：${finalPrompt.length} 字`
+        });
+    }
+
+    if (hasStructuredPromptLabels(finalPrompt)) {
+        errors.push({
+            code: 'structured_prompt_labels',
+            field: 'finalPrompt',
+            message: 'finalPrompt 仍包含字段式标签'
+        });
+    }
+
+    if (hasGenerationParameterText(finalPrompt)) {
+        errors.push({
+            code: 'generation_parameter_in_prompt',
+            field: 'finalPrompt',
+            message: 'finalPrompt 不能包含宽高比、张数、分辨率等生图参数'
+        });
+    }
+
+    if (creativePromptStyle === 'style_free' && hasForcedStyleForStyleFree(finalPrompt)) {
+        errors.push({
+            code: 'style_free_forced_style',
+            field: 'finalPrompt',
+            message: '不限风格时不能自动强加电影感、真实摄影、3D、卡通、商业海报等风格词'
+        });
+    }
+
+    if (!/参考图|原图|角色造型|服装特征/.test(finalPrompt)) {
+        warnings.push({
+            code: 'weak_reference_binding',
+            field: 'finalPrompt',
+            message: 'finalPrompt 建议明确绑定参考图角色和造型服装特征'
+        });
+    }
+
+    if (!/不要文字，不要水印|不要水印/.test(finalPrompt)) {
+        errors.push({
+            code: 'missing_no_text_watermark',
+            field: 'finalPrompt',
+            message: 'finalPrompt 默认需要以不要文字、不要水印规则收尾'
+        });
+    }
+
+    if (hasGenericVisualAction(finalPrompt) || countConcreteVisualProps(finalPrompt) < 3) {
+        errors.push({
+            code: 'generic_action_missing_props',
+            field: 'finalPrompt',
+            message: 'finalPrompt 需要把泛动作细化为具体动作，并包含至少 2-3 个可见物资或道具'
         });
     }
 
@@ -662,11 +828,11 @@ function selfCheckPrompt(promptItem, forbiddenTerms = []) {
         });
     }
 
-    if (normalizeText(promptItem.action).length < 12) {
+    if (normalizeText(promptItem.action).length < 12 || hasGenericVisualAction(promptItem.action)) {
         warnings.push({
             code: 'weak_action',
             field: 'action',
-            message: '动作偏短，可能导致画面只是换词'
+            message: '动作偏短或偏泛，建议写清楚具体物品和操作方式'
         });
     }
 
@@ -688,8 +854,12 @@ function selfCheckPrompt(promptItem, forbiddenTerms = []) {
 function translateOnePrompt(item, selected, context) {
     const fields = buildStructuredFields(item || {}, selected, context);
     const index = Number(item && item.index) || context.index;
-    let finalPrompt = stripForbiddenTerms(firstNonEmpty(item && item.finalPrompt, item && item.prompt), context.forbiddenTerms) ||
-        buildFinalPrompt(fields, context.forbiddenTerms);
+    const creativePromptStyle = normalizeCreativePromptStyle(context.creativePromptStyle);
+    const rawCandidatePrompt = stripForbiddenTerms(firstNonEmpty(item && item.finalPrompt, item && item.prompt), context.forbiddenTerms);
+    let finalPrompt = rawCandidatePrompt ? sanitizeLegilPromptText(rawCandidatePrompt, creativePromptStyle) : '';
+    if (!rawCandidatePrompt || rawCandidatePrompt.length < 60 || !finalPrompt || finalPrompt.length < 60) {
+        finalPrompt = buildFinalPrompt(fields, context.forbiddenTerms, creativePromptStyle);
+    }
     let translated = {
         ...(item || {}),
         ...fields,
@@ -698,6 +868,7 @@ function translateOnePrompt(item, selected, context) {
         promptTitle: fields.promptTitle,
         promptSchemaVersion: PROMPT_SCHEMA_VERSION,
         translationVersion: TRANSLATION_VERSION,
+        creativePromptStyle,
         translatedAt: context.translatedAt,
         finalPrompt,
         prompt: finalPrompt,
@@ -715,9 +886,10 @@ function translateOnePrompt(item, selected, context) {
             camera: fields.camera || pickVariant(CAMERA_VARIANTS, context.index),
             lighting: fields.lighting || pickVariant(LIGHTING_VARIANTS, context.index),
             visualStyle: fields.visualStyle || pickVariant(STYLE_VARIANTS, context.index),
-            textRule: fields.textRule || '如需文字，只出现短中文关键词，清晰可读'
+            textRule: fields.textRule || '如需文字，只出现短中文关键词，清晰可读',
+            keyProps: fields.keyProps || pickStyleVariant(PROP_DETAIL_VARIANTS, creativePromptStyle, context.index)
         };
-        finalPrompt = buildFinalPrompt(repairedFields, context.forbiddenTerms);
+        finalPrompt = buildFinalPrompt(repairedFields, context.forbiddenTerms, creativePromptStyle);
         translated = {
             ...translated,
             ...repairedFields,
@@ -767,6 +939,7 @@ async function translatePromptsForLegil({
 }) {
     const sourcePrompts = safeArray(prompts);
     const translatedAt = new Date().toISOString();
+    const creativePromptStyle = normalizeCreativePromptStyle(payload.creativePromptStyle || config.creativePromptStyle);
     const forbiddenTerms = collectForbiddenTerms({ selected, payload, config });
     const directionDefinitions = buildDirectionDefinitions(sourcePrompts, selected);
     let agent = null;
@@ -775,10 +948,10 @@ async function translatePromptsForLegil({
     let fallbackReason = '';
     let agentSkipped = false;
     let agentSkipReason = '';
-    if (shouldPreserveSourcePrompts(sourcePrompts, forbiddenTerms)) {
+    if (shouldPreserveSourcePrompts(sourcePrompts, forbiddenTerms, creativePromptStyle)) {
         agentSkipped = true;
         agentSkipReason = 'source prompts are already mature; preserved original creative wording';
-        agentPromptItems = buildFallbackAgentPromptItems(sourcePrompts, selected);
+        agentPromptItems = buildFallbackAgentPromptItems(sourcePrompts, selected, creativePromptStyle);
     } else {
         try {
             agent = await runPromptTranslationAgent({
@@ -792,17 +965,18 @@ async function translatePromptsForLegil({
                 translatorConfig,
                 translatorClient
             });
-            agentPromptItems = normalizeAgentPromptItems(agent.result, sourcePrompts, selected);
+            agentPromptItems = normalizeAgentPromptItems(agent.result, sourcePrompts, selected, creativePromptStyle);
         } catch (error) {
             fallbackUsed = true;
             fallbackReason = compactErrorMessage(error);
-            agentPromptItems = buildFallbackAgentPromptItems(sourcePrompts, selected);
+            agentPromptItems = buildFallbackAgentPromptItems(sourcePrompts, selected, creativePromptStyle);
         }
     }
     const translatedPrompts = agentPromptItems.map((item, index) => translateOnePrompt(item, selected, {
         index: index + 1,
         translatedAt,
-        forbiddenTerms
+        forbiddenTerms,
+        creativePromptStyle
     }));
     const summary = summarizePromptTranslation(translatedPrompts);
 
@@ -813,6 +987,7 @@ async function translatePromptsForLegil({
             runId,
             version: TRANSLATION_VERSION,
             promptSchemaVersion: PROMPT_SCHEMA_VERSION,
+            creativePromptStyle,
             translatedAt,
             sourcePromptCount: sourcePrompts.length,
             promptCount: translatedPrompts.length,

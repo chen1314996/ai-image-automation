@@ -14,7 +14,13 @@ const path = require('path');
 const promptGenerationService = require('./prompt-generation-service');
 const legilAutomation = require('./legil-automation');
 const logger = require('./logger');
-const { formatDateTimeForFile, sortNaturallyByName } = require('./file-utils');
+const { formatDateTimeForFile, sanitizeFileNamePart, sortNaturallyByName } = require('./file-utils');
+const {
+    buildCreativeOutputNamingContext
+} = require('./src/services/output-naming/creative-output-naming');
+const {
+    extractSourceBusinessName
+} = require('./src/services/output-naming/source-business-name');
 
 class WorkflowController {
     constructor() {
@@ -337,6 +343,241 @@ class WorkflowController {
         return '';
     }
 
+    buildOutputNameBaseForPrompt(promptData, fallbackTitle = '') {
+        if (!promptData || typeof promptData !== 'object') {
+            return '';
+        }
+
+        const standardLabelPath = Array.isArray(promptData.standardLabelPath)
+            ? promptData.standardLabelPath.filter(Boolean)
+            : [
+                promptData.primaryTag,
+                promptData.secondaryTag,
+                promptData.tertiaryTag
+            ].filter(Boolean);
+        const contentTitle = promptData.contentTitle ||
+            promptData.newDirectionName ||
+            promptData.direction ||
+            promptData.outputNameBase ||
+            promptData.title ||
+            fallbackTitle;
+        const sourceDirectionPath = promptData.sourceDirectionPath ||
+            promptData.directionPath ||
+            promptData.matchedDirection ||
+            (standardLabelPath.length ? standardLabelPath.join('/') : '');
+        const namingContext = buildCreativeOutputNamingContext({
+            ...promptData,
+            standardLabelPath,
+            sourceDirectionPath,
+            contentTitle,
+            fallbackName: contentTitle || promptData.outputNameBase || fallbackTitle,
+            strictLibraryTags: false
+        });
+
+        return namingContext.outputNameBase || promptData.outputNameBase || '';
+    }
+
+    stripTrailingReferenceIndex(value) {
+        const text = String(value || '').trim();
+        if (!text) {
+            return '';
+        }
+
+        if (/[\u3400-\u9fff\uf900-\ufaff]/u.test(text)) {
+            return text
+                .replace(/\d{1,3}$/u, '')
+                .replace(/_+$/g, '')
+                .trim();
+        }
+
+        return text;
+    }
+
+    buildOutputNameBaseForReferenceImage(imageName) {
+        const parsed = extractSourceBusinessName(imageName);
+        if (!parsed) {
+            return '';
+        }
+
+        const businessParts = Array.isArray(parsed.businessParts) && parsed.businessParts.length
+            ? [...parsed.businessParts]
+            : String(parsed.businessName || '').split('_').filter(Boolean);
+
+        if (!businessParts.length) {
+            return '';
+        }
+
+        businessParts[businessParts.length - 1] = this.stripTrailingReferenceIndex(
+            businessParts[businessParts.length - 1]
+        );
+
+        return businessParts
+            .map(part => sanitizeFileNamePart(part, 80))
+            .filter(Boolean)
+            .join('_');
+    }
+
+    buildWorkflowOutputNameBase(referenceOutputNameBase, promptData = {}, promptTitleName = '') {
+        const referenceBase = sanitizeFileNamePart(referenceOutputNameBase, 90);
+        if (referenceBase) {
+            const titleCandidate = promptTitleName ||
+                promptData.promptTitle ||
+                promptData.title ||
+                promptData.name ||
+                '';
+            const promptTitle = sanitizeFileNamePart(titleCandidate, 50);
+            if (promptTitle && promptTitle !== referenceBase && !referenceBase.endsWith(`_${promptTitle}`)) {
+                return `${referenceBase}_${promptTitle}`;
+            }
+            return referenceBase;
+        }
+
+        return promptData.outputNameBase || this.buildOutputNameBaseForPrompt(promptData, promptTitleName);
+    }
+
+    normalizeWorkflowPromptItems(prompts = []) {
+        return (Array.isArray(prompts) ? prompts : [])
+            .map((item, index) => {
+                if (typeof item === 'string') {
+                    const prompt = item.trim();
+                    return prompt ? {
+                        index: index + 1,
+                        prompt,
+                        content: prompt
+                    } : null;
+                }
+
+                if (!item || typeof item !== 'object') {
+                    return null;
+                }
+
+                const prompt = [
+                    item.prompt,
+                    item.content,
+                    item.finalPrompt,
+                    item.promptText,
+                    item.text,
+                    item.description
+                ].find(value => typeof value === 'string' && value.trim());
+
+                if (!prompt) {
+                    return null;
+                }
+
+                return {
+                    ...item,
+                    index: Number.isFinite(Number(item.index)) && Number(item.index) > 0 ? Number(item.index) : index + 1,
+                    prompt: prompt.trim(),
+                    content: typeof item.content === 'string' && item.content.trim() ? item.content.trim() : prompt.trim()
+                };
+            })
+            .filter(Boolean);
+    }
+
+    resolvePromptTextFilePath(savePaths = []) {
+        const firstPath = Array.isArray(savePaths) ? savePaths.find(Boolean) : '';
+        if (!firstPath) {
+            return '';
+        }
+        const parsed = path.parse(firstPath);
+        const sharedStem = parsed.name
+            .replace(/_v\d+_\d{8}_\d{6}$/i, '')
+            .replace(/_v\d+$/i, '');
+        return path.join(parsed.dir, `${sharedStem || parsed.name}.prompt.txt`);
+    }
+
+    buildPromptTextFileContent(promptItem = {}, meta = {}) {
+        const savedPaths = Array.isArray(meta.savedPaths) ? meta.savedPaths : [];
+        const outputNames = savedPaths.map(filePath => path.basename(filePath)).filter(Boolean);
+        return [
+            `Generated at: ${meta.savedAt || new Date().toISOString()}`,
+            `Run ID: ${meta.runId || ''}`,
+            `Reference image: ${meta.referenceImageName || ''}`,
+            `Reference index: ${meta.referenceImageIndex || ''}/${meta.totalReferenceImages || ''}`,
+            `Prompt group: ${meta.displayIndex || promptItem.index || ''}/${meta.totalPrompts || ''}`,
+            `Prompt title: ${promptItem.promptTitle || promptItem.title || meta.promptTitleName || ''}`,
+            `Direction: ${promptItem.newDirectionName || promptItem.direction || promptItem.contentTitle || ''}`,
+            `Matched direction: ${promptItem.matchedDirectionPath || promptItem.sourceDirectionPath || ''}`,
+            `Content name: ${promptItem.contentName || promptItem.contentTitle || ''}`,
+            `Output name base: ${promptItem.outputNameBase || ''}`,
+            '',
+            'Output images:',
+            ...(outputNames.length ? outputNames.map(name => `- ${name}`) : ['-']),
+            '',
+            'Prompt:',
+            promptItem.prompt || promptItem.finalPrompt || promptItem.content || ''
+        ].join('\n');
+    }
+
+    savePromptTextFileForPromptGroup(savePaths = [], promptItem = {}, meta = {}) {
+        const promptFilePath = this.resolvePromptTextFilePath(savePaths);
+        if (!promptFilePath) {
+            return '';
+        }
+        fs.writeFileSync(promptFilePath, this.buildPromptTextFileContent(promptItem, {
+            ...meta,
+            savedPaths: savePaths
+        }), 'utf8');
+        return promptFilePath;
+    }
+
+    saveExtractedPromptsForImage(promptItems = [], imagePath = '', imageIndex = 0, totalImages = 0) {
+        if (!Array.isArray(promptItems) || promptItems.length === 0 || !this.outputFolder) {
+            return null;
+        }
+
+        const promptsDir = path.join(this.outputFolder, 'prompts');
+        fs.mkdirSync(promptsDir, { recursive: true });
+
+        const imageName = path.basename(imagePath);
+        const imageStem = sanitizeFileNamePart(path.parse(imageName).name || `ref${imageIndex}`, 80);
+        const refIndex = String(Math.max(0, Number(imageIndex) || 0)).padStart(3, '0');
+        const baseName = `${this.currentRunId || formatDateTimeForFile()}_ref${refIndex}_${imageStem}_prompts`;
+        const jsonPath = path.join(promptsDir, `${baseName}.json`);
+        const textPath = path.join(promptsDir, `${baseName}.txt`);
+        const savedAt = new Date().toISOString();
+        const publicPromptConfig = promptGenerationService.getPublicConfig(this.promptGenerationConfig);
+        const promptRecords = promptItems.map((item, index) => ({
+            index: index + 1,
+            promptTitle: item.promptTitle || item.title || item.name || '',
+            direction: item.newDirectionName || item.direction || item.contentTitle || '',
+            outputNameBase: item.outputNameBase || '',
+            prompt: item.prompt || item.content || ''
+        }));
+
+        fs.writeFileSync(jsonPath, JSON.stringify({
+            savedAt,
+            runId: this.currentRunId || '',
+            source: 'mass-workflow',
+            referenceImage: {
+                index: imageIndex,
+                total: totalImages,
+                name: imageName,
+                path: imagePath
+            },
+            promptGeneration: publicPromptConfig,
+            prompts: promptRecords
+        }, null, 2), 'utf8');
+
+        fs.writeFileSync(textPath, [
+            `Generated at: ${savedAt}`,
+            `Run ID: ${this.currentRunId || ''}`,
+            `Reference image: ${imageName}`,
+            `Reference index: ${imageIndex}/${totalImages}`,
+            `Prompt model: Lumos Winky / ${(publicPromptConfig.lumos && publicPromptConfig.lumos.model) || ''}`,
+            '',
+            ...promptRecords.flatMap(item => [
+                `# Prompt ${item.index}${item.promptTitle ? ` - ${item.promptTitle}` : ''}`,
+                item.direction ? `Direction: ${item.direction}` : '',
+                item.outputNameBase ? `Output name base: ${item.outputNameBase}` : '',
+                item.prompt,
+                ''
+            ].filter(line => line !== ''))
+        ].join('\n'), 'utf8');
+
+        return { jsonPath, textPath };
+    }
+
     clearResume() {
         this.resumeSnapshot = null;
     }
@@ -624,13 +865,12 @@ class WorkflowController {
      */
     async processSingleImage(imagePath, imageIndex, totalImages, options = {}) {
         const imageName = path.basename(imagePath);
+        const referenceOutputNameBase = this.buildOutputNameBaseForReferenceImage(imageName);
         const startPromptIndex = Math.max(0, Math.floor(Number(options.startPromptIndex) || 0));
-        const cachedPrompts = Array.isArray(options.prompts)
-            ? options.prompts
-                .map(promptData => typeof promptData === 'string' ? promptData : promptData && promptData.content)
-                .filter(promptText => typeof promptText === 'string' && promptText.trim())
-                .map(promptText => promptText.trim())
-            : [];
+        const cachedPrompts = this.normalizeWorkflowPromptItems(options.prompts);
+        if (referenceOutputNameBase) {
+            logger.info(`Reference output name base: ${referenceOutputNameBase}`);
+        }
 
         logger.info('');
         logger.info('╔════════════════════════════════════════════════════════════╗');
@@ -641,9 +881,9 @@ class WorkflowController {
             : '║ [步骤1] 提示词模型：读取参考图并获取提示词...');
         logger.info('╚════════════════════════════════════════════════════════════╝');
 
-        let prompts = cachedPrompts;
+        let promptItems = cachedPrompts;
 
-        if (prompts.length === 0) {
+        if (promptItems.length === 0) {
             const publicPromptConfig = promptGenerationService.getPublicConfig(this.promptGenerationConfig);
             const providerLabel = `Lumos Winky / ${publicPromptConfig.lumos.model || '未填写模型'}`;
 
@@ -666,38 +906,56 @@ class WorkflowController {
                 throw new Error(promptResult.message || '提示词模型生成失败');
             }
 
-            prompts = promptResult.prompts
-                .map(promptData => typeof promptData === 'string' ? promptData : promptData && promptData.content)
-                .filter(promptText => typeof promptText === 'string' && promptText.trim())
-                .map(promptText => promptText.trim());
+            promptItems = this.normalizeWorkflowPromptItems(promptResult.prompts);
         } else {
-            logger.info(`✅ 已加载停止前缓存的 ${prompts.length} 组提示词`);
+            logger.info(`✅ 已加载停止前缓存的 ${promptItems.length} 组提示词`);
         }
 
-        if (prompts.length === 0) {
+        if (promptItems.length === 0) {
             logger.error('提取提示词失败: 提示词模型未返回有效提示词');
             throw new Error('提示词模型生成失败');
         }
 
-        const totalPrompts = prompts.length;
+        promptItems = promptItems.map(item => {
+            const promptTitleName = this.buildPromptTitleForFile(
+                item.title || item.promptTitle || item.name || item.prompt
+            );
+            const outputNameBase = this.buildWorkflowOutputNameBase(referenceOutputNameBase, item, promptTitleName);
+            return {
+                ...item,
+                promptTitle: item.promptTitle || item.title || promptTitleName,
+                promptTitleName,
+                outputNameBase
+            };
+        });
+
+        const totalPrompts = promptItems.length;
         const effectiveStartPromptIndex = Math.min(startPromptIndex, totalPrompts);
 
-        logger.info(`✅ 成功获取 ${prompts.length} 组提示词`);
+        logger.info(`✅ 成功获取 ${promptItems.length} 组提示词`);
 
         // 保存提示词到内存，供前端查看
-        this.lastExtractedPrompts = prompts;
+        this.lastExtractedPrompts = promptItems.map(item => item.prompt);
         this.currentImagePath = imagePath;
-        this.currentImagePrompts = [...prompts];
+        this.currentImagePrompts = promptItems.map(item => ({ ...item }));
         this.nextResumeImageIndex = imageIndex - 1;
         this.nextResumePromptIndex = effectiveStartPromptIndex;
         logger.info('💾 提示词已缓存，可通过API获取');
+        try {
+            const promptSaveResult = this.saveExtractedPromptsForImage(promptItems, imagePath, imageIndex, totalImages);
+            if (promptSaveResult && promptSaveResult.textPath) {
+                logger.info(`💾 提示词已保存到本地: ${path.relative(this.outputFolder, promptSaveResult.textPath)}`);
+            }
+        } catch (promptSaveError) {
+            logger.warn(`提示词本地保存失败: ${promptSaveError.message}`);
+        }
 
         // 更新状态 - 正在提取提示词
         this.updateStatus({
             phase: 'extracting_prompts',
             currentPromptIndex: effectiveStartPromptIndex,
             totalPrompts,
-            currentAction: `已提取 ${prompts.length} 组提示词`
+            currentAction: `已提取 ${promptItems.length} 组提示词`
         });
 
         // 步骤2：Legil生成 - 每组提示词生成1张图片
@@ -710,14 +968,11 @@ class WorkflowController {
             logger.info(`↩️ 继续上次任务：从第 ${effectiveStartPromptIndex + 1}/${totalPrompts} 组提示词开始`);
         }
 
-        for (let i = effectiveStartPromptIndex; i < prompts.length; i++) {
-            const promptData = prompts[i];
-            const promptText = typeof promptData === 'string' ? promptData : promptData.content;
-            const promptTitleName = this.buildPromptTitleForFile(
-                promptData && typeof promptData === 'object'
-                    ? (promptData.title || promptData.promptTitle || promptData.name || promptText)
-                    : promptText
-            );
+        for (let i = effectiveStartPromptIndex; i < promptItems.length; i++) {
+            const promptData = promptItems[i];
+            const promptText = promptData.prompt;
+            const promptTitleName = promptData.promptTitleName || promptData.promptTitle || this.buildPromptTitleForFile(promptText);
+            const outputNameBase = this.buildWorkflowOutputNameBase(referenceOutputNameBase, promptData, promptTitleName);
 
             if (!promptText || typeof promptText !== 'string') {
                 logger.warn(`提示词 ${i + 1}/${totalPrompts} 为空，跳过`);
@@ -750,14 +1005,15 @@ class WorkflowController {
                 headless: options.headless === true || this.headless === true,
                 generationSettings: this.generationSettings,
                 outputSequence: nextOutputSequence,
-                outputTotal: totalImages * prompts.length * legilOutputQuantity,
+                outputTotal: totalImages * promptItems.length * legilOutputQuantity,
                 runId: this.currentRunId,
                 referenceImageIndex: imageIndex,
                 totalReferenceImages: totalImages,
                 referenceImageName: imageName,
+                outputNameBase,
                 promptTitleName,
                 promptIndexWithinImage: i + 1,
-                totalPromptsForImage: prompts.length,
+                totalPromptsForImage: promptItems.length,
                 taskType: '量产工作流',
                 acceptStablePartialOutputs: true,
                 autoRecoveryEnabled: this.autoRecoveryEnabled,
@@ -768,9 +1024,34 @@ class WorkflowController {
             if (legilResult.success) {
                 this.consecutiveLegilFailures = 0;
                 const savedCount = Number(legilResult.savedCount) || 1;
+                const resultSavePaths = Array.isArray(legilResult.savePaths)
+                    ? legilResult.savePaths
+                    : (legilResult.savePath ? [legilResult.savePath] : []);
+                try {
+                    const promptFilePath = this.savePromptTextFileForPromptGroup(resultSavePaths, {
+                        ...promptData,
+                        prompt: promptText,
+                        promptTitle: promptData.promptTitle || promptData.title || promptTitleName,
+                        outputNameBase
+                    }, {
+                        savedAt: new Date().toISOString(),
+                        runId: this.currentRunId,
+                        displayIndex: i + 1,
+                        totalPrompts,
+                        promptTitleName,
+                        referenceImageName: imageName,
+                        referenceImageIndex: imageIndex,
+                        totalReferenceImages: totalImages
+                    });
+                    if (promptFilePath) {
+                        logger.info(`Prompt text saved: ${path.basename(promptFilePath)}`);
+                    }
+                } catch (promptFileError) {
+                    logger.warn(`Prompt text save failed: ${promptFileError.message}`);
+                }
                 this.stats.totalGenerated += savedCount;
                 this.nextResumePromptIndex = i + 1;
-                if (this.nextResumePromptIndex >= prompts.length) {
+                if (this.nextResumePromptIndex >= promptItems.length) {
                     this.nextResumeImageIndex = imageIndex;
                     this.nextResumePromptIndex = 0;
                 }
@@ -801,7 +1082,7 @@ class WorkflowController {
             }
 
             // 每张图片之间等待5秒
-            if (i < prompts.length - 1 && this.isRunning) {
+            if (i < promptItems.length - 1 && this.isRunning) {
                 logger.info('⏳ 等待5秒后继续下一张...');
                 await this.sleep(5000);
             }

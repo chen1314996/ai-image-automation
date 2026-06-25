@@ -27,6 +27,8 @@ const materialAnalysisState = {
 };
 
 const MATERIAL_ANALYSIS_CREATIVE_BRIEF_KEY = 'material-analysis-creative-brief-v1';
+const MATERIAL_ANALYSIS_SUPPORTED_FILE_RE = /\.(csv|xlsx|xls)$/i;
+let materialAnalysisImportDragDepth = 0;
 
 const materialAnalysisNumber = new Intl.NumberFormat('zh-CN', {
     maximumFractionDigits: 2
@@ -82,6 +84,29 @@ function materialAnalysisMakeEl(tagName, className, text) {
     if (className) el.className = className;
     if (text !== undefined && text !== null) el.textContent = String(text);
     return el;
+}
+
+function updateMaterialAnalysisImportState() {
+    const shell = document.querySelector('.material-analysis-shell');
+    const hasImport = Boolean(materialAnalysisState.currentRunId);
+    if (shell) {
+        shell.classList.toggle('is-imported', hasImport);
+        shell.classList.toggle('is-unimported', !hasImport);
+    }
+
+    const hint = document.getElementById('materialAnalysisSourceHint');
+    if (hint) {
+        if (!hasImport) {
+            const historyCount = materialAnalysisState.imports.length;
+            hint.textContent = historyCount
+                ? `有 ${historyCount} 条历史导入可查看；当前未选中素材反馈。`
+                : '等待导入素材数据，导入后会生成可继续生产的创意机会。';
+        } else {
+            const opportunityCount = materialAnalysisState.directions.length || materialAnalysisState.top100.length || 0;
+            const topCount = materialAnalysisState.top100.length;
+            hint.textContent = `已从素材反馈整理 ${opportunityCount} 个创意机会，Top 素材 ${topCount} 条，可送入方案迭代或创意拓展。`;
+        }
+    }
 }
 
 function materialAnalysisLabelPathText(value) {
@@ -157,6 +182,94 @@ function materialAnalysisReadFile(file) {
     });
 }
 
+function materialAnalysisIsSupportedFile(file) {
+    return Boolean(file && MATERIAL_ANALYSIS_SUPPORTED_FILE_RE.test(file.name || ''));
+}
+
+function materialAnalysisSetDropHint(type, text) {
+    const hint = document.getElementById('materialAnalysisDropHint');
+    if (!hint) return;
+    hint.className = `material-analysis-drop-hint ${type ? `is-${type}` : ''}`.trim();
+    hint.textContent = text || '也可以把 CSV / Excel 表格拖到本卡片任意位置。';
+}
+
+function materialAnalysisSetDroppedFile(file) {
+    const fileInput = document.getElementById('materialAnalysisFileInput');
+    if (!fileInput || !file) return false;
+
+    try {
+        const transfer = new DataTransfer();
+        transfer.items.add(file);
+        fileInput.files = transfer.files;
+    } catch (error) {
+        try {
+            fileInput.files = file;
+        } catch (_error) {
+            materialAnalysisSetDropHint('error', '浏览器无法写入文件选择框，请点击“选择文件”手动选择。');
+            materialAnalysisSetInfo('error', '浏览器无法写入文件选择框，请点击“选择文件”手动选择。');
+            return false;
+        }
+    }
+
+    fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+    materialAnalysisSetDropHint('ready', `已读取：${file.name}。确认项目名和周次后，点击“导入并生成 Top100”。`);
+    materialAnalysisSetInfo('', `已读取素材数据表：${file.name}`);
+    return true;
+}
+
+function initMaterialAnalysisImportDropzone() {
+    const dropzone = document.getElementById('materialAnalysisImportDropzone');
+    const fileInput = document.getElementById('materialAnalysisFileInput');
+    if (!dropzone || !fileInput || dropzone.dataset.dropReady === 'true') return;
+    dropzone.dataset.dropReady = 'true';
+
+    fileInput.addEventListener('change', () => {
+        const file = fileInput.files && fileInput.files[0];
+        if (file && materialAnalysisIsSupportedFile(file)) {
+            materialAnalysisSetDropHint('ready', `已读取：${file.name}。确认项目名和周次后，点击“导入并生成 Top100”。`);
+            materialAnalysisSetInfo('', `已读取素材数据表：${file.name}`);
+        }
+    });
+
+    ['dragenter', 'dragover'].forEach(eventName => {
+        dropzone.addEventListener(eventName, event => {
+            if (!event.dataTransfer || !Array.from(event.dataTransfer.types || []).includes('Files')) return;
+            event.preventDefault();
+            event.stopPropagation();
+            event.dataTransfer.dropEffect = 'copy';
+            if (eventName === 'dragenter') materialAnalysisImportDragDepth += 1;
+            dropzone.classList.add('is-dragging-file');
+        });
+    });
+
+    dropzone.addEventListener('dragleave', event => {
+        if (!event.dataTransfer || !Array.from(event.dataTransfer.types || []).includes('Files')) return;
+        event.preventDefault();
+        event.stopPropagation();
+        materialAnalysisImportDragDepth = Math.max(0, materialAnalysisImportDragDepth - 1);
+        if (materialAnalysisImportDragDepth === 0) {
+            dropzone.classList.remove('is-dragging-file');
+        }
+    });
+
+    dropzone.addEventListener('drop', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        materialAnalysisImportDragDepth = 0;
+        dropzone.classList.remove('is-dragging-file');
+
+        const files = Array.from(event.dataTransfer?.files || []);
+        const file = files.find(materialAnalysisIsSupportedFile);
+        if (!file) {
+            materialAnalysisSetDropHint('error', '未识别到可导入的 CSV / Excel 表格，请拖入 .csv、.xlsx 或 .xls 文件。');
+            materialAnalysisSetInfo('error', '请拖入 .csv、.xlsx 或 .xls 素材数据表。');
+            return;
+        }
+
+        materialAnalysisSetDroppedFile(file);
+    });
+}
+
 function renderMaterialAnalysisSummary(summary = {}) {
     const kpis = document.getElementById('materialAnalysisKpis');
     if (kpis) {
@@ -181,6 +294,7 @@ function renderMaterialAnalysisSummary(summary = {}) {
             ? `${summary.projectName || '--'} / ${summary.weekId || '--'}，明细 ${materialAnalysisFormatNumber(summary.materialRows)} 条，Top100 ${materialAnalysisFormatNumber(summary.top100Count)} 条，方向解析 ${materialAnalysisFormatPercent(summary.parsedPrimaryRate)}，尺寸解析 ${materialAnalysisFormatPercent(summary.parsedSizeRate)}。`
             : '导入后显示本次数据摘要。';
     }
+    updateMaterialAnalysisImportState();
 }
 
 function materialAnalysisCollectDecisionForMaterial(material = {}) {
@@ -1256,7 +1370,7 @@ async function collectMaterialAnalysisWeeklyLearnings() {
             negativeLimit: 3
         },
         '沉淀本周素材分析经验失败',
-        '确认把本周 Top 素材和风险素材各 3 条沉淀到素材经验池？负向经验会同步进入 Prompt Gate 避坑规则。'
+        '确认把本周 Top 素材和风险素材各 3 条沉淀到素材经验池？负向经验会同步进入提示词质检避坑规则。'
     );
 }
 
@@ -1363,6 +1477,7 @@ function renderMaterialAnalysisDirectionShare(directions = []) {
 function renderMaterialAnalysisDirections(directions = [], summary = {}) {
     materialAnalysisState.directions = Array.isArray(directions) ? directions : [];
     renderMaterialAnalysisDirectionShare(materialAnalysisState.directions);
+    updateMaterialAnalysisImportState();
     const tbody = document.getElementById('materialAnalysisDirectionBody');
     const meta = document.getElementById('materialAnalysisDirectionMeta');
     if (meta) {
@@ -1888,6 +2003,7 @@ function setMaterialAnalysisVisionFilter(filter) {
 
 function renderMaterialAnalysisTop100(top100 = [], summary = {}) {
     materialAnalysisState.top100 = Array.isArray(top100) ? top100 : [];
+    updateMaterialAnalysisImportState();
     const tbody = document.getElementById('materialAnalysisTopBody');
     const meta = document.getElementById('materialAnalysisTopMeta');
     if (meta) {
@@ -1988,6 +2104,7 @@ function resetMaterialAnalysisCurrentImport(message = '已清空当前素材分�
     renderMaterialAnalysisCreativePayload(null);
     resetMaterialAnalysisCreativeExpansion();
     renderMaterialAnalysisVisionWall();
+    updateMaterialAnalysisImportState();
     materialAnalysisSetInfo('', message);
 }
 
@@ -1999,6 +2116,7 @@ function renderMaterialAnalysisImports(imports = []) {
 
     if (materialAnalysisState.imports.length === 0) {
         list.textContent = '暂无导入记录。';
+        updateMaterialAnalysisImportState();
         return;
     }
 
@@ -2024,6 +2142,7 @@ function renderMaterialAnalysisImports(imports = []) {
         row.appendChild(deleteButton);
         list.appendChild(row);
     });
+    updateMaterialAnalysisImportState();
 }
 
 async function deleteMaterialAnalysisImport(runId) {
@@ -2076,6 +2195,7 @@ async function loadMaterialAnalysisImports(options = {}) {
         }
     } catch (error) {
         if (list) list.textContent = error.message || '读取素材分析导入记录失败';
+        updateMaterialAnalysisImportState();
     }
 }
 
@@ -2299,12 +2419,15 @@ async function importMaterialAnalysisFile() {
     } finally {
         materialAnalysisState.importing = false;
         if (importButton) importButton.disabled = false;
+        updateMaterialAnalysisImportState();
     }
 }
 
 window.addEventListener('DOMContentLoaded', () => {
+    initMaterialAnalysisImportDropzone();
     renderMaterialAnalysisCreativePayload(null);
     renderMaterialAnalysisCreativeTargets([]);
     renderMaterialAnalysisCreativeExpansionPool(null);
+    updateMaterialAnalysisImportState();
     loadMaterialAnalysisImports({ silent: true });
 });

@@ -74,7 +74,9 @@ function usage() {
         '  --apply          Actually rename files. Without this, only writes a dry-run report.',
         '  --no-sync-json   Do not update data/creative-knowledge assets/runs JSON metadata.',
         '  --include-legacy Also clean old ref/prompt style names when asset metadata is available.',
-        '  --legacy-only    Only process legacy image names with ref/prompt/v technical prefixes.'
+        '  --legacy-only    Only process legacy image names with ref/prompt/v technical prefixes.',
+        '',
+        'The script can also recover labels from nearby *.prompt.txt metadata files.'
     ].join('\n');
 }
 
@@ -222,6 +224,167 @@ function buildOutputBaseFromAsset(asset, directionLibrary, fallbackCore = '') {
     return context.outputNameBase || '';
 }
 
+function parsePromptMetadataText(text) {
+    const lines = String(text || '').split(/\r?\n/);
+    const metadata = {
+        outputImages: []
+    };
+    const keyMap = {
+        'Run ID': 'runId',
+        'Prompt group': 'promptGroup',
+        'Prompt title': 'promptTitle',
+        'Direction': 'direction',
+        'Table direction': 'tableDirection',
+        'Matched direction': 'sourceDirectionPath',
+        'Primary tag': 'primaryTag',
+        'Secondary tag': 'secondaryTag',
+        'Tertiary tag': 'tertiaryTag',
+        'Content name': 'contentTitle',
+        'Output name base': 'outputNameBase'
+    };
+    let inOutputImages = false;
+
+    for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) {
+            continue;
+        }
+        if (/^Prompt:/i.test(trimmed)) {
+            break;
+        }
+        if (/^Output images:/i.test(trimmed)) {
+            inOutputImages = true;
+            continue;
+        }
+        if (inOutputImages) {
+            const imageMatch = trimmed.match(/^-\s+(.+)$/);
+            if (imageMatch) {
+                metadata.outputImages.push(path.basename(imageMatch[1].trim()));
+                continue;
+            }
+            inOutputImages = false;
+        }
+
+        const match = trimmed.match(/^([^:]+):\s*(.*)$/);
+        if (!match) {
+            continue;
+        }
+        const key = keyMap[match[1].trim()];
+        if (key) {
+            metadata[key] = match[2].trim();
+        }
+    }
+
+    return metadata;
+}
+
+function buildOutputBaseFromPromptMetadata(metadata, directionLibrary, fallbackCore = '') {
+    if (!metadata || typeof metadata !== 'object') {
+        return '';
+    }
+    const standardLabelPath = [
+        metadata.primaryTag,
+        metadata.secondaryTag,
+        metadata.tertiaryTag
+    ].filter(Boolean);
+    const contentTitle = metadata.contentTitle ||
+        metadata.direction ||
+        metadata.tableDirection ||
+        metadata.outputNameBase ||
+        fallbackCore;
+    const context = buildCreativeOutputNamingContext({
+        ...metadata,
+        standardLabelPath,
+        sourceDirectionPath: metadata.sourceDirectionPath || standardLabelPath.join('/'),
+        contentTitle,
+        fallbackName: contentTitle || fallbackCore,
+        strictLibraryTags: false,
+        directionLibrary
+    });
+    return context.outputNameBase || '';
+}
+
+function mapPromptMetadataByFileName(targetDir, directionLibrary) {
+    const byName = new Map();
+    const textFiles = fs.readdirSync(targetDir)
+        .filter(name => name.endsWith('.prompt.txt'));
+
+    for (const fileName of textFiles) {
+        const filePath = path.join(targetDir, fileName);
+        let metadata;
+        try {
+            metadata = parsePromptMetadataText(fs.readFileSync(filePath, 'utf8'));
+        } catch (error) {
+            continue;
+        }
+        const promptParts = parseGeneratedName(fileName);
+        const fallbackCore = promptParts ? promptParts.core : (metadata.contentTitle || metadata.direction || '');
+        const newCore = buildOutputBaseFromPromptMetadata(metadata, directionLibrary, fallbackCore);
+        if (!newCore) {
+            continue;
+        }
+
+        const entry = {
+            metadata,
+            newCore,
+            source: 'prompt-metadata'
+        };
+        byName.set(fileName, entry);
+        for (const imageName of metadata.outputImages || []) {
+            if (imageName) {
+                byName.set(path.basename(imageName), entry);
+            }
+        }
+    }
+
+    return byName;
+}
+
+function buildSameCoreAssetBaseMap(assets, targetDir, directionLibrary) {
+    const candidates = new Map();
+    const targetKey = normalizePathForCompare(targetDir);
+
+    for (const asset of assets) {
+        const names = [asset.fileName, asset.relativePath, asset.filePath]
+            .map(value => path.basename(String(value || '')))
+            .filter(Boolean);
+        const isInTarget = names.some(name => fs.existsSync(path.join(targetDir, name))) ||
+            [asset.filePath, asset.promptFilePath].filter(Boolean).some(value => {
+                const resolved = path.resolve(String(value));
+                return normalizePathForCompare(path.dirname(resolved)) === targetKey;
+            });
+
+        if (!isInTarget) {
+            continue;
+        }
+
+        const oldName = names.find(name => parseGeneratedName(name));
+        const parts = oldName ? parseGeneratedName(oldName) : null;
+        if (!parts || !parts.core) {
+            continue;
+        }
+
+        const newCore = buildOutputBaseFromAsset(asset, directionLibrary, parts.core);
+        if (!newCore || newCore === parts.core) {
+            continue;
+        }
+
+        const key = labelKey([parts.core]);
+        const list = candidates.get(key) || [];
+        list.push(newCore);
+        candidates.set(key, list);
+    }
+
+    const result = new Map();
+    for (const [key, values] of candidates.entries()) {
+        const unique = uniqueList(values);
+        if (unique.length === 1) {
+            result.set(key, unique[0]);
+        }
+    }
+    return result;
+}
+
 function inferLegacyOutputBaseFromCore(core) {
     const parts = splitCoreParts(core);
     let index = 0;
@@ -349,6 +512,8 @@ function addMapping(mappings, mapping, targetDir) {
 function buildMappings({ targetDir, rootDir, directionLibrary, includeLegacy }) {
     const { assets } = loadAssets(rootDir);
     const assetsByName = mapByFileName(assets, targetDir);
+    const promptMetadataByName = mapPromptMetadataByFileName(targetDir, directionLibrary);
+    const sameCoreAssetBaseByCore = buildSameCoreAssetBaseMap(assets, targetDir, directionLibrary);
     const labelPrefixes = buildLabelPrefixes(directionLibrary);
     const files = fs.readdirSync(targetDir, { withFileTypes: true })
         .filter(entry => entry.isFile())
@@ -365,9 +530,23 @@ function buildMappings({ targetDir, rootDir, directionLibrary, includeLegacy }) 
         if (parts.kind === 'legacy-image' && !includeLegacy && !assetsByName.has(fileName)) continue;
 
         const asset = assetsByName.get(fileName) || null;
-        const newCore = asset
-            ? buildOutputBaseFromAsset(asset, directionLibrary, parts.core)
-            : inferOutputBaseFromCore(parts.core, directionLibrary, labelPrefixes);
+        const promptMetadata = promptMetadataByName.get(fileName) || null;
+        const sameCoreAssetBase = sameCoreAssetBaseByCore.get(labelKey([parts.core])) || '';
+        let source = '';
+        let newCore = '';
+        if (asset) {
+            newCore = buildOutputBaseFromAsset(asset, directionLibrary, parts.core);
+            source = 'asset-metadata';
+        } else if (promptMetadata) {
+            newCore = promptMetadata.newCore;
+            source = promptMetadata.source;
+        } else if (sameCoreAssetBase) {
+            newCore = sameCoreAssetBase;
+            source = 'same-core-asset-metadata';
+        } else {
+            newCore = inferOutputBaseFromCore(parts.core, directionLibrary, labelPrefixes);
+            source = 'filename-inference';
+        }
         if (!newCore || newCore === parts.core) continue;
         const labelMetadata = buildCoreLabelMetadata(newCore, labelPrefixes);
 
@@ -376,7 +555,7 @@ function buildMappings({ targetDir, rootDir, directionLibrary, includeLegacy }) 
             newName: buildNameFromParts(parts, newCore),
             oldCore: parts.core,
             newCore,
-            source: asset ? 'asset-metadata' : 'filename-inference',
+            source,
             kind: parts.kind,
             labelMetadata,
             droppedLabelParts: deriveDroppedLabelParts(parts.core, newCore, labelMetadata.standardLabelPath)
@@ -446,10 +625,17 @@ function renameFiles(validMappings, targetDir) {
 function replaceFileNameStrings(value, replacements, key = '') {
     if (typeof value === 'string') {
         let output = value;
+        let replacedFileName = false;
         for (const item of replacements) {
-            output = output.split(item.oldName).join(item.newName);
-            if (CORE_STRING_KEYS.has(key)) {
-                output = output.split(item.oldCore).join(item.newCore);
+            if (output.includes(item.oldName)) {
+                output = output.split(item.oldName).join(item.newName);
+                replacedFileName = true;
+            }
+        }
+        if (CORE_STRING_KEYS.has(key) && !replacedFileName) {
+            const exactCoreMatch = replacements.find(item => output === item.oldCore);
+            if (exactCoreMatch) {
+                output = exactCoreMatch.newCore;
             }
         }
         return output;
@@ -561,6 +747,12 @@ function updateJsonMetadata(rootDir, mappings) {
 function updatePromptTextFiles(targetDir, mappings) {
     const textFiles = fs.readdirSync(targetDir)
         .filter(name => name.endsWith('.prompt.txt'));
+    const outputNameBaseByPromptFile = new Map();
+    for (const mapping of mappings) {
+        if (mapping.kind === 'prompt' && mapping.newName && mapping.newCore) {
+            outputNameBaseByPromptFile.set(mapping.newName, mapping.newCore);
+        }
+    }
     const touched = [];
     for (const name of textFiles) {
         const filePath = path.join(targetDir, name);
@@ -568,6 +760,10 @@ function updatePromptTextFiles(targetDir, mappings) {
         const before = text;
         for (const mapping of mappings) {
             text = text.split(mapping.oldName).join(mapping.newName);
+        }
+        const outputNameBase = outputNameBaseByPromptFile.get(name);
+        if (outputNameBase) {
+            text = text.replace(/^Output name base:.*$/m, `Output name base: ${outputNameBase}`);
         }
         if (text !== before) {
             fs.writeFileSync(filePath, text, 'utf8');

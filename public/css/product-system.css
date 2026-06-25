@@ -1,0 +1,949 @@
+/* Stage 1 product design system.
+   Keep this file focused on shared tokens and reusable component classes. */
+
+:root {
+    /* Product palette */
+    --ps-bg: #080b0e;
+    --ps-bg-elevated: #0d1216;
+    --ps-panel: rgba(16, 23, 27, 0.82);
+    --ps-panel-raised: rgba(19, 27, 32, 0.90);
+    --ps-panel-soft: rgba(255, 255, 255, 0.035);
+    --ps-field: rgba(8, 14, 17, 0.70);
+    --ps-border: rgba(148, 163, 184, 0.14);
+    --ps-border-strong: rgba(177, 190, 199, 0.22);
+    --ps-text: #f2f7f8;
+    --ps-text-soft: rgba(226, 236, 239, 0.84);
+    --ps-muted: rgba(169, 184, 193, 0.72);
+    --ps-subtle: rgba(139, 154, 164, 0.56);
+    --ps-accent: #70d6bf;
+    --ps-accent-soft: rgba(112, 214, 191, 0.13);
+    --ps-accent-border: rgba(112, 214, 191, 0.34);
+    --ps-blue: #7ab7ff;
+    --ps-blue-soft: rgba(122, 183, 255, 0.13);
+    --ps-green: #70d6bf;
+    --ps-green-soft: rgba(112, 214, 191, 0.12);
+    --ps-warn: #f2c879;
+    --ps-warn-soft: rgba(242, 200, 121, 0.12);
+    --ps-danger: #f08c8c;
+    --ps-danger-soft: rgba(240, 140, 140, 0.11);
+
+    /* Shape, spacing and typography */
+    --ps-radius-xs: 6px;
+    --ps-radius-sm: 7px;
+    --ps-radius-md: 8px;
+    --ps-radius-lg: 10px;
+    --ps-radius-pill: 999px;
+    --ps-space-1: 4px;
+    --ps-space-2: 8px;
+    --ps-space-3: 12px;
+    --ps-space-4: 16px;
+    --ps-space-5: 20px;
+    --ps-space-6: 24px;
+    --ps-font-xs: 11px;
+    --ps-font-sm: 12px;
+    --ps-font-md: 13px;
+    --ps-font-body: 14px;
+    --ps-font-title: 18px;
+    --ps-font-page: 24px;
+    --ps-shadow-card: inset 0 1px 0 rgba(255, 255, 255, 0.03), 0 12px 30px rgba(0, 0, 0, 0.16);
+
+    /* Compatibility aliases used by older page CSS. */
+    --product-bg: var(--ps-bg);
+    --product-panel: var(--ps-panel);
+    --product-panel-raised: var(--ps-panel-raised);
+    --product-panel-soft: var(--ps-panel-soft);
+    --product-border: var(--ps-border);
+    --product-border-strong: var(--ps-border-strong);
+    --product-text: var(--ps-text);
+    --product-text-soft: var(--ps-text-soft);
+    --product-muted: var(--ps-muted);
+    --product-subtle: var(--ps-subtle);
+    --product-accent: var(--ps-accent);
+    --product-accent-soft: var(--ps-accent-soft);
+    --product-accent-border: var(--ps-accent-border);
+    --product-warn: var(--ps-warn);
+    --product-danger: var(--ps-danger);
+
+    --mass-panel: var(--ps-panel);
+    --mass-panel-strong: var(--ps-panel-raised);
+    --mass-border: var(--ps-border);
+    --mass-border-strong: var(--ps-border-strong);
+    --mass-text: var(--ps-text);
+    --mass-muted: var(--ps-muted);
+    --mass-dim: var(--ps-subtle);
+    --mass-accent: var(--ps-accent);
+    --mass-blue: var(--ps-blue);
+
+    --ui-card: var(--ps-panel);
+    --ui-card-soft: var(--ps-panel-soft);
+    --ui-field: var(--ps-field);
+    --ui-border: var(--ps-border);
+    --ui-border-soft: var(--ps-border);
+    --ui-blue: var(--ps-blue);
+    --ui-green: var(--ps-green);
+    --ui-text: var(--ps-text);
+    --ui-muted: var(--ps-muted);
+    --ui-subtle: var(--ps-subtle);
+    --ui-red: var(--ps-danger);
+    --ui-radius: var(--ps-radius-md);
+    --ui-control-radius: var(--ps-radius-md);
+}
+
+/* ---------- Reusable layout primitives ---------- */
+
+.product-workbench {
+    display: grid;
+    gap: var(--ps-space-4);
+    min-width: 0;
+}
+
+.product-page-heading {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: var(--ps-space-4);
+    min-width: 0;
+}
+
+.product-page-heading h2,
+.product-page-title {
+    margin: 0;
+    color: var(--ps-text);
+    font-size: var(--ps-font-page);
+    font-weight: 820;
+    line-height: 1.2;
+    letter-spacing: 0;
+}
+
+.product-page-heading p,
+.product-page-copy {
+    margin: 6px 0 0;
+    color: var(--ps-muted);
+    font-size: var(--ps-font-body);
+    line-height: 1.55;
+}
+
+.product-surface,
+.product-task-surface {
+    min-width: 0;
+    border: 1px solid var(--ps-border);
+    border-radius: var(--ps-radius-lg);
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.032), rgba(255, 255, 255, 0.010)),
+        var(--ps-panel);
+    box-shadow: var(--ps-shadow-card);
+}
+
+.product-task-surface {
+    padding: var(--ps-space-5);
+}
+
+.product-section-title {
+    color: var(--ps-text);
+    font-size: var(--ps-font-title);
+    font-weight: 840;
+    line-height: 1.25;
+    letter-spacing: 0;
+}
+
+.product-section-copy {
+    color: var(--ps-muted);
+    font-size: var(--ps-font-md);
+    line-height: 1.55;
+}
+
+/* ---------- Status strip ---------- */
+
+.product-status-strip,
+.status-bar {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--ps-space-2);
+    margin-bottom: var(--ps-space-3);
+}
+
+.product-status-item,
+.status-item {
+    min-width: 0;
+    min-height: 30px;
+    padding: 6px 10px;
+    border: 1px solid var(--ps-border);
+    border-radius: var(--ps-radius-pill);
+    background: rgba(10, 15, 18, 0.50);
+    color: var(--ps-muted);
+    box-shadow: none;
+}
+
+.product-status-item span:last-child,
+.status-item span:last-child {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.status-online {
+    border-color: var(--ps-accent-border);
+    background: var(--ps-accent-soft);
+    color: rgba(218, 252, 244, 0.90);
+}
+
+.status-busy {
+    border-color: rgba(242, 200, 121, 0.26);
+    background: var(--ps-warn-soft);
+    color: rgba(255, 228, 177, 0.88);
+}
+
+.status-offline {
+    border-color: var(--ps-border);
+    background: rgba(10, 15, 18, 0.50);
+    color: var(--ps-muted);
+}
+
+/* ---------- Metrics and task cards ---------- */
+
+.product-metric-grid,
+.run-center-overview,
+.autonomy-health-grid,
+.material-analysis-kpis,
+.task-workbook-metrics {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: var(--ps-space-3);
+    min-width: 0;
+}
+
+.product-metric-card,
+.run-center-metric,
+.autonomy-health-item,
+.material-analysis-kpi,
+.task-workbook-metrics > div {
+    min-width: 0;
+    min-height: 76px;
+    display: grid;
+    align-content: center;
+    gap: 6px;
+    padding: var(--ps-space-3);
+    border: 1px solid var(--ps-border);
+    border-radius: var(--ps-radius-md);
+    background: var(--ps-panel-soft);
+    box-shadow: none;
+}
+
+.product-metric-card span,
+.run-center-metric span,
+.autonomy-health-item span,
+.material-analysis-kpi span,
+.task-workbook-metrics span {
+    color: var(--ps-muted);
+    font-size: var(--ps-font-sm);
+    line-height: 1.4;
+}
+
+.product-metric-card strong,
+.run-center-metric strong,
+.autonomy-health-item strong,
+.material-analysis-kpi strong,
+.task-workbook-metrics strong {
+    min-width: 0;
+    color: var(--ps-text);
+    font-size: 20px;
+    font-weight: 860;
+    line-height: 1.18;
+    overflow-wrap: anywhere;
+}
+
+.product-task-card,
+.run-center-card,
+.delivery-task-table-wrap,
+.material-analysis-share-card,
+.task-workbook-direction-card,
+.knowledge-asset-item {
+    min-width: 0;
+    border: 1px solid var(--ps-border);
+    border-radius: var(--ps-radius-md);
+    background: var(--ps-panel-soft);
+}
+
+.product-detail-grid,
+.run-center-detail-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--ps-space-2);
+    min-width: 0;
+}
+
+.product-detail-grid > div,
+.run-center-detail-grid > div {
+    min-width: 0;
+    border-color: var(--ps-border);
+    background: rgba(8, 14, 17, 0.45);
+}
+
+/* ---------- Form and folder fields ---------- */
+
+.product-folder-field,
+.folder-field {
+    min-width: 0;
+}
+
+.product-folder-field .folder-field-heading,
+.folder-field-heading {
+    gap: var(--ps-space-3);
+}
+
+.product-folder-field label,
+.folder-field-heading label,
+.form-group label,
+.setting-group label {
+    color: var(--ps-text-soft);
+    font-size: var(--ps-font-sm);
+    font-weight: 780;
+    letter-spacing: 0;
+}
+
+.product-folder-field .folder-desc,
+.folder-desc,
+.field-meta {
+    color: var(--ps-muted);
+    font-size: var(--ps-font-sm);
+    line-height: 1.45;
+}
+
+.product-folder-field .folder-path-row,
+.folder-path-row {
+    min-width: 0;
+}
+
+input[type="text"],
+input[type="number"],
+input[type="password"],
+input[type="search"],
+input[type="url"],
+input[type="email"],
+textarea,
+select {
+    min-width: 0;
+    max-width: 100%;
+    color: var(--ps-text);
+    background-color: var(--ps-field);
+    border-color: var(--ps-border);
+    border-radius: var(--ps-radius-md);
+    letter-spacing: 0;
+}
+
+input[type="text"],
+input[type="number"],
+input[type="password"],
+input[type="search"],
+input[type="url"],
+input[type="email"],
+select {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+input::placeholder,
+textarea::placeholder {
+    color: var(--ps-subtle);
+}
+
+select {
+    color-scheme: dark;
+}
+
+input[type="file"] {
+    max-width: 100%;
+    color: var(--ps-muted);
+    font-size: var(--ps-font-sm);
+}
+
+input[type="file"]::file-selector-button {
+    min-height: 28px;
+    margin-right: var(--ps-space-2);
+    padding: 5px 10px;
+    border: 1px solid var(--ps-border-strong);
+    border-radius: var(--ps-radius-sm);
+    background: rgba(255, 255, 255, 0.075);
+    color: var(--ps-text-soft);
+    font: inherit;
+    font-weight: 760;
+}
+
+input[type="file"]::file-selector-button:hover {
+    border-color: var(--ps-accent-border);
+    background: var(--ps-accent-soft);
+    color: var(--ps-text);
+}
+
+.folder-history-button,
+.btn-folder-browse,
+.rename-tag-menu-button {
+    border-radius: var(--ps-radius-md);
+}
+
+/* ---------- Buttons ---------- */
+
+.product-action-row,
+.input-actions,
+.mass-primary-actions,
+.delivery-primary-actions,
+.autonomy-policy-actions,
+.delivery-task-actions,
+.material-analysis-report-actions,
+.material-analysis-creative-expansion-actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--ps-space-2);
+    min-width: 0;
+}
+
+.btn {
+    min-height: 36px;
+    border-radius: var(--ps-radius-md);
+    font-weight: 780;
+    letter-spacing: 0;
+    box-shadow: none;
+}
+
+.btn-primary,
+.btn-success {
+    border-color: var(--ps-accent-border);
+    background: var(--ps-accent-soft);
+    color: #effffb;
+}
+
+.btn-primary:hover,
+.btn-success:hover {
+    border-color: rgba(112, 214, 191, 0.48);
+    background: rgba(112, 214, 191, 0.18);
+}
+
+.btn-secondary {
+    border-color: var(--ps-border);
+    background: rgba(255, 255, 255, 0.045);
+    color: var(--ps-text-soft);
+}
+
+.btn-danger {
+    border-color: rgba(240, 140, 140, 0.30);
+    background: var(--ps-danger-soft);
+    color: #ffd6d6;
+}
+
+.btn:disabled,
+.btn-send:disabled {
+    color: var(--ps-subtle);
+    border-color: rgba(148, 163, 184, 0.10);
+    background: rgba(255, 255, 255, 0.035);
+    opacity: 0.72;
+}
+
+/* ---------- State blocks ---------- */
+
+.product-state,
+.info-box,
+.status-text,
+.readonly-field {
+    min-width: 0;
+    border: 1px solid var(--ps-border);
+    border-radius: var(--ps-radius-md);
+    background: rgba(255, 255, 255, 0.035);
+    color: var(--ps-muted);
+    line-height: 1.55;
+    overflow-wrap: anywhere;
+}
+
+.product-state.is-empty,
+.prompts-empty,
+.table-prompts-empty,
+.creative-s3-empty,
+.creative-auto-empty-state,
+.knowledge-empty,
+.rename-empty {
+    display: grid;
+    place-items: center;
+    min-height: 96px;
+    padding: var(--ps-space-4);
+    border: 1px dashed rgba(148, 163, 184, 0.20);
+    border-radius: var(--ps-radius-md);
+    background: rgba(255, 255, 255, 0.024);
+    color: var(--ps-muted);
+    text-align: center;
+}
+
+.product-state.is-loading,
+.info-box.loading {
+    border-color: rgba(242, 200, 121, 0.24);
+    background: var(--ps-warn-soft);
+    color: rgba(255, 228, 177, 0.90);
+}
+
+.product-state.is-error,
+.info-box.error {
+    border-color: rgba(240, 140, 140, 0.28);
+    background: var(--ps-danger-soft);
+    color: #ffd6d6;
+}
+
+.product-state.is-success,
+.info-box.success {
+    border-color: var(--ps-accent-border);
+    background: var(--ps-accent-soft);
+    color: #d8fff6;
+}
+
+/* ---------- Collapsible and log drawer ---------- */
+
+.product-collapsible,
+.collapsible-card,
+details.card,
+.mass-legil-panel,
+.mass-advanced-config {
+    overflow: hidden;
+}
+
+.product-collapsible > summary,
+.collapsible-card > summary,
+details.card > summary,
+.mass-legil-summary,
+.delivery-card-summary {
+    min-width: 0;
+    cursor: pointer;
+}
+
+.product-log-drawer,
+.log-section {
+    border-color: var(--ps-border);
+    border-radius: var(--ps-radius-lg);
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.026), rgba(255, 255, 255, 0.008)),
+        var(--ps-panel);
+    box-shadow: var(--ps-shadow-card);
+}
+
+.log-area {
+    background: rgba(5, 8, 11, 0.78);
+    border: 1px solid var(--ps-border);
+    border-radius: var(--ps-radius-md);
+}
+
+/* ---------- Mature page aliases ---------- */
+
+.run-center-workbench,
+.mass-workbench,
+.delivery-workbench,
+.config-workbench,
+.material-analysis-shell,
+.task-workbook-shell,
+.autonomy-policy-workbench {
+    display: grid;
+    gap: var(--ps-space-4);
+    min-width: 0;
+}
+
+.run-center-hero,
+.mass-primary-surface,
+.delivery-setup-card,
+.autonomy-policy-hero,
+.material-analysis-hero,
+.task-workbook-hero,
+.config-intro-card {
+    border-color: var(--ps-border);
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.032), rgba(255, 255, 255, 0.010)),
+        var(--ps-panel-raised);
+}
+
+.mass-mode-tabs,
+.autonomy-level-control,
+.material-analysis-report-tabs {
+    border-color: var(--ps-border);
+    background: rgba(255, 255, 255, 0.035);
+    border-radius: var(--ps-radius-md);
+}
+
+.mass-mode-tab,
+.autonomy-level-button,
+.material-analysis-report-tabs button {
+    border-radius: var(--ps-radius-sm);
+}
+
+/* ---------- System pages: strategy and configuration ---------- */
+
+.system-page-workbench {
+    position: relative;
+}
+
+.system-page-hero {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: var(--ps-space-5);
+    align-items: start;
+}
+
+.system-page-hero-copy {
+    min-width: 0;
+}
+
+.system-page-kicker {
+    width: max-content;
+    min-height: 26px;
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 9px;
+    margin-bottom: var(--ps-space-3);
+    border: 1px solid var(--ps-accent-border);
+    border-radius: var(--ps-radius-sm);
+    background: var(--ps-accent-soft);
+    color: rgba(218, 252, 244, 0.90);
+    font-size: var(--ps-font-sm);
+    font-weight: 820;
+}
+
+.system-primary-actions {
+    justify-self: end;
+    display: grid;
+    grid-template-columns: 1fr;
+    width: min(260px, 100%);
+}
+
+.system-health-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: var(--ps-space-2);
+    margin-top: var(--ps-space-4);
+}
+
+.system-health-item {
+    min-width: 0;
+    display: grid;
+    gap: 6px;
+    min-height: 74px;
+    padding: var(--ps-space-3);
+    border: 1px solid var(--ps-border);
+    border-radius: var(--ps-radius-md);
+    background: var(--ps-panel-soft);
+}
+
+.system-health-item span {
+    color: var(--ps-muted);
+    font-size: var(--ps-font-sm);
+    font-weight: 740;
+}
+
+.system-health-item strong,
+.system-health-value {
+    min-width: 0;
+    color: var(--ps-text);
+    font-size: 18px;
+    font-weight: 860;
+    line-height: 1.18;
+    overflow-wrap: anywhere;
+}
+
+.system-health-value.is-success,
+.system-health-item strong.is-success {
+    color: #baf7e8;
+}
+
+.system-health-value.is-warning,
+.system-health-item strong.is-warning {
+    color: #f5d393;
+}
+
+.system-health-value.is-error,
+.system-health-item strong.is-error {
+    color: #ffb9b9;
+}
+
+.system-policy-grid {
+    grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+}
+
+/* ---------- Production chain ---------- */
+
+.production-chain-strip {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: var(--ps-space-2);
+    margin-top: var(--ps-space-3);
+    min-width: 0;
+}
+
+.production-chain-step {
+    position: relative;
+    min-width: 0;
+    min-height: 34px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 7px 10px;
+    border: 1px solid var(--ps-border);
+    border-radius: var(--ps-radius-md);
+    background: rgba(8, 13, 16, 0.48);
+    color: var(--ps-muted);
+    font-size: var(--ps-font-sm);
+    font-weight: 820;
+    line-height: 1.25;
+    text-align: center;
+    overflow-wrap: anywhere;
+}
+
+.production-chain-step.is-current {
+    border-color: var(--ps-accent-border);
+    background: linear-gradient(180deg, rgba(112, 214, 191, 0.16), rgba(112, 214, 191, 0.07));
+    color: rgba(225, 255, 249, 0.94);
+}
+
+.production-source-hint {
+    margin-top: var(--ps-space-2);
+    padding: 8px 10px;
+    border: 1px solid rgba(122, 183, 255, 0.18);
+    border-radius: var(--ps-radius-md);
+    background: rgba(122, 183, 255, 0.075);
+    color: var(--ps-muted);
+    font-size: var(--ps-font-sm);
+    font-weight: 780;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+}
+
+.production-stage-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: var(--ps-space-3);
+    min-width: 0;
+}
+
+.production-stage-card {
+    min-width: 0;
+    min-height: 86px;
+    display: grid;
+    align-content: start;
+    gap: 7px;
+    padding: var(--ps-space-3);
+    border: 1px solid var(--ps-border);
+    border-radius: var(--ps-radius-md);
+    background: var(--ps-panel-soft);
+    color: var(--ps-muted);
+}
+
+.production-stage-card.is-current {
+    border-color: var(--ps-accent-border);
+    background: var(--ps-accent-soft);
+}
+
+.production-stage-card strong {
+    color: var(--ps-text);
+    font-size: var(--ps-font-md);
+    font-weight: 860;
+    line-height: 1.3;
+}
+
+.production-stage-card span,
+.production-stage-card em {
+    color: var(--ps-muted);
+    font-size: var(--ps-font-sm);
+    font-style: normal;
+    font-weight: 760;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+}
+
+.autonomy-policy-overview-panel,
+.autonomy-policy-protection-panel,
+.autonomy-policy-threshold-panel,
+.autonomy-policy-permission-panel,
+.system-config-card {
+    border-color: var(--ps-border);
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.028), rgba(255, 255, 255, 0.008)),
+        var(--ps-panel);
+}
+
+.autonomy-policy-permission-panel {
+    grid-row: span 2;
+}
+
+.system-config-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--ps-space-4);
+    align-items: start;
+}
+
+.system-config-card {
+    min-width: 0;
+    display: grid;
+    gap: var(--ps-space-4);
+}
+
+.system-config-health-card,
+.system-advanced-card {
+    grid-column: 1 / -1;
+}
+
+.system-config-card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--ps-space-3);
+    padding-bottom: var(--ps-space-3);
+    border-bottom: 1px solid var(--ps-border);
+}
+
+.system-config-card-head > span {
+    color: var(--ps-muted);
+    font-size: var(--ps-font-sm);
+    font-weight: 760;
+    text-align: right;
+}
+
+.system-advanced-card > summary {
+    min-height: 48px;
+    align-items: center;
+}
+
+.system-advanced-card[open] {
+    display: grid;
+    gap: var(--ps-space-4);
+}
+
+.workflow-browser-mode-options .setting-option {
+    min-height: 42px;
+}
+
+/* ---------- Mobile sticky action pattern ---------- */
+
+.product-mobile-sticky-actions {
+    display: none;
+}
+
+@media (max-width: 760px) {
+    .product-page-heading,
+    .mass-page-heading {
+        align-items: stretch;
+        flex-direction: column;
+        gap: var(--ps-space-3);
+    }
+
+    .product-page-heading h2,
+    .product-page-title,
+    .mass-page-heading h2 {
+        font-size: 21px;
+    }
+
+    .system-page-workbench {
+        padding-bottom: 74px;
+    }
+
+    .system-page-hero {
+        grid-template-columns: minmax(0, 1fr);
+        gap: var(--ps-space-3);
+    }
+
+    .system-primary-actions {
+        display: none;
+    }
+
+    .system-health-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .system-config-grid,
+    .system-policy-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .autonomy-policy-permission-panel {
+        grid-row: auto;
+    }
+
+    .product-task-surface,
+    .mass-primary-surface,
+    .delivery-setup-card,
+    .autonomy-policy-hero,
+    .material-analysis-hero,
+    .task-workbook-hero,
+    .config-intro-card {
+        padding: var(--ps-space-3);
+    }
+
+    .product-status-strip,
+    .status-bar {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 5px;
+    }
+
+    .product-status-item,
+    .status-item {
+        min-height: 28px;
+        padding: 5px 6px;
+        font-size: 10px;
+    }
+
+    .product-metric-grid,
+    .run-center-overview,
+    .autonomy-health-grid,
+    .material-analysis-kpis,
+    .task-workbook-metrics,
+    .production-stage-grid,
+    .product-detail-grid,
+    .run-center-detail-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .production-chain-strip {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 6px;
+    }
+
+    .production-chain-step {
+        min-height: 30px;
+        padding: 6px 7px;
+        font-size: 11px;
+    }
+
+    .product-mobile-sticky-actions,
+    .mass-mobile-sticky-actions {
+        position: fixed;
+        right: 0;
+        bottom: 0;
+        left: 0;
+        z-index: 1001;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: var(--ps-space-2);
+        padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+        border-top: 1px solid var(--ps-border);
+        background: rgba(8, 12, 16, 0.95);
+        box-shadow: 0 -16px 34px rgba(0, 0, 0, 0.30);
+        backdrop-filter: blur(16px);
+    }
+
+    .product-mobile-sticky-actions .btn,
+    .mass-mobile-sticky-actions .btn {
+        width: 100%;
+        min-height: 42px;
+        justify-content: center;
+        white-space: nowrap;
+    }
+}
+
+@media (max-width: 460px) {
+    .system-health-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+@media (max-width: 720px) {
+    .delivery-primary-actions {
+        border-color: var(--ps-border);
+        background: rgba(8, 12, 16, 0.95);
+        box-shadow: 0 -16px 34px rgba(0, 0, 0, 0.30);
+        backdrop-filter: blur(16px);
+    }
+}

@@ -26,6 +26,8 @@ module.exports = function createConfigMethodsMethods(deps) {
         LEGIL_ASPECT_RATIOS,
         LEGIL_RESOLUTIONS,
         LEGIL_OUTPUT_QUANTITIES,
+        LEGIL_DEFAULT_MODEL_PARAMETER_PROFILE,
+        LEGIL_MODEL_PARAMETER_PROFILES,
         IMAGE_EXTENSIONS,
         LEGIL_IMAGE_TO_IMAGE_URL,
         LEGIL_ERROR_SCREENSHOT_DIR
@@ -134,6 +136,37 @@ module.exports = function createConfigMethodsMethods(deps) {
         return LEGIL_IMAGE_MODEL_OPTIONS.map(option => ({ ...option }));
     },
 
+    getModelParameterProfile(modelValue = this.generationSettings.imageModel) {
+        const model = String(modelValue || '').trim();
+        const profile = LEGIL_MODEL_PARAMETER_PROFILES[model] || LEGIL_DEFAULT_MODEL_PARAMETER_PROFILE;
+        return {
+            defaultAspectRatio: profile.defaultAspectRatio || LEGIL_DEFAULT_SETTINGS.aspectRatio,
+            defaultResolution: profile.defaultResolution || LEGIL_DEFAULT_SETTINGS.resolution,
+            defaultOutputQuantity: Number(profile.defaultOutputQuantity) || LEGIL_DEFAULT_SETTINGS.outputQuantity,
+            aspectRatios: Array.isArray(profile.aspectRatios) && profile.aspectRatios.length
+                ? [...profile.aspectRatios]
+                : [...LEGIL_ASPECT_RATIOS],
+            resolutions: Array.isArray(profile.resolutions) && profile.resolutions.length
+                ? [...profile.resolutions]
+                : [...LEGIL_RESOLUTIONS],
+            outputQuantities: Array.isArray(profile.outputQuantities) && profile.outputQuantities.length
+                ? [...profile.outputQuantities]
+                : [...LEGIL_OUTPUT_QUANTITIES],
+            outputQuantityControl: profile.outputQuantityControl || 'button'
+        };
+    },
+
+    getGenerationOptionsForModel(modelValue = this.generationSettings.imageModel) {
+        const profile = this.getModelParameterProfile(modelValue);
+        return {
+            imageModels: this.getImageModelOptions(),
+            aspectRatios: [...profile.aspectRatios],
+            resolutions: [...profile.resolutions],
+            outputQuantities: [...profile.outputQuantities],
+            outputQuantityControl: profile.outputQuantityControl
+        };
+    },
+
     normalizeGenerationSettings(settings = {}) {
         const next = {
             ...this.generationSettings,
@@ -143,23 +176,44 @@ module.exports = function createConfigMethodsMethods(deps) {
         const imageModel = LEGIL_IMAGE_MODEL_OPTIONS.some(option => option.value === String(next.imageModel))
             ? String(next.imageModel)
             : LEGIL_DEFAULT_SETTINGS.imageModel;
-        const aspectRatio = LEGIL_ASPECT_RATIOS.includes(String(next.aspectRatio))
+        const profile = this.getModelParameterProfile(imageModel);
+        const aspectRatio = profile.aspectRatios.includes(String(next.aspectRatio))
             ? String(next.aspectRatio)
-            : LEGIL_DEFAULT_SETTINGS.aspectRatio;
-        const resolution = LEGIL_RESOLUTIONS.includes(String(next.resolution))
+            : profile.defaultAspectRatio;
+        const resolution = profile.resolutions.includes(String(next.resolution))
             ? String(next.resolution)
-            : LEGIL_DEFAULT_SETTINGS.resolution;
+            : profile.defaultResolution;
         const outputQuantityNumber = Number(next.outputQuantity);
-        const outputQuantity = LEGIL_OUTPUT_QUANTITIES.includes(outputQuantityNumber)
+        const outputQuantity = profile.outputQuantities.includes(outputQuantityNumber)
             ? outputQuantityNumber
-            : LEGIL_DEFAULT_SETTINGS.outputQuantity;
+            : profile.defaultOutputQuantity;
 
-        return {
+        const normalizeAspectRatios = (value) => {
+            const rawValues = Array.isArray(value) ? value : (value ? [value] : []);
+            const seen = new Set();
+            return rawValues
+                .map(item => String(item || '').trim())
+                .filter(item => profile.aspectRatios.includes(item))
+                .filter(item => {
+                    if (seen.has(item)) return false;
+                    seen.add(item);
+                    return true;
+                });
+        };
+        const aspectRatios = normalizeAspectRatios(Array.isArray(next.aspectRatios) ? next.aspectRatios : next.aspectRatio);
+
+        const normalized = {
             imageModel,
-            aspectRatio,
+            aspectRatio: aspectRatios[0] || aspectRatio,
             resolution,
             outputQuantity
         };
+
+        if (Array.isArray(next.aspectRatios)) {
+            normalized.aspectRatios = aspectRatios.length ? aspectRatios : [normalized.aspectRatio];
+        }
+
+        return normalized;
     },
 
     setGenerationSettings(settings = {}) {
@@ -169,15 +223,17 @@ module.exports = function createConfigMethodsMethods(deps) {
     },
 
     getConfig() {
+        const options = this.getGenerationOptionsForModel(this.generationSettings.imageModel);
         return {
             settings: { ...this.generationSettings },
             defaultSettings: { ...LEGIL_DEFAULT_SETTINGS },
-            options: {
-                imageModels: this.getImageModelOptions(),
-                aspectRatios: [...LEGIL_ASPECT_RATIOS],
-                resolutions: [...LEGIL_RESOLUTIONS],
-                outputQuantities: [...LEGIL_OUTPUT_QUANTITIES]
-            }
+            options,
+            modelParameterProfiles: Object.fromEntries(
+                this.getImageModelOptions().map(option => [
+                    option.value,
+                    this.getModelParameterProfile(option.value)
+                ])
+            )
         };
     },
 

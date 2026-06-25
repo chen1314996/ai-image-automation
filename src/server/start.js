@@ -27,11 +27,91 @@ const { startRuntimeServices } = require('./runtime-services');
 const { createGracefulShutdown } = require('./shutdown');
 
 const app = createApp({ rootDir: ROOT_DIR });
+app.get('/api/health', (req, res, next) => {
+    const wantsFullSnapshot = /^(1|true|yes|full)$/i.test(String(req.query.full || '').trim());
+    if (wantsFullSnapshot) {
+        return next();
+    }
+
+    return res.json({
+        success: true,
+        server: {
+            running: true,
+            uptimeSeconds: Math.floor(process.uptime()),
+            port: PORT
+        },
+        monitor: getHealthMonitor() ? getHealthMonitor().getStatus() : null
+    });
+});
 const routeContext = createRouteContext();
 registerRoutes(app, routeContext);
 
+const LEGIL_IMAGE_TO_IMAGE_URL = 'https://lumos.diandian.info/legil/image-ai/image-to-image';
+
+function parseBooleanEnv(value) {
+    if (value === undefined || value === null || value === '') {
+        return null;
+    }
+
+    return /^(1|true|yes|on)$/i.test(String(value).trim());
+}
+
+function shouldAutoOpenLegilOnStart() {
+    if (process.env.CI || process.env.NODE_ENV === 'test') {
+        return false;
+    }
+
+    const envValue = parseBooleanEnv(process.env.AUTO_OPEN_LEGIL_ON_START);
+    if (envValue !== null) {
+        return envValue;
+    }
+
+    if (appConfig.browser && typeof appConfig.browser.autoOpenLegilOnStart === 'boolean') {
+        return appConfig.browser.autoOpenLegilOnStart;
+    }
+
+    return false;
+}
+
+function getStartupLegilUrl() {
+    return (
+        process.env.LEGIL_URL ||
+        process.env.LEGIL_IMAGE_TO_IMAGE_URL ||
+        (appConfig.browser && appConfig.browser.legilUrl) ||
+        LEGIL_IMAGE_TO_IMAGE_URL
+    );
+}
+
+function scheduleStartupLegilOpen() {
+    if (!shouldAutoOpenLegilOnStart()) {
+        logger.info('启动预连接已关闭：不会自动打开 Legil 页面');
+        return;
+    }
+
+    const delayMs = Number(process.env.AUTO_OPEN_LEGIL_DELAY_MS) || 2500;
+    setTimeout(async () => {
+        try {
+            if (browserController.isPageOpen && browserController.isPageOpen('legil')) {
+                logger.browser('启动预连接跳过：Legil 页面已打开');
+                return;
+            }
+
+            logger.browser('启动预连接：正在打开 Legil 图生图页面');
+            const success = await browserController.openWebsite('legil', getStartupLegilUrl());
+            if (success) {
+                logger.browser('启动预连接完成：Legil 页面已打开，可用于连接状态检测');
+            } else {
+                logger.warn('启动预连接未完成：Legil 页面打开失败');
+            }
+        } catch (error) {
+            logger.warn(`启动预连接失败：${error.message}`);
+        }
+    }, delayMs);
+}
+
 const server = app.listen(PORT, () => {
     printStartupBanner(PORT);
+    scheduleStartupLegilOpen();
 });
 
 server.on('error', (error) => {

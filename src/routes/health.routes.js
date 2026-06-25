@@ -16,6 +16,19 @@ module.exports = function registerHealthRoutes(app, context) {
 
     app.get('/api/health', (req, res) => {
         try {
+            const wantsFullSnapshot = /^(1|true|yes|full)$/i.test(String(req.query.full || '').trim());
+            if (!wantsFullSnapshot) {
+                return res.json({
+                    success: true,
+                    server: {
+                        running: true,
+                        uptimeSeconds: Math.floor(process.uptime()),
+                        port: PORT
+                    },
+                    monitor: getHealthMonitor() ? getHealthMonitor().getStatus() : null
+                });
+            }
+
             res.json({
                 ...getHealthSnapshot(),
                 monitor: getHealthMonitor() ? getHealthMonitor().getStatus() : null

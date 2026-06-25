@@ -27,6 +27,29 @@
             color: var(--success);
         }
 
+        .log-header-actions {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .log-toggle {
+            border: 1px solid rgba(148, 163, 184, 0.26);
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.08);
+            color: inherit;
+            cursor: pointer;
+            font: inherit;
+            font-size: 12px;
+            font-weight: 700;
+            min-height: 30px;
+            padding: 0 10px;
+        }
+
+        .log-section.is-collapsed .log-area {
+            display: none;
+        }
+
         .log-indicator::before {
             content: '';
             width: 8px;

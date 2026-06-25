@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { normalizeImportSummaryFileNames } = require('./file-name');
 
 function ensureDir(dirPath) {
     fs.mkdirSync(dirPath, { recursive: true });
@@ -141,7 +142,7 @@ class TaskWorkbookStore {
                 const dir = this.importDir(importId);
                 if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) return null;
                 const summary = readJson(path.join(dir, 'import-summary.json'), null);
-                return summary ? { ...summary, importDir: dir } : null;
+                return summary ? normalizeImportSummaryFileNames({ ...summary, importDir: dir }) : null;
             })
             .filter(Boolean)
             .sort((a, b) => String(b.importedAt || '').localeCompare(String(a.importedAt || '')));
@@ -164,7 +165,7 @@ class TaskWorkbookStore {
     }
 
     readSummary(importId) {
-        return readJson(path.join(this.importDir(importId), 'import-summary.json'), null);
+        return normalizeImportSummaryFileNames(readJson(path.join(this.importDir(importId), 'import-summary.json'), null));
     }
 
     readTaskDirections(importId) {

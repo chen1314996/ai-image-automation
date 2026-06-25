@@ -48,11 +48,20 @@ const {
 const { parseCreativePromptWorkbook } = require('../../creative-table-parser');
 const { buildCreativeAgentQualityReport } = require('../../creative-agent-quality');
 const { createCreativeAutoService } = require('../services/creative-auto');
+const {
+    CREATIVE_PROMPT_STYLE_DEFAULT,
+    getCreativePromptStyleOptions,
+    normalizeCreativePromptStyle,
+    sanitizeLegilPromptText
+} = require('../services/creative-auto/prompt-style');
+const { createAutonomyPolicyService } = require('../services/autonomy-policy');
 const { createRunStateService } = require('../services/run-state');
 const {
     CREATIVE_AGENT_OUTPUT_DIR,
+    formatCreativeAgentPausedMessage,
     getCreativeAgentStatus,
     getStoredWinkyConfig,
+    isWinkyTimeoutError,
     sanitizeCreativeAgentError
 } = require('../../creative-agent-service');
 const feishuCliBridge = require('../../feishu-cli-bridge');
@@ -69,9 +78,32 @@ const {
 const persistedConfig = readConfig();
 
 const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'];
+const DELIVERY_TARGET_SIZES = ['800x800', '1280x720', '1080x1920'];
+const DELIVERY_ALLOWED_CANDIDATE_COUNTS = [1, 2, 3, 4];
 const DEFAULT_RESIZE_CONFIG = {
     inputFolder: 'D:\\工作\\自动化工作流1\\Legil批量改尺寸\\输入',
     outputFolder: 'D:\\工作\\自动化工作流1\\Legil批量改尺寸\\输出',
+    logoTemplateFolder: 'D:\\\u5de5\u4f5c\\GOF\\LOGO\u6a21\u7248',
+    processMode: 'full-delivery',
+    targetSizes: DELIVERY_TARGET_SIZES,
+    deliveryCandidateCount: 1,
+    candidateCountsBySize: {
+        '800x800': 1,
+        '1280x720': 1,
+        '1080x1920': 1
+    },
+    fixedPromptTemplate: '',
+    promptTemplates: {},
+    namingRule: {
+        fixedPrefix: 'GOFCNIM',
+        startNumber: '28930',
+        regionText: 'BJ',
+        channelText: '\u5e7f\u70b9\u901a',
+        primaryTag: '\u9898\u6750',
+        secondaryTag: '\u8f7d\u5177',
+        tertiaryTag: '',
+        tagLevels: ['\u9898\u6750', '\u8f7d\u5177']
+    },
     browserMode: 'headless',
     promptTemplate: '',
     generationSettings: {
@@ -83,6 +115,8 @@ const DEFAULT_RESIZE_CONFIG = {
     }
 };
 const DEFAULT_WORKFLOW_CONFIG = {
+    inputFolder: 'D:\\\u5de5\u4f5c\\\u81ea\u52a8\u5316\u5de5\u4f5c\u6d411\\\u6279\u91cf\u4ea7\u56fe\\\u8f93\u5165',
+    outputFolder: 'D:\\\u5de5\u4f5c\\\u81ea\u52a8\u5316\u5de5\u4f5c\u6d411\\\u6279\u91cf\u4ea7\u56fe\\\u8f93\u51fa',
     browserMode: 'headless',
     promptGeneration: {
         provider: 'lumos',
@@ -94,7 +128,7 @@ const DEFAULT_NOTIFICATION_CONFIG = {
     taskCompletionEnabled: true,
     serverStartupEnabled: true,
     staleProgressEnabled: true,
-    staleThresholdMinutes: 15,
+    staleThresholdMinutes: 30,
     notificationCooldownMinutes: 10,
     legilScreenshotEnabled: true,
     autoRecoveryEnabled: true,
@@ -106,6 +140,7 @@ const DEFAULT_CREATIVE_CONFIG = {
     outputFolder: 'D:\\工作\\自动化工作流1\\创意拓展\\输出',
     referenceFolder: 'D:\\工作\\自动化工作流1\\创意拓展\\参考图',
     browserMode: 'headed',
+    creativePromptStyle: CREATIVE_PROMPT_STYLE_DEFAULT,
     generationSettings: {
         imageModel: 'nano-banana-2',
         aspectRatio: '1:1',
@@ -199,10 +234,17 @@ const automationState = {
     legilTaskProgress: null
 };
 
+const autonomyPolicyService = createAutonomyPolicyService({
+    rootDir: ROOT_DIR,
+    ROOT_DIR,
+    logger
+});
+
 const creativeAutoService = createCreativeAutoService({
     rootDir: ROOT_DIR,
     ROOT_DIR,
     logger,
+    canPerformAction: (action, policyContext) => autonomyPolicyService.canPerformAction(action, policyContext),
     getStoredWinkyConfig,
     startCreativeAgentTask,
     getCreativeAgentTask,
@@ -229,7 +271,8 @@ const serverStartedAt = new Date().toISOString();
 const feishuNotifier = new FeishuNotificationService({
     bridge: feishuCliBridge,
     enabled: appConfig.notifications.feishuEnabled,
-    cooldownMs: Number(process.env.FEISHU_NOTIFY_COOLDOWN_MS) || appConfig.notifications.notificationCooldownMinutes * 60 * 1000
+    cooldownMs: Number(process.env.FEISHU_NOTIFY_COOLDOWN_MS) || appConfig.notifications.notificationCooldownMinutes * 60 * 1000,
+    completionSummaryDelayMs: Number(process.env.FEISHU_COMPLETION_SUMMARY_DELAY_MS) || 5 * 60 * 1000
 });
 let healthMonitor = null;
 const WATCHDOG_SCRIPT_PATH = path.join(ROOT_DIR, 'feishu-watchdog.js');
@@ -250,12 +293,24 @@ function clampNumber(value, min = 0, max = Number.MAX_SAFE_INTEGER) {
     return Math.max(min, Math.min(max, Math.floor(numberValue)));
 }
 
-function normalizeCreativeBatchPromptItems(promptItems = []) {
+function normalizeCreativeBatchPromptItems(promptItems = [], creativePromptStyle = CREATIVE_PROMPT_STYLE_DEFAULT) {
+    const normalizedPromptStyle = normalizeCreativePromptStyle(creativePromptStyle);
     return (Array.isArray(promptItems) ? promptItems : [])
         .map((item, index) => {
-            const prompt = typeof item === 'string'
+            const rawPrompt = typeof item === 'string'
                 ? item
-                : (item && typeof item.prompt === 'string' ? item.prompt : '');
+                : (item && typeof item.prompt === 'string'
+                    ? item.prompt
+                    : (item && typeof item.finalPrompt === 'string' ? item.finalPrompt : ''));
+            const rawFinalPrompt = item && typeof item.finalPrompt === 'string'
+                ? item.finalPrompt
+                : rawPrompt;
+            const prompt = String(rawPrompt || '').trim()
+                ? sanitizeLegilPromptText(rawPrompt, normalizedPromptStyle)
+                : '';
+            const finalPrompt = String(rawFinalPrompt || '').trim()
+                ? sanitizeLegilPromptText(rawFinalPrompt, normalizedPromptStyle)
+                : prompt;
             const direction = item && typeof item.direction === 'string' ? item.direction : '';
             const promptTitle = item && typeof item.promptTitle === 'string' ? item.promptTitle : '';
             const standardLabelPath = item && Array.isArray(item.standardLabelPath)
@@ -288,8 +343,9 @@ function normalizeCreativeBatchPromptItems(promptItems = []) {
                 sourcePromptHash: String(item && item.sourcePromptHash || '').trim(),
                 promptSchemaVersion: String(item && item.promptSchemaVersion || '').trim(),
                 translationVersion: String(item && item.translationVersion || '').trim(),
-                finalPrompt: String(item && item.finalPrompt || '').trim(),
-                prompt: prompt.trim(),
+                creativePromptStyle: normalizedPromptStyle,
+                finalPrompt,
+                prompt: prompt || finalPrompt,
                 selected: true
             };
         })
@@ -301,7 +357,12 @@ function normalizeCreativeResumeState(state) {
         return null;
     }
 
-    const prompts = normalizeCreativeBatchPromptItems(state.prompts);
+    const creativePromptStyle = normalizeCreativePromptStyle(
+        state.creativePromptStyle
+        || appConfig.creative.creativePromptStyle
+        || DEFAULT_CREATIVE_CONFIG.creativePromptStyle
+    );
+    const prompts = normalizeCreativeBatchPromptItems(state.prompts, creativePromptStyle);
     if (prompts.length === 0) {
         return null;
     }
@@ -350,6 +411,7 @@ function normalizeCreativeResumeState(state) {
         outputFolder: normalizeInputPath(state.outputFolder) || appConfig.creative.outputFolder || DEFAULT_CREATIVE_CONFIG.outputFolder,
         referenceFolder: normalizeInputPath(state.referenceFolder),
         browserMode: normalizeCreativeBrowserMode(state.browserMode, appConfig.creative.browserMode || DEFAULT_CREATIVE_CONFIG.browserMode),
+        creativePromptStyle,
         generationSettings,
         prompts,
         total,
@@ -860,10 +922,110 @@ function normalizeBrowserMode(value, fallback = 'headless') {
     return fallback === 'headed' ? 'headed' : 'headless';
 }
 
+function pickText(value, fallback = '') {
+    if (value === undefined || value === null) {
+        return fallback;
+    }
+    const text = String(value).trim();
+    return text || fallback;
+}
+
+function normalizeDeliveryProcessModeForConfig(value, fallback = 'full-delivery') {
+    if (value === 'legil-only' || value === 'full-delivery') {
+        return value;
+    }
+    return fallback === 'legil-only' ? 'legil-only' : 'full-delivery';
+}
+
+function normalizeDeliveryTargetSizesForConfig(value, fallback = DELIVERY_TARGET_SIZES) {
+    const rawValues = Array.isArray(value) ? value : [];
+    const selected = rawValues
+        .map(item => String(item || '').trim())
+        .filter(size => DELIVERY_TARGET_SIZES.includes(size));
+    const ordered = DELIVERY_TARGET_SIZES.filter(size => selected.includes(size));
+    if (ordered.length) {
+        return ordered;
+    }
+    const fallbackValues = Array.isArray(fallback) && fallback.length ? fallback : DELIVERY_TARGET_SIZES;
+    const normalizedFallback = DELIVERY_TARGET_SIZES.filter(size => fallbackValues.includes(size));
+    return normalizedFallback.length ? normalizedFallback : DELIVERY_TARGET_SIZES.slice();
+}
+
+function normalizeDeliveryCandidateCountForConfig(value, fallback = 1) {
+    const count = Number(value);
+    if (DELIVERY_ALLOWED_CANDIDATE_COUNTS.includes(count)) {
+        return count;
+    }
+    const fallbackCount = Number(fallback);
+    return DELIVERY_ALLOWED_CANDIDATE_COUNTS.includes(fallbackCount) ? fallbackCount : 1;
+}
+
+function normalizeDeliveryCandidateCountsBySizeForConfig(value, targetSizes, fallbackCount = 1) {
+    const source = value && typeof value === 'object' ? value : {};
+    const safeFallback = normalizeDeliveryCandidateCountForConfig(fallbackCount, 1);
+    return normalizeDeliveryTargetSizesForConfig(targetSizes).reduce((counts, size) => {
+        counts[size] = normalizeDeliveryCandidateCountForConfig(source[size], safeFallback);
+        return counts;
+    }, {});
+}
+
+function normalizeDeliveryPromptTemplatesForConfig(value = {}, fallback = {}) {
+    const source = value && typeof value === 'object' ? value : {};
+    const fallbackSource = fallback && typeof fallback === 'object' ? fallback : {};
+    return DELIVERY_TARGET_SIZES.reduce((templates, size) => {
+        const nextValue = typeof source[size] === 'string' ? source[size] : fallbackSource[size];
+        if (typeof nextValue === 'string') {
+            templates[size] = nextValue;
+        }
+        return templates;
+    }, {
+        common: typeof source.common === 'string'
+            ? source.common
+            : (typeof fallbackSource.common === 'string' ? fallbackSource.common : '')
+    });
+}
+
+function normalizeDeliveryNamingRuleForConfig(value = {}, fallback = {}) {
+    const source = value && typeof value === 'object' ? value : {};
+    const fallbackSource = fallback && typeof fallback === 'object' ? fallback : {};
+    const fallbackTags = Array.isArray(fallbackSource.tagLevels) ? fallbackSource.tagLevels : [];
+    const rawTagLevels = Array.isArray(source.tagLevels)
+        ? source.tagLevels
+        : [
+            source.primaryTag || source.primary,
+            source.secondaryTag || source.secondary,
+            source.tertiaryTag || source.tertiary
+        ];
+    const tagLevels = rawTagLevels
+        .map(item => String(item || '').trim())
+        .filter(Boolean);
+    const safeTagLevels = tagLevels.length
+        ? tagLevels
+        : (fallbackTags.length ? fallbackTags : DEFAULT_RESIZE_CONFIG.namingRule.tagLevels);
+
+    return {
+        fixedPrefix: pickText(source.fixedPrefix || source.prefix, fallbackSource.fixedPrefix || DEFAULT_RESIZE_CONFIG.namingRule.fixedPrefix),
+        prefix: pickText(source.fixedPrefix || source.prefix, fallbackSource.fixedPrefix || DEFAULT_RESIZE_CONFIG.namingRule.fixedPrefix),
+        startNumber: pickText(source.startNumber, fallbackSource.startNumber || DEFAULT_RESIZE_CONFIG.namingRule.startNumber),
+        regionText: pickText(source.regionText || source.region, fallbackSource.regionText || DEFAULT_RESIZE_CONFIG.namingRule.regionText),
+        channelText: pickText(source.channelText || source.channel, fallbackSource.channelText || DEFAULT_RESIZE_CONFIG.namingRule.channelText),
+        primaryTag: pickText(source.primaryTag || source.primary, fallbackSource.primaryTag || safeTagLevels[0] || ''),
+        secondaryTag: pickText(source.secondaryTag || source.secondary, fallbackSource.secondaryTag || safeTagLevels[1] || ''),
+        tertiaryTag: pickText(source.tertiaryTag || source.tertiary, fallbackSource.tertiaryTag || safeTagLevels[2] || ''),
+        tagLevels: safeTagLevels
+    };
+}
+
 function normalizeWorkflowConfigPayload(payload = {}) {
     const fallbackSettings = appConfig.workflow?.generationSettings || legilAutomation.getConfig().settings || DEFAULT_WORKFLOW_CONFIG.generationSettings;
     const fallbackPromptGeneration = appConfig.workflow?.promptGeneration || DEFAULT_WORKFLOW_CONFIG.promptGeneration;
     return {
+        inputFolder: normalizeInputPath(payload.inputFolder || payload.referenceFolder)
+            || appConfig.workflow?.inputFolder
+            || DEFAULT_WORKFLOW_CONFIG.inputFolder,
+        outputFolder: normalizeInputPath(payload.outputFolder || payload.saveFolder)
+            || appConfig.workflow?.outputFolder
+            || DEFAULT_WORKFLOW_CONFIG.outputFolder,
         browserMode: normalizeBrowserMode(
             payload.browserMode,
             appConfig.workflow?.browserMode || DEFAULT_WORKFLOW_CONFIG.browserMode
@@ -882,6 +1044,38 @@ function normalizeWorkflowConfigPayload(payload = {}) {
 function normalizeResizeConfigPayload(payload = {}) {
     const inputFolder = normalizeInputPath(payload.inputFolder) || appConfig.resize.inputFolder || DEFAULT_RESIZE_CONFIG.inputFolder;
     const outputFolder = normalizeInputPath(payload.outputFolder) || appConfig.resize.outputFolder || DEFAULT_RESIZE_CONFIG.outputFolder;
+    const logoTemplateFolder = normalizeInputPath(payload.logoTemplateFolder || payload.logoFolder)
+        || appConfig.resize.logoTemplateFolder
+        || DEFAULT_RESIZE_CONFIG.logoTemplateFolder;
+    const fallbackProcessMode = appConfig.resize.processMode || DEFAULT_RESIZE_CONFIG.processMode;
+    const processMode = normalizeDeliveryProcessModeForConfig(
+        payload.processMode || payload.deliveryProcessMode,
+        fallbackProcessMode
+    );
+    const targetSizes = normalizeDeliveryTargetSizesForConfig(
+        Array.isArray(payload.targetSizes) ? payload.targetSizes : appConfig.resize.targetSizes,
+        appConfig.resize.targetSizes || DEFAULT_RESIZE_CONFIG.targetSizes
+    );
+    const deliveryCandidateCount = normalizeDeliveryCandidateCountForConfig(
+        payload.deliveryCandidateCount || payload.candidateCountPerSize || payload.candidateCount,
+        appConfig.resize.deliveryCandidateCount || appConfig.resize.candidateCountPerSize || DEFAULT_RESIZE_CONFIG.deliveryCandidateCount
+    );
+    const candidateCountsBySize = normalizeDeliveryCandidateCountsBySizeForConfig(
+        payload.candidateCountsBySize || appConfig.resize.candidateCountsBySize,
+        targetSizes,
+        deliveryCandidateCount
+    );
+    const fixedPromptTemplate = typeof payload.fixedPromptTemplate === 'string'
+        ? payload.fixedPromptTemplate
+        : (typeof payload.fixedPrompt === 'string' ? payload.fixedPrompt : appConfig.resize.fixedPromptTemplate || '');
+    const promptTemplates = normalizeDeliveryPromptTemplatesForConfig(
+        payload.promptTemplates,
+        appConfig.resize.promptTemplates || DEFAULT_RESIZE_CONFIG.promptTemplates
+    );
+    const namingRule = normalizeDeliveryNamingRuleForConfig(
+        payload.namingRule,
+        appConfig.resize.namingRule || DEFAULT_RESIZE_CONFIG.namingRule
+    );
     const browserMode = normalizeBrowserMode(
         payload.browserMode,
         appConfig.resize.browserMode || DEFAULT_RESIZE_CONFIG.browserMode
@@ -897,6 +1091,15 @@ function normalizeResizeConfigPayload(payload = {}) {
     return {
         inputFolder,
         outputFolder,
+        logoTemplateFolder,
+        processMode,
+        targetSizes,
+        deliveryCandidateCount,
+        candidateCountPerSize: deliveryCandidateCount,
+        candidateCountsBySize,
+        fixedPromptTemplate,
+        promptTemplates,
+        namingRule,
         browserMode,
         promptTemplate,
         generationSettings
@@ -918,11 +1121,17 @@ function normalizeCreativeConfigPayload(payload = {}) {
         payload.generationSettings,
         appConfig.creative.generationSettings || DEFAULT_CREATIVE_CONFIG.generationSettings
     );
+    const creativePromptStyle = normalizeCreativePromptStyle(
+        payload.creativePromptStyle
+        || appConfig.creative.creativePromptStyle
+        || DEFAULT_CREATIVE_CONFIG.creativePromptStyle
+    );
 
     return {
         outputFolder,
         referenceFolder,
         browserMode,
+        creativePromptStyle,
         generationSettings
     };
 }
@@ -931,6 +1140,7 @@ function normalizeLegilGenerationSettings(settings = {}, fallback = {}) {
     const legilConfig = legilAutomation.getConfig();
     const options = legilConfig.options || {};
     const defaultSettings = legilConfig.defaultSettings || DEFAULT_RESIZE_CONFIG.generationSettings;
+    const modelParameterProfiles = legilConfig.modelParameterProfiles || {};
     const source = settings && typeof settings === 'object' ? settings : {};
     const fallbackSettings = fallback && typeof fallback === 'object' ? fallback : {};
 
@@ -939,17 +1149,31 @@ function normalizeLegilGenerationSettings(settings = {}, fallback = {}) {
         : ((options.imageModels || []).some(option => option.value === String(fallbackSettings.imageModel))
             ? String(fallbackSettings.imageModel)
             : defaultSettings.imageModel);
-    const aspectRatio = (options.aspectRatios || []).includes(String(source.aspectRatio))
+    const profile = modelParameterProfiles[imageModel] || {};
+    const aspectRatioOptions = Array.isArray(profile.aspectRatios) && profile.aspectRatios.length
+        ? profile.aspectRatios
+        : (options.aspectRatios || []);
+    const resolutionOptions = Array.isArray(profile.resolutions) && profile.resolutions.length
+        ? profile.resolutions
+        : (options.resolutions || []);
+    const quantityOptions = Array.isArray(profile.outputQuantities) && profile.outputQuantities.length
+        ? profile.outputQuantities
+        : (options.outputQuantities || []);
+    const defaultAspectRatio = profile.defaultAspectRatio || defaultSettings.aspectRatio;
+    const defaultResolution = profile.defaultResolution || defaultSettings.resolution;
+    const defaultOutputQuantity = Number(profile.defaultOutputQuantity) || defaultSettings.outputQuantity;
+
+    const aspectRatio = aspectRatioOptions.includes(String(source.aspectRatio))
         ? String(source.aspectRatio)
-        : ((options.aspectRatios || []).includes(String(fallbackSettings.aspectRatio))
+        : (aspectRatioOptions.includes(String(fallbackSettings.aspectRatio))
             ? String(fallbackSettings.aspectRatio)
-            : defaultSettings.aspectRatio);
+            : defaultAspectRatio);
     const normalizeAspectRatios = (value) => {
         const rawValues = Array.isArray(value) ? value : (value ? [value] : []);
         const seen = new Set();
         return rawValues
             .map(item => String(item || '').trim())
-            .filter(item => (options.aspectRatios || []).includes(item))
+            .filter(item => aspectRatioOptions.includes(item))
             .filter(item => {
                 if (seen.has(item)) return false;
                 seen.add(item);
@@ -964,18 +1188,18 @@ function normalizeLegilGenerationSettings(settings = {}, fallback = {}) {
     const primaryAspectRatio = aspectRatios.includes(aspectRatio)
         ? aspectRatio
         : (aspectRatios[0] || aspectRatio);
-    const resolution = (options.resolutions || []).includes(String(source.resolution))
+    const resolution = resolutionOptions.includes(String(source.resolution))
         ? String(source.resolution)
-        : ((options.resolutions || []).includes(String(fallbackSettings.resolution))
+        : (resolutionOptions.includes(String(fallbackSettings.resolution))
             ? String(fallbackSettings.resolution)
-            : defaultSettings.resolution);
+            : defaultResolution);
     const outputQuantityValue = Number(source.outputQuantity);
     const fallbackQuantityValue = Number(fallbackSettings.outputQuantity);
-    const outputQuantity = (options.outputQuantities || []).includes(outputQuantityValue)
+    const outputQuantity = quantityOptions.includes(outputQuantityValue)
         ? outputQuantityValue
-        : ((options.outputQuantities || []).includes(fallbackQuantityValue)
+        : (quantityOptions.includes(fallbackQuantityValue)
             ? fallbackQuantityValue
-            : defaultSettings.outputQuantity);
+            : defaultOutputQuantity);
 
     const normalized = {
         imageModel,
@@ -1162,7 +1386,19 @@ function startCreativeAgentTask(payload) {
         });
         task.worker = worker;
 
-        worker.once('message', message => {
+        worker.on('message', message => {
+            if (message && message.type === 'retry') {
+                const retryMessage = message.message || `Winky 临时异常，已自动重试第 ${message.retryIndex || 1}/${message.maxRetries || 2} 次。`;
+                updateCreativeAgentTask(task, {
+                    currentAction: retryMessage,
+                    message: retryMessage,
+                    retryCount: Number(message.retryIndex) || 0,
+                    retryMax: Number(message.maxRetries) || 0
+                });
+                logger.warn(retryMessage);
+                return;
+            }
+
             if (task.cancelRequested) {
                 settleCreativeAgentTask(task, {
                     phase: 'cancelled',
@@ -1199,24 +1435,35 @@ function startCreativeAgentTask(payload) {
                 return;
             }
 
-            const safeMessage = sanitizeCreativeAgentError(
+            const rawMessage = sanitizeCreativeAgentError(
                 new Error((message && message.message) || '创意拓展 Agent 执行失败'),
                 task.redactionKey
             );
+            const winkyTimeout = Boolean(message && message.winkyTimeout) || isWinkyTimeoutError(rawMessage);
+            const safeMessage = winkyTimeout
+                ? (message && message.friendlyMessage) || formatCreativeAgentPausedMessage(rawMessage) || 'Winky 连续超时，本轮创意 Agent 已暂停；稍后可继续重试。'
+                : rawMessage;
             settleCreativeAgentTask(task, {
                 phase: 'failed',
-                currentAction: '创意拓展 Agent 调用失败',
+                currentAction: winkyTimeout ? safeMessage : '创意拓展 Agent 调用失败',
                 error: safeMessage,
-                message: safeMessage
+                message: safeMessage,
+                errorDetail: rawMessage
             });
-            logger.error(`创意拓展 Agent 调用失败: ${safeMessage}`);
+            if (winkyTimeout) {
+                logger.warn(safeMessage);
+            } else {
+                logger.error(`创意拓展 Agent 调用失败: ${safeMessage}`);
+            }
             if (payload.suppressNotification !== true) {
                 notifyTaskEvent({
-                    level: 'error',
-                    title: '创意拓展 Agent 异常中断',
+                    level: winkyTimeout ? 'warn' : 'error',
+                    title: winkyTimeout ? 'Winky 超时，Agent 已暂停' : '创意拓展 Agent 异常中断',
                     taskType: '创意拓展Agent',
                     message: safeMessage,
-                    suggestion: '可在创意拓展页面重新发起任务，或检查 Agent/API 配置。'
+                    suggestion: winkyTimeout
+                        ? '可稍后点击继续重试；如果连续出现，建议缩小批量或稍后再跑。'
+                        : '可在创意拓展页面重新发起任务，或检查 Agent/API 配置。'
                 }, {
                     key: `creative-agent-failed:${task.runId}`,
                     cooldownMs: 0
@@ -1225,21 +1472,32 @@ function startCreativeAgentTask(payload) {
         });
 
         worker.once('error', error => {
-            const safeMessage = sanitizeCreativeAgentError(error, task.redactionKey);
+            const rawMessage = sanitizeCreativeAgentError(error, task.redactionKey);
+            const winkyTimeout = isWinkyTimeoutError(error) || isWinkyTimeoutError(rawMessage);
+            const safeMessage = winkyTimeout
+                ? formatCreativeAgentPausedMessage(error) || 'Winky 连续超时，本轮创意 Agent 已暂停；稍后可继续重试。'
+                : rawMessage;
             settleCreativeAgentTask(task, {
                 phase: 'failed',
-                currentAction: '创意拓展 Agent 调用失败',
+                currentAction: winkyTimeout ? safeMessage : '创意拓展 Agent 调用失败',
                 error: safeMessage,
-                message: safeMessage
+                message: safeMessage,
+                errorDetail: rawMessage
             });
-            logger.error(`创意拓展 Agent 调用失败: ${safeMessage}`);
+            if (winkyTimeout) {
+                logger.warn(safeMessage);
+            } else {
+                logger.error(`创意拓展 Agent 调用失败: ${safeMessage}`);
+            }
             if (payload.suppressNotification !== true) {
                 notifyTaskEvent({
-                    level: 'error',
-                    title: '创意拓展 Agent 异常中断',
+                    level: winkyTimeout ? 'warn' : 'error',
+                    title: winkyTimeout ? 'Winky 超时，Agent 已暂停' : '创意拓展 Agent 异常中断',
                     taskType: '创意拓展Agent',
                     message: safeMessage,
-                    suggestion: '可在创意拓展页面重新发起任务，或检查 Agent/API 配置。'
+                    suggestion: winkyTimeout
+                        ? '可稍后点击继续重试；如果连续出现，建议缩小批量或稍后再跑。'
+                        : '可在创意拓展页面重新发起任务，或检查 Agent/API 配置。'
                 }, {
                     key: `creative-agent-error:${task.runId}`,
                     cooldownMs: 0
@@ -1715,6 +1973,10 @@ function notifyTaskEvent(payload, options = {}) {
     if (options.category === 'stale' && !notifications.staleProgressEnabled) {
         return;
     }
+    if (options.category === 'completion' && options.immediate !== true && typeof feishuNotifier.notifyCompletionSummarySoon === 'function') {
+        feishuNotifier.notifyCompletionSummarySoon(payload, options);
+        return;
+    }
     feishuNotifier.notifySoon(payload, options);
 }
 
@@ -1808,13 +2070,14 @@ function applyNotificationRuntimeConfig() {
     const notifications = appConfig.notifications || DEFAULT_NOTIFICATION_CONFIG;
     feishuNotifier.configure({
         enabled: notifications.feishuEnabled,
-        cooldownMs: notifications.notificationCooldownMinutes * 60 * 1000
+        cooldownMs: notifications.notificationCooldownMinutes * 60 * 1000,
+        completionSummaryDelayMs: Number(process.env.FEISHU_COMPLETION_SUMMARY_DELAY_MS) || 5 * 60 * 1000
     });
     if (healthMonitor) {
         const warningMs = notifications.staleThresholdMinutes * 60 * 1000;
         healthMonitor.configure({
             staleWarningMs: warningMs,
-            staleErrorMs: Math.max(warningMs * 2, warningMs + 60 * 1000),
+            staleErrorMs: warningMs,
             shouldNotifyStale: () => Boolean(appConfig.notifications.staleProgressEnabled && appConfig.notifications.feishuEnabled)
         });
     }
@@ -2188,12 +2451,12 @@ async function restartAutomationFromFeishu(commandText) {
 function buildFeishuHelpText() {
     return [
         '飞书可用指令：',
-        '状态 / 工作状态：查看完整工作流、Legil任务、浏览器和可继续任务',
-        '进度 / 工作进度：发送当前进度报告',
-        '停止工作流：停止正在运行的完整工作流或 Legil 批量任务',
-        '继续工作流：优先继续完整工作流；如果没有，则继续创意拓展剩余任务',
-        '继续创意拓展：只继续创意拓展剩余提示词',
-        '重启工作流：无运行任务时从当前默认路径重新启动；如果有创意拓展恢复状态，则重启该创意拓展任务',
+        '控制面板 / 生产面板 / 交付面板 / 系统面板：打开远程值班卡片',
+        '状态 / 进度 / 日志 / 浏览器：查看当前情况',
+        '继续任务 / 停止全部：接管长跑任务',
+        '继续创意 / 暂停创意 / 重试失败：处理创意生产',
+        '继续交付 / 停止交付：处理改尺寸交付',
+        '重启服务器：二次确认后重启本地服务；运行中任务会被后端拒绝',
         '帮助：查看本说明'
     ].join('\n');
 }
@@ -2425,10 +2688,13 @@ function createRouteContext() {
         DEFAULT_WORKFLOW_CONFIG,
         DEFAULT_NOTIFICATION_CONFIG,
         DEFAULT_CREATIVE_CONFIG,
+        getCreativePromptStyleOptions,
+        normalizeCreativePromptStyle,
         getJimengGenerationOptions,
         normalizeNotificationConfig,
         appConfig,
         automationState,
+        autonomyPolicyService,
         creativeAutoService,
         jimengBrowserService,
         serverStartedAt,

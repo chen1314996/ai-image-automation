@@ -1,17 +1,58 @@
+const fs = require('fs');
+const path = require('path');
+const multer = require('multer');
 const { createTaskWorkbookService } = require('../services/task-workbook');
+const { recoverUtf8Filename } = require('../services/task-workbook/file-name');
 
 module.exports = function registerTaskWorkbookRoutes(app, context) {
     const service = createTaskWorkbookService(context);
+    const rootDir = (context && (context.rootDir || context.ROOT_DIR)) || process.cwd();
+    const uploadDir = path.join(rootDir, 'data', 'task-workbooks', 'uploads');
+    const upload = multer({
+        storage: multer.diskStorage({
+            destination(req, file, cb) {
+                fs.mkdirSync(uploadDir, { recursive: true });
+                cb(null, uploadDir);
+            },
+            filename(req, file, cb) {
+                const safeName = path.basename(uploadOriginalName(file) || 'source.xlsx')
+                    .replace(/[<>:"/\\|?*\x00-\x1F]/g, '_')
+                    .replace(/\s+/g, '_')
+                    .slice(0, 100);
+                cb(null, `${Date.now()}_${process.pid}_${safeName || 'source.xlsx'}`);
+            }
+        }),
+        limits: {
+            fileSize: 1024 * 1024 * 1024
+        },
+        fileFilter(req, file, cb) {
+            const ext = path.extname(uploadOriginalName(file) || '').toLowerCase();
+            if (!['.xlsx', '.xls'].includes(ext)) {
+                return cb(new Error('仅支持 .xlsx / .xls 自动化任务表'));
+            }
+            return cb(null, true);
+        }
+    });
 
-    app.post('/api/task-workbooks/import', (req, res) => {
+    app.post('/api/task-workbooks/import', taskWorkbookUploadMiddleware(upload), (req, res) => {
+        const tempUploadPath = req.file && req.file.path;
         try {
-            const result = service.importWorkbook(req.body || {});
+            const payload = buildImportPayload(req, rootDir);
+            const result = service.importWorkbook(payload);
             res.status(201).json(result);
         } catch (error) {
             res.status(400).json({
                 success: false,
                 message: '导入自动化任务表失败：' + error.message
             });
+        } finally {
+            if (tempUploadPath) {
+                try {
+                    fs.unlinkSync(tempUploadPath);
+                } catch (_) {
+                    // Temporary upload cleanup is best-effort.
+                }
+            }
         }
     });
 
@@ -133,3 +174,79 @@ module.exports = function registerTaskWorkbookRoutes(app, context) {
         }
     });
 };
+
+function taskWorkbookUploadMiddleware(upload) {
+    return (req, res, next) => {
+        upload.single('workbook')(req, res, error => {
+            if (!error) return next();
+            const status = error instanceof multer.MulterError && error.code === 'LIMIT_FILE_SIZE' ? 413 : 400;
+            return res.status(status).json({
+                success: false,
+                message: '导入自动化任务表失败：' + error.message
+            });
+        });
+    };
+}
+
+function buildImportPayload(req, rootDir) {
+    if (req.file) {
+        return {
+            ...(req.body || {}),
+            fileName: uploadOriginalName(req.file) || path.basename(req.file.path),
+            filePath: req.file.path
+        };
+    }
+
+    const body = req.body || {};
+    if (body.filePath) {
+        const filePath = resolveWorkbookPath(body.filePath, rootDir);
+        return {
+            ...body,
+            filePath,
+            fileName: body.fileName || path.basename(filePath)
+        };
+    }
+
+    return body;
+}
+
+function uploadOriginalName(file) {
+    if (!file) return '';
+    if (!file.decodedOriginalName) {
+        file.decodedOriginalName = recoverUtf8Filename(file.originalname || '');
+    }
+    return file.decodedOriginalName;
+}
+
+function resolveWorkbookPath(inputPath, rootDir) {
+    const rawPath = String(inputPath || '').trim();
+    if (!rawPath) throw new Error('缺少本地任务表路径');
+    const resolvedPath = path.resolve(rootDir || process.cwd(), rawPath);
+    if (!fs.existsSync(resolvedPath)) {
+        throw new Error(`本地任务表路径不存在：${rawPath}`);
+    }
+
+    const stat = fs.statSync(resolvedPath);
+    if (stat.isDirectory()) {
+        const candidates = fs.readdirSync(resolvedPath)
+            .filter(fileName => !fileName.startsWith('~$') && ['.xlsx', '.xls'].includes(path.extname(fileName).toLowerCase()))
+            .map(fileName => {
+                const filePath = path.join(resolvedPath, fileName);
+                return {
+                    filePath,
+                    mtimeMs: fs.statSync(filePath).mtimeMs
+                };
+            })
+            .sort((a, b) => b.mtimeMs - a.mtimeMs);
+        if (!candidates.length) {
+            throw new Error(`本地文件夹内未找到 .xlsx / .xls 任务表：${rawPath}`);
+        }
+        return candidates[0].filePath;
+    }
+
+    const ext = path.extname(resolvedPath).toLowerCase();
+    if (!['.xlsx', '.xls'].includes(ext)) {
+        throw new Error('本地任务表路径仅支持 .xlsx / .xls 文件');
+    }
+    return resolvedPath;
+}

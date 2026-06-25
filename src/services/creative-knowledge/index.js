@@ -5,7 +5,7 @@ const XLSX = require('xlsx');
 const { importDirections } = require('./direction-importer');
 const { importTopMaterials } = require('./top-material-importer');
 const { indexReferenceImages } = require('./reference-image-indexer');
-const { CreativeKnowledgeStore } = require('./store');
+const { CreativeKnowledgeStore, ensureDir } = require('./store');
 const { extractWorkbookReferenceImages } = require('./workbook-reference-images');
 const {
     buildFeedbackSamples,
@@ -39,6 +39,16 @@ const FEEDBACK_TAGS = [
     '可以量产',
     '可以拓展'
 ];
+const REFERENCE_POOL_FILE = 'reference-images.json';
+const REFERENCE_CHANGE_EVENTS_FILE = 'reference-change-events.json';
+const REFERENCE_POOL_STATUSES = new Set(['active', 'archived', 'rejected', 'deleted']);
+const REFERENCE_POOL_ROLES = {
+    1: { roleTag: 'primary', label: '主视觉锚点', useFor: 'main_visual_anchor' },
+    2: { roleTag: 'secondary', label: '差异参考', useFor: 'variation_reference' },
+    3: { roleTag: 'detail', label: '细节参考', useFor: 'detail_reference' }
+};
+const REFERENCE_POOL_ALLOWED_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif']);
+const REFERENCE_POOL_MAX_BYTES = 20 * 1024 * 1024;
 
 function nowIso() {
     return new Date().toISOString();
@@ -131,6 +141,103 @@ function emptyMaterialLearnings() {
         version: 1,
         learnings: [],
         updatedAt: nowIso()
+    };
+}
+
+function emptyReferenceChangeEvents() {
+    return {
+        version: 1,
+        referenceChangeEvents: [],
+        updatedAt: nowIso()
+    };
+}
+
+function normalizeReferenceSlot(value, fallback = 1) {
+    const slot = Math.round(Number(value) || fallback);
+    if (slot < 1 || slot > 3) {
+        throw new Error('参考图 slot 必须是 1、2 或 3');
+    }
+    return slot;
+}
+
+function normalizeReferenceStatus(value, fallback = 'active') {
+    const status = String(value || '').trim().toLowerCase();
+    return REFERENCE_POOL_STATUSES.has(status) ? status : fallback;
+}
+
+function referenceBelongsToDirection(image = {}, directionId = '') {
+    const id = String(directionId || '');
+    if (!id || !image) return false;
+    if (String(image.directionId || '') === id) return true;
+    return safeArray(image.matchedDirectionIds).some(matchedId => String(matchedId || '') === id);
+}
+
+function activeReferenceImagesForDirection(images = [], directionId = '', limit = 3) {
+    const active = safeArray(images)
+        .filter(image => referenceBelongsToDirection(image, directionId))
+        .filter(image => normalizeReferenceStatus(image.status, image.deleted ? 'deleted' : 'active') === 'active')
+        .sort((a, b) => normalizeReferenceSlot(a.slot || a.sourceSlot, 1) - normalizeReferenceSlot(b.slot || b.sourceSlot, 1));
+    return limit ? active.slice(0, limit) : active;
+}
+
+function buildReferenceId(directionId, slot, seed) {
+    const hash = crypto
+        .createHash('sha1')
+        .update([directionId, slot, seed, Date.now(), crypto.randomBytes(4).toString('hex')].join('|'))
+        .digest('hex')
+        .slice(0, 12);
+    return `ref_pool_${hash}`;
+}
+
+function safeFileBaseName(value, fallback = 'reference') {
+    const parsed = path.parse(String(value || fallback));
+    return (parsed.name || fallback)
+        .replace(/[<>:"/\\|?*\x00-\x1F]/g, '_')
+        .replace(/\s+/g, '_')
+        .slice(0, 80) || fallback;
+}
+
+function validateReferenceImageFile(file = {}) {
+    const filePath = file.filePath || '';
+    const originalName = file.originalName || file.fileName || path.basename(filePath || '');
+    const extension = path.extname(originalName || filePath).toLowerCase();
+    if (!REFERENCE_POOL_ALLOWED_EXTENSIONS.has(extension)) {
+        throw new Error(`参考图格式不支持：${extension || 'unknown'}`);
+    }
+
+    let size = Number(file.size) || 0;
+    if (file.buffer) {
+        size = file.buffer.length;
+    } else {
+        if (!filePath || !fs.existsSync(filePath)) {
+            throw new Error('参考图文件不存在');
+        }
+        fs.accessSync(filePath, fs.constants.R_OK);
+        const stats = fs.statSync(filePath);
+        if (!stats.isFile()) {
+            throw new Error('参考图路径不是文件');
+        }
+        size = stats.size;
+        const fd = fs.openSync(filePath, 'r');
+        const probe = Buffer.alloc(Math.min(16, Math.max(1, size)));
+        try {
+            fs.readSync(fd, probe, 0, probe.length, 0);
+        } finally {
+            fs.closeSync(fd);
+        }
+    }
+
+    if (size <= 0) {
+        throw new Error('参考图文件为空或不可读');
+    }
+    if (size > REFERENCE_POOL_MAX_BYTES) {
+        throw new Error(`参考图超过大小限制 ${Math.round(REFERENCE_POOL_MAX_BYTES / 1024 / 1024)}MB`);
+    }
+
+    return {
+        extension,
+        size,
+        originalName: originalName || `reference${extension}`
     };
 }
 
@@ -521,6 +628,13 @@ function normalizeText(value) {
     return String(value || '').trim();
 }
 
+function encodeReferenceStaticPath(relativePath) {
+    return String(relativePath || '')
+        .split(/[\\/]+/)
+        .map(part => encodeURIComponent(part))
+        .join('/');
+}
+
 function uniqueStrings(values = []) {
     return Array.from(new Set(safeArray(values)
         .map(value => normalizeText(value))
@@ -682,6 +796,7 @@ function compactAsset(asset = {}) {
         reviewNote: review.note,
         reviewedAt: review.reviewedAt,
         review,
+        autoReview: asset.autoReview && typeof asset.autoReview === 'object' ? asset.autoReview : null,
         directionCollection: asset.directionCollection || null,
         postprocess: compactAssetPostprocess(asset.postprocess || {}),
         fileExists: exists,
@@ -785,6 +900,11 @@ function buildReviewCounts(assets = []) {
 
 function compactReferenceImage(image = {}) {
     const exists = fileExists(image.filePath);
+    const staticPath = image.source === 'workbook-embedded' && image.relativePath
+        ? encodeReferenceStaticPath(image.relativePath)
+        : '';
+    const slot = Number(image.slot || image.sourceSlot) || 0;
+    const roleDefaults = REFERENCE_POOL_ROLES[slot] || {};
     return {
         id: image.id || '',
         directionId: image.directionId || '',
@@ -793,6 +913,19 @@ function compactReferenceImage(image = {}) {
         matchedDirectionIds: safeArray(image.matchedDirectionIds),
         source: image.source || '',
         sourceSlot: image.sourceSlot || '',
+        slot,
+        slotLabel: roleDefaults.label || '',
+        roleTag: image.roleTag || roleDefaults.roleTag || '',
+        useFor: image.useFor || roleDefaults.useFor || '',
+        visualNotes: image.visualNotes || '',
+        status: normalizeReferenceStatus(image.status, image.deleted ? 'deleted' : 'active'),
+        isPrimary: slot === 1 && normalizeReferenceStatus(image.status, 'active') === 'active',
+        archivedAt: image.archivedAt || '',
+        archivedReason: image.archivedReason || '',
+        rejectReason: image.rejectReason || '',
+        replacedByReferenceId: image.replacedByReferenceId || '',
+        replacesReferenceId: image.replacesReferenceId || '',
+        deleted: image.deleted || null,
         sourceSheetRow: image.sourceSheetRow || '',
         sourceSheetColumn: image.sourceSheetColumn || '',
         filePath: image.filePath || '',
@@ -804,8 +937,10 @@ function compactReferenceImage(image = {}) {
         size: Number(image.size) || 0,
         updatedAt: image.updatedAt || '',
         fileExists: exists,
-        imageUrl: exists && image.id
-            ? `/api/creative-knowledge/references/${encodeURIComponent(image.id)}/file`
+        imageUrl: exists && staticPath
+            ? `/api/creative-knowledge/reference-static/${staticPath}`
+            : exists && image.id
+                ? `/api/creative-knowledge/ref-files/${encodeURIComponent(image.id)}`
             : (image.remoteUrl || '')
     };
 }
@@ -860,6 +995,8 @@ function compactRun(run = {}) {
 function createCreativeKnowledgeService(options = {}) {
     const rootDir = options.rootDir || options.ROOT_DIR || process.cwd();
     const logger = options.logger || console;
+    const assetFileLookupCache = new Map();
+    const referenceFileLookupCache = new Map();
 
     function getConfig(overrides = {}) {
         return buildDefaultConfig(rootDir, overrides);
@@ -882,6 +1019,49 @@ function createCreativeKnowledgeService(options = {}) {
         writeIfMissing(store, 'direction-evidence.json', emptyDirectionEvidence);
         writeIfMissing(store, 'material-learnings.json', emptyMaterialLearnings);
         writeIfMissing(store, 'creative-memory.json', emptyCreativeMemory);
+        writeIfMissing(store, REFERENCE_POOL_FILE, () => ({
+            version: 1,
+            importedAt: null,
+            images: [],
+            updatedAt: nowIso()
+        }));
+        writeIfMissing(store, REFERENCE_CHANGE_EVENTS_FILE, emptyReferenceChangeEvents);
+    }
+
+    function getStoreFileVersion(store, fileName) {
+        const filePath = store.filePath(fileName);
+        try {
+            const stats = fs.statSync(filePath);
+            return `${stats.mtimeMs}:${stats.size}`;
+        } catch {
+            return 'missing';
+        }
+    }
+
+    function getFileLookup(store, fileName, collectionKey, idKey, cache) {
+        const filePath = store.filePath(fileName);
+        const version = getStoreFileVersion(store, fileName);
+        const cached = cache.get(filePath);
+        if (cached && cached.version === version) {
+            return cached.items;
+        }
+
+        const data = store.read(fileName, { [collectionKey]: [] });
+        const items = new Map();
+        safeArray(data[collectionKey]).forEach(item => {
+            const id = item && item[idKey];
+            if (!id) return;
+            items.set(id, {
+                id,
+                filePath: item.filePath || '',
+                fileName: item.fileName || path.basename(item.filePath || ''),
+                status: item.status || '',
+                deleted: item.deleted || null
+            });
+        });
+
+        cache.set(filePath, { version, items });
+        return items;
     }
 
     function importKnowledge(importOptions = {}) {
@@ -1110,18 +1290,21 @@ function createCreativeKnowledgeService(options = {}) {
             const matchedEvidence = evidenceEntries
                 .filter(entry => directionEvidenceMatches(direction, entry))
                 .sort((a, b) => toTimeMs(b.updatedAt || b.createdAt) - toTimeMs(a.updatedAt || a.createdAt));
+            const activePoolReferences = activeReferenceImagesForDirection(references.images, direction.id).map(compactReferenceImage);
 
             return {
                 ...direction,
                 evidenceCount: matchedEvidence.length,
                 knowledgeStats: {
                     matchedReferenceCount: referenceCounts.get(direction.id) || 0,
+                    activeReferenceCount: activePoolReferences.length,
                     referenceHintCount: safeArray(direction.referenceHints).filter(Boolean).length,
                     runCount: runCounts.get(direction.id) || 0,
                     assetCount: assetCounts.get(direction.id) || 0,
                     evidenceCount: matchedEvidence.length
                 },
                 evidencePreview: matchedEvidence.slice(0, 4).map(compactDirectionEvidence),
+                referencePool: activePoolReferences,
                 referenceImages: referenceImagesByDirection.get(direction.id) || []
             };
         });
@@ -2778,14 +2961,9 @@ function createCreativeKnowledgeService(options = {}) {
 
     function getAssetFile(assetId, query = {}) {
         const { store } = getStore(query);
-        const data = store.read('assets.json', {
-            assets: []
-        });
-        const target = safeArray(data.assets)
-            .map(compactAsset)
-            .find(asset => asset.assetId === assetId);
+        const target = getFileLookup(store, 'assets.json', 'assets', 'assetId', assetFileLookupCache).get(assetId);
 
-        if (!target || !target.fileExists) {
+        if (!target || target.status === 'deleted' || target.deleted || !fileExists(target.filePath)) {
             return null;
         }
 
@@ -2796,16 +2974,488 @@ function createCreativeKnowledgeService(options = {}) {
         };
     }
 
-    function getReferenceFile(referenceId, query = {}) {
-        const { store } = getStore(query);
-        const data = store.read('reference-images.json', {
+    function readReferenceImages(store) {
+        const data = store.read(REFERENCE_POOL_FILE, {
+            version: 1,
             images: []
         });
-        const target = safeArray(data.images)
-            .map(compactReferenceImage)
-            .find(image => image.id === referenceId);
+        return {
+            ...data,
+            images: safeArray(data.images)
+        };
+    }
 
-        if (!target || !target.fileExists) {
+    function writeReferenceImages(store, data) {
+        store.write(REFERENCE_POOL_FILE, {
+            ...(data || {}),
+            version: Number(data && data.version) || 1,
+            images: safeArray(data && data.images),
+            updatedAt: nowIso()
+        });
+        referenceFileLookupCache.clear();
+    }
+
+    function readReferenceChangeEvents(store) {
+        const data = store.read(REFERENCE_CHANGE_EVENTS_FILE, emptyReferenceChangeEvents());
+        return {
+            version: Number(data.version) || 1,
+            referenceChangeEvents: safeArray(data.referenceChangeEvents),
+            updatedAt: data.updatedAt || ''
+        };
+    }
+
+    function writeReferenceChangeEvents(store, data) {
+        store.write(REFERENCE_CHANGE_EVENTS_FILE, {
+            version: 1,
+            referenceChangeEvents: safeArray(data.referenceChangeEvents).slice(0, 500),
+            updatedAt: nowIso()
+        });
+    }
+
+    function appendReferenceChangeEvent(store, type, reference, extra = {}) {
+        const data = readReferenceChangeEvents(store);
+        const event = {
+            id: `reference_event_${Date.now().toString(36)}_${crypto.randomBytes(4).toString('hex')}`,
+            type,
+            referenceId: reference && reference.id || '',
+            directionId: reference && reference.directionId || extra.directionId || '',
+            slot: Number(reference && reference.slot) || Number(extra.slot) || 0,
+            status: reference && reference.status || '',
+            impact: extra.impact || {},
+            before: extra.before || null,
+            after: extra.after || (reference ? compactReferenceImage(reference) : null),
+            reason: extra.reason || '',
+            createdAt: nowIso()
+        };
+        data.referenceChangeEvents = [event].concat(data.referenceChangeEvents);
+        writeReferenceChangeEvents(store, data);
+        return event;
+    }
+
+    function findDirectionById(store, directionId) {
+        const directionsData = store.read('directions.json', { directions: [] });
+        return safeArray(directionsData.directions).find(direction => direction && direction.id === directionId) || null;
+    }
+
+    function findReferenceIndex(images, referenceId) {
+        return safeArray(images).findIndex(image => image && image.id === referenceId);
+    }
+
+    function normalizeDirectionReferencePool(images = [], directionId = '') {
+        const next = safeArray(images).map(image => ({ ...image }));
+        const active = activeReferenceImagesForDirection(next, directionId, 0);
+        const bySlot = new Map();
+        active.forEach(image => {
+            const slot = normalizeReferenceSlot(image.slot || image.sourceSlot, 1);
+            image.slot = slot;
+            const defaults = REFERENCE_POOL_ROLES[slot] || {};
+            image.roleTag = image.roleTag || defaults.roleTag || '';
+            image.useFor = image.useFor || defaults.useFor || '';
+            if (bySlot.has(slot) || bySlot.size >= 3) {
+                image.status = 'archived';
+                image.archivedAt = image.archivedAt || nowIso();
+                image.archivedReason = image.archivedReason || (bySlot.has(slot)
+                    ? 'Archived because another active reference already uses this slot.'
+                    : 'Archived because active reference pool is limited to 3 images.');
+                return;
+            }
+            bySlot.set(slot, image.id);
+        });
+        return next;
+    }
+
+    function nextAvailableReferenceSlot(images = [], directionId = '') {
+        const used = new Set(activeReferenceImagesForDirection(images, directionId).map(image => normalizeReferenceSlot(image.slot || image.sourceSlot, 1)));
+        for (let slot = 1; slot <= 3; slot += 1) {
+            if (!used.has(slot)) return slot;
+        }
+        return 0;
+    }
+
+    function copyReferenceUploadFile(store, directionId, slot, file) {
+        const validation = validateReferenceImageFile(file);
+        const outputDir = store.filePath(path.join('reference-pool', directionId));
+        ensureDir(outputDir);
+        const fileName = `${slot}_${Date.now().toString(36)}_${safeFileBaseName(validation.originalName)}${validation.extension}`;
+        const filePath = path.join(outputDir, fileName);
+        if (file.buffer) {
+            fs.writeFileSync(filePath, file.buffer);
+        } else {
+            fs.copyFileSync(file.filePath, filePath);
+        }
+        fs.accessSync(filePath, fs.constants.R_OK);
+        const stats = fs.statSync(filePath);
+        return {
+            filePath,
+            fileName,
+            relativePath: path.relative(store.dataDir, filePath),
+            extension: validation.extension,
+            size: stats.size,
+            originalName: validation.originalName
+        };
+    }
+
+    function buildReferenceRecord({ store, direction, slot, file, payload = {}, replacesReferenceId = '' }) {
+        const copied = copyReferenceUploadFile(store, direction.id, slot, file);
+        const defaults = REFERENCE_POOL_ROLES[slot] || {};
+        const now = nowIso();
+        return {
+            id: buildReferenceId(direction.id, slot, copied.originalName),
+            directionId: direction.id,
+            directionPath: direction.path || '',
+            directionName: direction.name || '',
+            matchedDirectionIds: [direction.id],
+            source: 'manual_upload',
+            sourceSlot: slot,
+            slot,
+            roleTag: payload.roleTag || defaults.roleTag || '',
+            useFor: payload.useFor || defaults.useFor || '',
+            visualNotes: normalizeText(payload.visualNotes),
+            status: 'active',
+            filePath: copied.filePath,
+            fileName: copied.fileName,
+            originalFileName: copied.originalName,
+            relativePath: copied.relativePath,
+            extension: copied.extension,
+            size: copied.size,
+            replacesReferenceId,
+            createdAt: now,
+            updatedAt: now
+        };
+    }
+
+    function listDirectionReferences(directionId, query = {}) {
+        const { store } = getStore(query);
+        ensureEmptyFiles(store);
+        const direction = findDirectionById(store, directionId);
+        if (!direction) {
+            return { success: false, message: `方向不存在：${directionId}` };
+        }
+        const data = readReferenceImages(store);
+        const directionImages = safeArray(data.images)
+            .filter(image => referenceBelongsToDirection(image, directionId))
+            .map(compactReferenceImage)
+            .sort((a, b) => {
+                const statusOrder = status => status === 'active' ? 0 : (status === 'archived' ? 1 : (status === 'rejected' ? 2 : 3));
+                const statusDiff = statusOrder(a.status) - statusOrder(b.status);
+                if (statusDiff !== 0) return statusDiff;
+                return (Number(a.slot) || 99) - (Number(b.slot) || 99) || toTimeMs(b.updatedAt || b.createdAt) - toTimeMs(a.updatedAt || a.createdAt);
+            });
+        const active = directionImages.filter(image => image.status === 'active').slice(0, 3);
+        const slots = [1, 2, 3].map(slot => {
+            const defaults = REFERENCE_POOL_ROLES[slot];
+            return {
+                slot,
+                label: defaults.label,
+                roleTag: defaults.roleTag,
+                useFor: defaults.useFor,
+                reference: active.find(image => Number(image.slot) === slot) || null
+            };
+        });
+        const eventData = readReferenceChangeEvents(store);
+        return {
+            success: true,
+            direction: {
+                id: direction.id,
+                path: direction.path || '',
+                name: direction.name || ''
+            },
+            slots,
+            activeReferences: active,
+            references: directionImages,
+            referenceChangeEvents: eventData.referenceChangeEvents
+                .filter(event => event && event.directionId === directionId)
+                .slice(0, 30)
+        };
+    }
+
+    function uploadDirectionReference(directionId, payload = {}, file = null, query = {}) {
+        const { store } = getStore(query);
+        ensureEmptyFiles(store);
+        const direction = findDirectionById(store, directionId);
+        if (!direction) {
+            return { success: false, message: `方向不存在：${directionId}` };
+        }
+        const data = readReferenceImages(store);
+        const slot = payload.slot ? normalizeReferenceSlot(payload.slot) : nextAvailableReferenceSlot(data.images, directionId);
+        if (!slot) {
+            return { success: false, message: '当前方向 active 参考图已满 3 张，请先替换或归档。' };
+        }
+        const activeAtSlot = activeReferenceImagesForDirection(data.images, directionId)
+            .find(image => normalizeReferenceSlot(image.slot || image.sourceSlot, 1) === slot);
+        if (activeAtSlot && payload.replaceExisting !== true) {
+            return { success: false, message: `slot ${slot} 已有 active 参考图，请使用替换接口。` };
+        }
+        const uploadFile = file || { filePath: payload.filePath, originalName: payload.fileName || path.basename(payload.filePath || '') };
+        if (!uploadFile || (!uploadFile.filePath && !uploadFile.buffer)) {
+            return { success: false, message: '请提供参考图文件。' };
+        }
+        if (activeAtSlot) {
+            const oldIndex = findReferenceIndex(data.images, activeAtSlot.id);
+            data.images[oldIndex] = {
+                ...data.images[oldIndex],
+                status: 'archived',
+                archivedAt: nowIso(),
+                archivedReason: 'Replaced by new upload.',
+                updatedAt: nowIso()
+            };
+        }
+        const reference = buildReferenceRecord({ store, direction, slot, file: uploadFile, payload });
+        data.images = normalizeDirectionReferencePool([reference].concat(data.images), directionId);
+        writeReferenceImages(store, data);
+        const event = appendReferenceChangeEvent(store, 'uploaded', reference, {
+            directionId,
+            slot,
+            impact: { promptActiveReferenceIds: activeReferenceImagesForDirection(data.images, directionId).map(image => image.id) }
+        });
+        return {
+            success: true,
+            message: '参考图已上传。',
+            reference: compactReferenceImage(reference),
+            event,
+            pool: listDirectionReferences(directionId, query)
+        };
+    }
+
+    function replaceReference(referenceId, payload = {}, file = null, query = {}) {
+        const { store } = getStore(query);
+        ensureEmptyFiles(store);
+        const data = readReferenceImages(store);
+        const oldIndex = findReferenceIndex(data.images, referenceId);
+        if (oldIndex < 0) {
+            return { success: false, message: `参考图不存在：${referenceId}` };
+        }
+        const oldReference = data.images[oldIndex];
+        const direction = findDirectionById(store, oldReference.directionId) || {
+            id: oldReference.directionId,
+            path: oldReference.directionPath,
+            name: oldReference.directionName
+        };
+        const slot = normalizeReferenceSlot(oldReference.slot || oldReference.sourceSlot, 1);
+        const uploadFile = file || { filePath: payload.filePath, originalName: payload.fileName || path.basename(payload.filePath || '') };
+        if (!uploadFile || (!uploadFile.filePath && !uploadFile.buffer)) {
+            return { success: false, message: '请提供替换参考图文件。' };
+        }
+        const archivedOld = {
+            ...oldReference,
+            status: 'archived',
+            archivedAt: nowIso(),
+            archivedReason: payload.reason || 'Replaced by new reference.',
+            replacedByReferenceId: '',
+            updatedAt: nowIso()
+        };
+        const nextReference = buildReferenceRecord({
+            store,
+            direction,
+            slot,
+            file: uploadFile,
+            payload: {
+                roleTag: payload.roleTag || oldReference.roleTag,
+                useFor: payload.useFor || oldReference.useFor,
+                visualNotes: payload.visualNotes !== undefined ? payload.visualNotes : oldReference.visualNotes
+            },
+            replacesReferenceId: oldReference.id
+        });
+        archivedOld.replacedByReferenceId = nextReference.id;
+        data.images[oldIndex] = archivedOld;
+        data.images = normalizeDirectionReferencePool([nextReference].concat(data.images), direction.id);
+        writeReferenceImages(store, data);
+        const event = appendReferenceChangeEvent(store, 'replaced', nextReference, {
+            before: compactReferenceImage(oldReference),
+            directionId: direction.id,
+            slot,
+            reason: payload.reason || '',
+            impact: {
+                oldStatus: 'archived',
+                newActiveReferenceId: nextReference.id,
+                promptActiveReferenceIds: activeReferenceImagesForDirection(data.images, direction.id).map(image => image.id)
+            }
+        });
+        return {
+            success: true,
+            message: '参考图已替换，旧图已归档。',
+            oldReference: compactReferenceImage(archivedOld),
+            reference: compactReferenceImage(nextReference),
+            event,
+            pool: listDirectionReferences(direction.id, query)
+        };
+    }
+
+    function archiveReference(referenceId, payload = {}, query = {}) {
+        const { store } = getStore(query);
+        ensureEmptyFiles(store);
+        const data = readReferenceImages(store);
+        const index = findReferenceIndex(data.images, referenceId);
+        if (index < 0) return { success: false, message: `参考图不存在：${referenceId}` };
+        const before = data.images[index];
+        const archived = {
+            ...before,
+            status: 'archived',
+            archivedAt: nowIso(),
+            archivedReason: payload.reason || 'Manual archive.',
+            updatedAt: nowIso()
+        };
+        data.images[index] = archived;
+        data.images = normalizeDirectionReferencePool(data.images, archived.directionId);
+        writeReferenceImages(store, data);
+        const event = appendReferenceChangeEvent(store, 'archived', archived, {
+            before: compactReferenceImage(before),
+            reason: payload.reason || '',
+            impact: { promptActiveReferenceIds: activeReferenceImagesForDirection(data.images, archived.directionId).map(image => image.id) }
+        });
+        return { success: true, message: '参考图已归档，不会再进入 Prompt。', reference: compactReferenceImage(archived), event, pool: listDirectionReferences(archived.directionId, query) };
+    }
+
+    function rejectReference(referenceId, payload = {}, query = {}) {
+        const { store } = getStore(query);
+        ensureEmptyFiles(store);
+        const data = readReferenceImages(store);
+        const index = findReferenceIndex(data.images, referenceId);
+        if (index < 0) return { success: false, message: `参考图不存在：${referenceId}` };
+        const before = data.images[index];
+        const rejected = {
+            ...before,
+            status: 'rejected',
+            rejectReason: payload.reason || payload.rejectReason || 'Not suitable.',
+            updatedAt: nowIso()
+        };
+        data.images[index] = rejected;
+        data.images = normalizeDirectionReferencePool(data.images, rejected.directionId);
+        writeReferenceImages(store, data);
+        const event = appendReferenceChangeEvent(store, 'rejected', rejected, {
+            before: compactReferenceImage(before),
+            reason: rejected.rejectReason,
+            impact: { promptActiveReferenceIds: activeReferenceImagesForDirection(data.images, rejected.directionId).map(image => image.id) }
+        });
+        return { success: true, message: '参考图已标记不适合，不会再进入 Prompt。', reference: compactReferenceImage(rejected), event, pool: listDirectionReferences(rejected.directionId, query) };
+    }
+
+    function deleteReference(referenceId, payload = {}, query = {}) {
+        const { store } = getStore(query);
+        ensureEmptyFiles(store);
+        const data = readReferenceImages(store);
+        const index = findReferenceIndex(data.images, referenceId);
+        if (index < 0) return { success: false, message: `参考图不存在：${referenceId}` };
+        const before = data.images[index];
+        if (payload.confirm !== true && payload.confirmDelete !== true) {
+            return {
+                success: false,
+                needsConfirmation: true,
+                message: '永久删除必须二次确认。',
+                impact: {
+                    directionId: before.directionId,
+                    slot: before.slot || before.sourceSlot || '',
+                    promptContext: normalizeReferenceStatus(before.status, 'active') === 'active' ? '将从 Prompt active 参考图上下文移除' : '不会影响当前 Prompt active 上下文',
+                    metadata: '会保留 deleted 元数据和变更事件'
+                }
+            };
+        }
+        const deleted = {
+            ...before,
+            status: 'deleted',
+            deleted: {
+                deletedAt: nowIso(),
+                reason: payload.reason || payload.deleteReason || '',
+                impact: {
+                    promptContext: normalizeReferenceStatus(before.status, 'active') === 'active' ? 'removed_from_active_prompt_context' : 'no_active_prompt_context_change',
+                    filePath: before.filePath || ''
+                }
+            },
+            updatedAt: nowIso()
+        };
+        data.images[index] = deleted;
+        data.images = normalizeDirectionReferencePool(data.images, deleted.directionId);
+        writeReferenceImages(store, data);
+        const event = appendReferenceChangeEvent(store, 'deleted', deleted, {
+            before: compactReferenceImage(before),
+            reason: deleted.deleted.reason,
+            impact: deleted.deleted.impact
+        });
+        return { success: true, message: '参考图已永久删除，保留 deleted 元数据。', reference: compactReferenceImage(deleted), event, pool: listDirectionReferences(deleted.directionId, query) };
+    }
+
+    function reorderDirectionReferences(directionId, payload = {}, query = {}) {
+        const { store } = getStore(query);
+        ensureEmptyFiles(store);
+        const data = readReferenceImages(store);
+        const active = activeReferenceImagesForDirection(data.images, directionId);
+        const activeIds = new Set(active.map(image => image.id));
+        const desiredIds = safeArray(payload.referenceIds || payload.orderedReferenceIds).filter(id => activeIds.has(id)).slice(0, 3);
+        if (payload.referenceId && payload.slot) {
+            const id = String(payload.referenceId);
+            const slot = normalizeReferenceSlot(payload.slot);
+            const target = active.find(image => image.id === id);
+            if (!target) return { success: false, message: '只能重排 active 参考图。' };
+            active.forEach(image => {
+                if (image.id === id) {
+                    image.slot = slot;
+                    return;
+                }
+                if (normalizeReferenceSlot(image.slot || image.sourceSlot, 1) === slot) {
+                    image.slot = normalizeReferenceSlot(target.slot || target.sourceSlot, 1);
+                }
+            });
+        } else if (desiredIds.length) {
+            desiredIds.forEach((id, index) => {
+                const image = active.find(item => item.id === id);
+                if (image) image.slot = index + 1;
+            });
+        } else {
+            return { success: false, message: '请提供重排 referenceIds 或 referenceId + slot。' };
+        }
+
+        const activeById = new Map(active.map(image => [image.id, image]));
+        data.images = data.images.map(image => activeById.get(image.id) || image);
+        data.images = normalizeDirectionReferencePool(data.images, directionId);
+        writeReferenceImages(store, data);
+        const event = appendReferenceChangeEvent(store, 'reordered', { directionId, slot: 0, status: 'active' }, {
+            directionId,
+            impact: { promptActiveReferenceIds: activeReferenceImagesForDirection(data.images, directionId).map(image => image.id) }
+        });
+        return { success: true, message: '参考图 slot 已更新。', event, pool: listDirectionReferences(directionId, query) };
+    }
+
+    function analyzeReferenceDna(referenceId, payload = {}, query = {}) {
+        const { store } = getStore(query);
+        ensureEmptyFiles(store);
+        const data = readReferenceImages(store);
+        const index = findReferenceIndex(data.images, referenceId);
+        if (index < 0) return { success: false, message: `参考图不存在：${referenceId}` };
+        const reference = data.images[index];
+        const dna = {
+            analyzedAt: nowIso(),
+            roleTag: reference.roleTag || '',
+            useFor: reference.useFor || '',
+            visualNotes: normalizeText(payload.visualNotes || reference.visualNotes),
+            source: payload.source || 'manual'
+        };
+        data.images[index] = {
+            ...reference,
+            visualDna: dna,
+            visualNotes: dna.visualNotes || reference.visualNotes || '',
+            updatedAt: nowIso()
+        };
+        writeReferenceImages(store, data);
+        const event = appendReferenceChangeEvent(store, 'analyzed_dna', data.images[index], {
+            reason: payload.reason || '',
+            impact: { visualDna: dna }
+        });
+        return { success: true, message: '参考图 DNA 已记录。', reference: compactReferenceImage(data.images[index]), visualDna: dna, event };
+    }
+
+    function getDirectionPromptReferences(directionId, query = {}) {
+        const { store } = getStore(query);
+        ensureEmptyFiles(store);
+        const data = readReferenceImages(store);
+        const active = activeReferenceImagesForDirection(data.images, directionId);
+        return active.map(compactReferenceImage);
+    }
+
+    function getReferenceFile(referenceId, query = {}) {
+        const { store } = getStore(query);
+        const target = getFileLookup(store, 'reference-images.json', 'images', 'id', referenceFileLookupCache).get(referenceId);
+
+        if (!target || target.status === 'deleted' || target.deleted || !fileExists(target.filePath)) {
             return null;
         }
 
@@ -2943,11 +3593,13 @@ function createCreativeKnowledgeService(options = {}) {
         getConfig,
         getAssetFile,
         getCreativeMemory,
+        getDirectionPromptReferences,
         getOverview,
         getReferenceFile,
         getStatus,
         importKnowledge,
         learnFromFeedback,
+        listDirectionReferences,
         listDirectionDrafts,
         listFeedback,
         listAssets,
@@ -2956,8 +3608,15 @@ function createCreativeKnowledgeService(options = {}) {
         listTopMaterialInsights,
         mergeDirection,
         mergeDirectionDraft,
+        analyzeReferenceDna,
+        archiveReference,
+        deleteReference,
+        replaceReference,
+        reorderDirectionReferences,
         rejectMemoryRule,
         rejectDirectionDraft,
+        rejectReference,
+        uploadDirectionReference,
         updateMemoryRule,
         updateDirectionStatus,
         reviewAsset

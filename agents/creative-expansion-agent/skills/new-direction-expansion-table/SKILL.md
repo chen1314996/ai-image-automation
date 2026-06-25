@@ -27,24 +27,42 @@ Use `$new-direction-expansion-table` when the user:
 4. Maintain world consistency while forcing visible differentiation.
 5. Ensure the final table can be parsed by the backend and sent directly to Legil.
 
-## Required Output Table
+## Required Automation Output
 
-Default output is a table named `新方向拓展表`.
+For backend `run-once`, `creative-auto`, and Legil automation tasks, default output is strict JSON, not a Markdown table. The JSON top-level object must contain:
 
-Table columns:
-- 参考方向
-- 新方向名称
-- 方向描述
-- 来源于哪条详细迭代策略
-- 提示词1
-- 提示词2
-- 提示词3
-- 提示词4
-- 提示词5
+- `directionPlans`
+- `candidateDirections`
 
-Each row is one new direction.
+`directionPlans` is the hidden planning layer used by the program for automatic scoring, dedupe, rejection, and fallback filling. It is not for manual preview or selection.
 
-For the current run-once MVP, this table is the most important output. Do not rename the columns, do not wrap the table in a code block, and do not add extra prompt columns.
+Each `directionPlans` item must include:
+
+- `sourceDirectionPath`
+- `currentJudgment`
+- `exclusionSummary`
+- `extensions`
+
+Each `extensions` item must include:
+
+- `extensionKey`
+- `extensionType`
+- `name`
+- `description`
+- `visualHook`
+- `dedupeReason`
+- `riskNote`
+- `productionAdvice`
+- `promptPair`
+
+Default automation scale:
+
+- Generate 8 candidate extensions per source direction.
+- The backend will automatically select about 4 extensions.
+- Each extension should provide 2 prompts in `promptPair`.
+- `candidateDirections` is a backward-compatible flattened field and may include only the final recommended extensions.
+
+Only output the old `新方向拓展表` Markdown table when the user explicitly asks for a human planning sheet.
 
 ## New Direction Rules
 
@@ -64,9 +82,9 @@ Direction names must be clearly distinguishable. Avoid shallow naming patterns w
 
 ## Prompt Generation Rules
 
-For each new direction, generate 5 detailed Chinese prompts.
+For each extension direction, generate 2 detailed Chinese prompts.
 
-These 5 prompts must not be near-duplicates. Inside the same direction, they must still show obvious variation in:
+These 2 prompts must not be near-duplicates. Inside the same extension, they must still show obvious variation in at least two of:
 - subject or subject combination
 - action or relationship
 - scene mechanism
@@ -77,9 +95,7 @@ These 5 prompts must not be near-duplicates. Inside the same direction, they mus
 - emotional moment
 - advertising impact point
 
-The subject must not keep repeating in nearly the same form.
-The scene mechanism must not keep repeating in nearly the same form.
-Changing only location nouns is not enough.
+Prompt 1 is the stable main-visual version. Prompt 2 is the differentiated version. The subject must not keep repeating in nearly the same form, the scene mechanism must not keep repeating in nearly the same form, and changing only location nouns is not enough.
 
 Current Legil assumptions:
 

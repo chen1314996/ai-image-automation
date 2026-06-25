@@ -27,6 +27,14 @@ function createGracefulShutdown(deps) {
         if (healthMonitor) {
             healthMonitor.stop();
         }
+
+        try {
+            if (feishuNotifier && typeof feishuNotifier.flushCompletionSummary === 'function') {
+                await feishuNotifier.flushCompletionSummary('shutdown');
+            }
+        } catch (error) {
+            console.error('发送完成汇总通知时出错:', error.message);
+        }
     
         try {
             await feishuNotifier.notify({

@@ -1,3 +1,6 @@
+const fs = require('fs');
+const path = require('path');
+
 function nowIso() {
     return new Date().toISOString();
 }
@@ -18,6 +21,74 @@ function pickText(...values) {
         if (text) return text;
     }
     return '';
+}
+
+function isStaleRunningMessage(value) {
+    const text = String(value || '').trim();
+    if (!text) return false;
+    if (/已暂停|暂停|已停止|停止|失败|完成|未完成|可继续|继续之前任务/.test(text)) return false;
+    return /正在生成|正在处理|运行中|生成第\s*\d+|等待.*开始|排队中|running|queued/i.test(text);
+}
+
+function pickNonRunningText(...values) {
+    for (const value of values) {
+        const text = String(value || '').trim();
+        if (text && !isStaleRunningMessage(text)) return text;
+    }
+    return '';
+}
+
+function mergeObjects(...sources) {
+    return sources.reduce((result, source) => {
+        if (source && typeof source === 'object' && !Array.isArray(source)) {
+            return { ...result, ...source };
+        }
+        return result;
+    }, {});
+}
+
+function normalizeCreativeLegilProgress(run = {}, runStatus = '') {
+    const progress = run.legilProgress && typeof run.legilProgress === 'object'
+        ? { ...run.legilProgress }
+        : null;
+    if (!progress) return null;
+
+    const status = String(runStatus || run.status || '').toLowerCase();
+    const phase = String(progress.phase || '').toLowerCase();
+    const shouldFreeze = status && status !== 'running' && ['running', 'queued', 'generating', 'processing'].includes(phase);
+    if (status === 'paused' || shouldFreeze) {
+        progress.phase = phase === 'completed' ? progress.phase : 'stopped';
+        progress.currentAction = pickNonRunningText(
+            run.message,
+            progress.currentAction,
+            run.legilResult && run.legilResult.message
+        ) || '任务已暂停，可继续之前任务';
+    }
+    return progress;
+}
+
+function creativeDisplayMessage(run = {}, progress = null, queue = null, runStatus = '') {
+    const status = String(runStatus || run.status || '').toLowerCase();
+    if (status === 'paused') {
+        return pickNonRunningText(
+            run.message,
+            run.currentAction,
+            progress && progress.currentAction,
+            run.legilResult && run.legilResult.message,
+            queue && queue.message
+        ) || '任务已暂停，可继续之前任务';
+    }
+    return pickText(
+        run.message,
+        run.currentAction,
+        progress && progress.currentAction,
+        queue && queue.message
+    );
+}
+
+function mergeCreativeTargetQueue(run = {}, ...queues) {
+    const merged = mergeObjects(run.targetQueue, run.targetQueueProgress, ...queues);
+    return Object.keys(merged).length ? merged : null;
 }
 
 function normalizePhase(phase, fallback = 'idle') {
@@ -284,6 +355,16 @@ function buildCreativeRun(context = {}) {
         ? 'running'
         : (run.status === 'paused' ? 'paused' : (run.status || 'idle'));
     const legilTask = run.legilTask || status.legilTask || {};
+    let targetQueueProgress = mergeCreativeTargetQueue(run, status.targetQueue);
+    if (runStatus === 'paused' && targetQueueProgress) {
+        targetQueueProgress = {
+            ...targetQueueProgress,
+            status: 'paused',
+            queueStatus: 'paused'
+        };
+    }
+    const legilProgress = normalizeCreativeLegilProgress(run, runStatus);
+    const displayMessage = creativeDisplayMessage(run, legilProgress, targetQueueProgress, runStatus);
     const sourceDirection = run.sourceDirection || {};
     const aggregate = run.aggregateTarget || {};
 
@@ -301,6 +382,14 @@ function buildCreativeRun(context = {}) {
         startedAt: pickText(run.startedAt),
         updatedAt: pickText(run.updatedAt),
         completedAt: pickText(run.completedAt),
+        targetQueue: targetQueueProgress,
+        targetQueueProgress,
+        legilProgress,
+        legilResult: run.legilResult || null,
+        promptQualityReport: run.promptQualityReport || null,
+        promptTotal: asNumber(run.promptTotal, 0),
+        promptTotalRaw: asNumber(run.promptTotalRaw, 0),
+        promptTotalRejected: asNumber(run.promptTotalRejected, 0),
         source: {
             type: aggregate && aggregate.source === 'material-brief' ? 'material-brief' : 'direction',
             directionId: pickText(sourceDirection.id, run.directionId),
@@ -313,13 +402,13 @@ function buildCreativeRun(context = {}) {
             acceptedPrompts: asNumber(run.promptTotal, 0),
             rejectedPrompts: asNumber(run.promptTotalRejected, 0),
             expectedImages: asNumber(legilTask.expectedImageTotal, 0),
-            savedImages: asNumber(run.assetReport && run.assetReport.newAssetCount, asNumber(run.legilProgress && run.legilProgress.saved, 0)),
-            failedPrompts: asNumber(run.legilProgress && run.legilProgress.failed, 0)
+            savedImages: asNumber(run.assetReport && run.assetReport.newAssetCount, asNumber(legilProgress && legilProgress.saved, 0)),
+            failedPrompts: asNumber(legilProgress && legilProgress.failed, 0)
         },
         current: {
             agent: agentLabel(phase, 'creative-auto'),
             taskId: pickText(legilTask.taskId),
-            message: pickText(run.message, run.currentAction, run.legilProgress && run.legilProgress.currentAction, status.targetQueue && status.targetQueue.message)
+            message: displayMessage
         },
         controls: {
             canPause: runStatus === 'running',
@@ -331,6 +420,185 @@ function buildCreativeRun(context = {}) {
     };
 }
 
+function safeRootDir(context = {}) {
+    return context.rootDir || context.ROOT_DIR || process.cwd();
+}
+
+function creativeKnowledgeDir(context = {}) {
+    return path.join(safeRootDir(context), 'data', 'creative-knowledge');
+}
+
+function readJsonSafe(filePath, fallback = null) {
+    try {
+        if (!filePath || !fs.existsSync(filePath)) return fallback;
+        const text = fs.readFileSync(filePath, 'utf8');
+        if (!text.trim()) return fallback;
+        return JSON.parse(text);
+    } catch {
+        return fallback;
+    }
+}
+
+function normalizeRunId(value) {
+    const text = String(value || '').trim();
+    if (!text) return '';
+    return path.basename(text).replace(/\.json$/i, '');
+}
+
+function runFilePath(context = {}, runId = '') {
+    const id = normalizeRunId(runId);
+    if (!id) return '';
+    return path.join(creativeKnowledgeDir(context), 'runs', `${id}.json`);
+}
+
+function readRunById(context = {}, runId = '') {
+    const filePath = runFilePath(context, runId);
+    return readJsonSafe(filePath, null);
+}
+
+function latestRunIdsByMtime(context = {}, limit = 3) {
+    const runsDir = path.join(creativeKnowledgeDir(context), 'runs');
+    try {
+        if (!fs.existsSync(runsDir)) return [];
+        return fs.readdirSync(runsDir)
+            .filter(fileName => fileName.endsWith('.json'))
+            .map(fileName => {
+                const fullPath = path.join(runsDir, fileName);
+                let mtimeMs = 0;
+                try {
+                    mtimeMs = fs.statSync(fullPath).mtimeMs;
+                } catch {
+                    mtimeMs = 0;
+                }
+                return {
+                    runId: normalizeRunId(fileName),
+                    mtimeMs
+                };
+            })
+            .sort((a, b) => b.mtimeMs - a.mtimeMs)
+            .slice(0, Math.max(1, limit))
+            .map(item => item.runId)
+            .filter(Boolean);
+    } catch {
+        return [];
+    }
+}
+
+function readSchedulerState(context = {}) {
+    return readJsonSafe(path.join(creativeKnowledgeDir(context), 'scheduler-state.json'), {
+        status: 'idle',
+        currentRunId: '',
+        lastRunId: '',
+        targetQueue: null
+    }) || {};
+}
+
+function compactCreativeRun(run = {}, options = {}) {
+    if (!run || !run.runId) return null;
+    const schedulerState = options.schedulerState || {};
+    const schedulerCurrentRunId = normalizeRunId(schedulerState.currentRunId);
+    const isCurrentRun = schedulerCurrentRunId && normalizeRunId(run.runId) === schedulerCurrentRunId;
+    const phase = normalizePhase(run.phase, isCurrentRun && run.status === 'running' ? 'creative_agent' : 'idle');
+    const runStatus = isCurrentRun && run.status === 'running'
+        ? 'running'
+        : (run.status === 'paused' ? 'paused' : (run.status || 'idle'));
+    const legilTask = run.legilTask || {};
+    let targetQueueProgress = mergeCreativeTargetQueue(run, schedulerState.targetQueue);
+    if (runStatus === 'paused' && targetQueueProgress) {
+        targetQueueProgress = {
+            ...targetQueueProgress,
+            status: 'paused',
+            queueStatus: 'paused'
+        };
+    }
+    const legilProgress = normalizeCreativeLegilProgress(run, runStatus);
+    const displayMessage = creativeDisplayMessage(run, legilProgress, targetQueueProgress, runStatus);
+    const sourceDirection = run.sourceDirection || {};
+    const aggregate = run.aggregateTarget || {};
+
+    return {
+        runId: pickText(run.runId, 'creative-auto'),
+        runType: 'creative-auto',
+        runTypeLabel: '新流程自动创意',
+        mode: runModeLabel(run),
+        status: runStatus,
+        phase,
+        phaseLabel: phaseLabel(phase),
+        agent: agentLabel(phase, 'creative-auto'),
+        progressPercent: creativeProgressPercent(run),
+        createdAt: pickText(run.createdAt),
+        startedAt: pickText(run.startedAt),
+        updatedAt: pickText(run.updatedAt),
+        completedAt: pickText(run.completedAt),
+        targetQueue: targetQueueProgress,
+        targetQueueProgress,
+        legilProgress,
+        legilResult: run.legilResult || null,
+        promptQualityReport: run.promptQualityReport || null,
+        promptTotal: asNumber(run.promptTotal, 0),
+        promptTotalRaw: asNumber(run.promptTotalRaw, 0),
+        promptTotalRejected: asNumber(run.promptTotalRejected, 0),
+        source: {
+            type: aggregate && aggregate.source === 'material-brief' ? 'material-brief' : 'direction',
+            directionId: pickText(sourceDirection.id, run.directionId),
+            directionPath: pickText(sourceDirection.path, sourceDirection.name, aggregate.path, run.directionPath),
+            materialRunId: pickText(run.materialRunId)
+        },
+        counts: {
+            candidateDirections: asNumber(run.candidateDirectionCount, asNumber(run.candidateDirections && run.candidateDirections.length, 0)),
+            rawPrompts: asNumber(run.promptTotalRaw, 0),
+            acceptedPrompts: asNumber(run.promptTotal, 0),
+            rejectedPrompts: asNumber(run.promptTotalRejected, 0),
+            expectedImages: asNumber(legilTask.expectedImageTotal, 0),
+            savedImages: asNumber(run.assetReport && run.assetReport.newAssetCount, asNumber(legilProgress && legilProgress.saved, 0)),
+            failedPrompts: asNumber(legilProgress && legilProgress.failed, 0)
+        },
+        current: {
+            agent: agentLabel(phase, 'creative-auto'),
+            taskId: pickText(legilTask.taskId),
+            message: displayMessage
+        },
+        controls: {
+            canPause: runStatus === 'running',
+            canResume: runStatus === 'paused' || run.status === 'paused',
+            canStop: runStatus === 'running'
+        },
+        errors: run.lastError ? [run.lastError] : [],
+        warnings: Array.isArray(run.warnings) ? run.warnings : []
+    };
+}
+
+function buildCreativeRunSummary(context = {}) {
+    const schedulerState = readSchedulerState(context);
+    const targetQueue = schedulerState.targetQueue || {};
+    const candidateIds = [
+        schedulerState.currentRunId,
+        targetQueue.currentRunId,
+        schedulerState.lastRunId,
+        targetQueue.lastRunId,
+        targetQueue.recoverableRunId,
+        ...latestRunIdsByMtime(context, 3)
+    ].map(normalizeRunId).filter(Boolean);
+
+    const seen = new Set();
+    const runs = [];
+    candidateIds.forEach(runId => {
+        if (seen.has(runId)) return;
+        seen.add(runId);
+        const run = readRunById(context, runId);
+        if (run && run.runId) runs.push(run);
+    });
+
+    if (!runs.length) return null;
+
+    const chosen = runs.find(run => run.status === 'running') ||
+        runs.find(run => run.status === 'paused') ||
+        runs.find(run => run.status === 'failed') ||
+        runs.sort((a, b) => Date.parse(b.updatedAt || b.completedAt || b.startedAt || b.createdAt || '') - Date.parse(a.updatedAt || a.completedAt || a.startedAt || a.createdAt || ''))[0];
+
+    return compactCreativeRun(chosen, { schedulerState });
+}
+
 function choosePrimaryRun(runs = []) {
     return runs.find(run => run && run.status === 'running') ||
         runs.find(run => run && run.status === 'paused') ||
@@ -340,9 +608,11 @@ function choosePrimaryRun(runs = []) {
 }
 
 function createRunStateService(context = {}) {
-    function getStatus() {
+    function buildUnifiedStatus(options = {}) {
         const legacyRun = buildLegacyRun(context);
-        const creativeRun = buildCreativeRun(context);
+        const creativeRun = options.summary === true
+            ? buildCreativeRunSummary(context)
+            : buildCreativeRun(context);
         const runs = [legacyRun, creativeRun].filter(Boolean);
         const activeRun = choosePrimaryRun(runs);
         const legilQueue = extractLegilQueue(context);
@@ -374,8 +644,21 @@ function createRunStateService(context = {}) {
         };
     }
 
+    function getStatus() {
+        return buildUnifiedStatus({ summary: false });
+    }
+
+    function getSummary() {
+        return {
+            ...buildUnifiedStatus({ summary: true }),
+            schemaVersion: 'unified-run-state-summary-v1',
+            summary: true
+        };
+    }
+
     return {
-        getStatus
+        getStatus,
+        getSummary
     };
 }
 

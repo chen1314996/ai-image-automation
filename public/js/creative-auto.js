@@ -1,4 +1,4 @@
-﻿// 运行一次自动创意：自动选题、Agent、Prompt Gate、Legil 和资产回流状态
+﻿// 运行一次自动创意：自动选题、创意助手、提示词质检、生图平台 和资产回流状态
 let creativeAutoCurrentRunId = '';
         let creativeAutoStatusInterval = null;
         let creativeAutoLastStatus = null;
@@ -11,26 +11,35 @@ let creativeAutoCurrentRunId = '';
         let creativeAutoTargetLevel = 'all';
         let creativeAutoExternalBrief = null;
         const CREATIVE_AUTO_MATERIAL_BRIEF_KEY = 'material-analysis-creative-brief-v1';
+        const CREATIVE_AUTO_ETA_STORAGE_KEY = 'creative-auto-eta-basis-v2';
+        const CREATIVE_AUTO_ETA_DEFAULT_MINUTES_PER_GROUP = 5;
+        const CREATIVE_AUTO_ETA_TARGET_SWITCH_BUFFER_MINUTES = 0.5;
+        const CREATIVE_AUTO_ETA_MIN_SAMPLE_MINUTES = 3;
+        const CREATIVE_AUTO_ETA_MAX_SAMPLE_MINUTES = 60;
+        const creativeAutoEtaStateByRun = new Map();
         const CREATIVE_AUTO_TARGET_QUEUE_DEFAULTS = {
-            newDirectionsPerSource: 3,
-            promptGroupsPerNewDirection: 4
+            newDirectionsPerSource: 4,
+            promptGroupsPerNewDirection: 2,
+            diversityMode: 'balanced',
+            historyScope: 'recent30',
+            candidateMultiplier: 2
         };
 
         const CREATIVE_AUTO_MODE_DEFAULTS = {
             agentOnly: {
-                label: '只生成 prompt',
+                label: '只生成提示词',
                 maxPrompts: 25,
                 agentOnly: true,
                 fullScale: false,
                 unlimitedPrompts: true,
-                confirmNote: '只运行 Agent 和 Prompt Gate，不调用 Legil，不生成图片；Prompt Gate 接受多少就保留多少。'
+                confirmNote: '只运行创意助手和提示词质检，不调用生图平台，不生成图片；提示词质检接受多少就保留多少。'
             },
             smoke: {
                 label: '小批量验证',
                 maxPrompts: 1,
                 agentOnly: false,
                 fullScale: false,
-                confirmNote: '提交 1 条通过 Prompt Gate 的 prompt，预计生成约 4 张图。'
+                confirmNote: '提交 1 条通过质检的提示词，预计生成约 4 张图。'
             },
             full: {
                 label: '持续生图',
@@ -38,13 +47,21 @@ let creativeAutoCurrentRunId = '';
                 agentOnly: false,
                 fullScale: true,
                 unlimitedPrompts: true,
-                confirmNote: '不按 25 条或每日图片额度截断，Prompt Gate 接受多少就持续提交多少。'
+                confirmNote: '不按 25 条或每日图片额度截断，提示词质检接受多少就持续提交多少。'
             }
         };
 
         function creativeAutoSetText(id, text) {
             const el = document.getElementById(id);
             if (el) el.textContent = text;
+        }
+
+        function updateCreativeMiniStatus({ stage, source, progress, state } = {}) {
+            creativeAutoSetText('creativeMiniStage', stage || '待启动');
+            creativeAutoSetText('creativeMiniSource', source || '未导入方向');
+            creativeAutoSetText('creativeMiniProgress', progress || '0 / 0');
+            const status = document.getElementById('creativeMiniStatus');
+            if (status && state) status.dataset.state = state;
         }
 
         function creativeAutoBriefData(payload = creativeAutoExternalBrief) {
@@ -54,7 +71,7 @@ let creativeAutoCurrentRunId = '';
 
         function creativeAutoBriefTitle(payload = creativeAutoExternalBrief) {
             const data = creativeAutoBriefData(payload);
-            if (!data) return '素材分析 brief';
+            if (!data) return '上游 brief';
             const targetCount = getCreativeAutoBriefTargets(payload).length;
             if (data.packageType === 'creative-target-package' || data.target === 'source-directions') {
                 return `待拓展方向包：${targetCount} 个原始方向`;
@@ -62,6 +79,29 @@ let creativeAutoCurrentRunId = '';
             if (data.target === 'weekly-plan') return `${data.projectName || '--'} / ${data.weekId || '--'} 下周创意计划`;
             if (data.target === 'direction') return `方向 brief：${data.directionPath || data.directionKey || '--'}`;
             return `素材 brief：${data.materialName || data.materialId || '--'}`;
+        }
+
+        function creativeAutoSourceName(payload = creativeAutoExternalBrief) {
+            const data = creativeAutoBriefData(payload) || {};
+            const targets = getCreativeAutoBriefTargets(payload);
+            const source = payload?.source || data.source || targets[0]?.source || '';
+            if (source === 'task-workbook') return '方案迭代';
+            if (source === 'creative-knowledge') return '方向库';
+            if (source === 'material-analysis') return '素材分析';
+            return source || '素材分析';
+        }
+
+        function renderCreativeAutoSourceHint(payload = creativeAutoExternalBrief) {
+            const hint = document.getElementById('creativeSourceHint');
+            if (!hint) return;
+            const data = creativeAutoBriefData(payload);
+            const targets = getCreativeAutoBriefTargets(payload);
+            if (!data && !targets.length) {
+                hint.textContent = '来源任务包：等待从素材分析或方案迭代送入方向。';
+                return;
+            }
+            const count = targets.length || 1;
+            hint.textContent = `来源任务包：${creativeAutoSourceName(payload)} · ${count} 个原始方向`;
         }
 
         function sanitizeCreativeAutoMaterialBriefPayload(payload) {
@@ -111,13 +151,15 @@ let creativeAutoCurrentRunId = '';
             if (!data) {
                 panel.hidden = true;
                 body.textContent = '';
+                renderCreativeAutoSourceHint(null);
                 return;
             }
+            renderCreativeAutoSourceHint(payload);
             panel.hidden = false;
             body.textContent = '';
             const creativeTargets = getCreativeAutoBriefTargets(payload);
             [
-                ['来源', data.source || payload.source || 'material-analysis'],
+                ['来源', creativeAutoSourceName(payload)],
                 ['标题', creativeAutoBriefTitle(payload)],
                 ['任务包', data.packageType ? `${data.packageType} / ${creativeTargets.length || 0} 个目标` : ''],
                 ['方向', data.directionPath || data.directionKey],
@@ -184,7 +226,7 @@ let creativeAutoCurrentRunId = '';
             renderCreativeAutoMaterialBrief(null);
             renderCreativeAutoTargetQueue();
             updateCreativeS3Flow(creativeAutoLastRun, creativeAutoLastStatus);
-            showToast('已清空素材分析 brief');
+            showToast('已清空上游 brief');
         }
 
         function clearCreativeAutoManualDirectionSelection() {
@@ -201,11 +243,11 @@ let creativeAutoCurrentRunId = '';
             const checked = document.querySelector('input[name="creativeAutoPromptMode"]:checked');
             if (checked && CREATIVE_AUTO_MODE_DEFAULTS[checked.value]) return checked.value;
             if (document.getElementById('creativeAutoFullScale')?.checked === true) return 'full';
-            return 'agentOnly';
+            return 'full';
         }
 
         function getCreativeAutoModeConfig(mode = getCreativeAutoPromptMode()) {
-            return CREATIVE_AUTO_MODE_DEFAULTS[mode] || CREATIVE_AUTO_MODE_DEFAULTS.agentOnly;
+            return CREATIVE_AUTO_MODE_DEFAULTS[mode] || CREATIVE_AUTO_MODE_DEFAULTS.full;
         }
 
         function setCreativeAutoInfo(className, text) {
@@ -222,6 +264,12 @@ let creativeAutoCurrentRunId = '';
         }
 
         function getCreativeAutoTargetQueueDefaults() {
+            const diversityMode = document.getElementById('creativeAutoDiversityMode')?.value || CREATIVE_AUTO_TARGET_QUEUE_DEFAULTS.diversityMode;
+            const historyScope = document.getElementById('creativeAutoHistoryScope')?.value || CREATIVE_AUTO_TARGET_QUEUE_DEFAULTS.historyScope;
+            const candidateMultiplier = clampCreativeAutoSmallCount(
+                document.getElementById('creativeAutoCandidateMultiplier')?.value,
+                CREATIVE_AUTO_TARGET_QUEUE_DEFAULTS.candidateMultiplier
+            );
             return {
                 newDirectionsPerSource: clampCreativeAutoSmallCount(
                     document.getElementById('creativeAutoNewDirectionsPerSource')?.value,
@@ -230,7 +278,10 @@ let creativeAutoCurrentRunId = '';
                 promptGroupsPerNewDirection: clampCreativeAutoSmallCount(
                     document.getElementById('creativeAutoPromptsPerNewDirection')?.value,
                     CREATIVE_AUTO_TARGET_QUEUE_DEFAULTS.promptGroupsPerNewDirection
-                )
+                ),
+                diversityMode: ['stable', 'balanced', 'explore'].includes(diversityMode) ? diversityMode : CREATIVE_AUTO_TARGET_QUEUE_DEFAULTS.diversityMode,
+                historyScope: ['recent10', 'recent30', 'all'].includes(historyScope) ? historyScope : CREATIVE_AUTO_TARGET_QUEUE_DEFAULTS.historyScope,
+                candidateMultiplier: Math.max(1, Math.min(5, candidateMultiplier))
             };
         }
 
@@ -317,10 +368,10 @@ let creativeAutoCurrentRunId = '';
             const manualDirection = getCreativeAutoManualDirectionSelection();
 
             if (briefTargets.length > 1 && manualDirection.ids.length) {
-                return `素材分析已带入 ${briefTargets.length} 个目标，但当前仍有手动方向选择。请先清空方向库选择，避免只跑 1 个方向。`;
+                return `上游已带入 ${briefTargets.length} 个目标，但当前仍有手动方向选择。请先清空方向库选择，避免只跑 1 个方向。`;
             }
             if (briefTargets.length > 1 && queueTargets.length !== briefTargets.length) {
-                return `素材分析目标数是 ${briefTargets.length}，当前待拓展队列只有 ${queueTargets.length}。请重新从素材分析页送入目标包后再启动。`;
+                return `上游目标数是 ${briefTargets.length}，当前待拓展队列只有 ${queueTargets.length}。请重新从素材分析或方案迭代页送入目标包后再启动。`;
             }
             return '';
         }
@@ -329,23 +380,33 @@ let creativeAutoCurrentRunId = '';
             return getCreativeAutoRunSettings().maxPrompts;
         }
 
+        function getCreativeAutoLegilOutputQuantity() {
+            const generationSettings = (typeof config !== 'undefined' && config && config.creativeLegilGeneration)
+                ? config.creativeLegilGeneration
+                : {};
+            const outputQuantity = Number(generationSettings.outputQuantity);
+            return Number.isFinite(outputQuantity) && outputQuantity > 0 ? outputQuantity : 1;
+        }
+
         function getCreativeAutoRunSettings() {
             const mode = getCreativeAutoPromptMode();
-            const config = getCreativeAutoModeConfig(mode);
+            const modeConfig = getCreativeAutoModeConfig(mode);
             const queuePromptCount = getCreativeAutoTargetQueueExpectedPromptCount();
-            const unlimitedPrompts = config.unlimitedPrompts === true;
-            const maxPrompts = config.fullScale
+            const unlimitedPrompts = modeConfig.unlimitedPrompts === true;
+            const maxPrompts = modeConfig.fullScale
                 ? Math.max(25, queuePromptCount || 25)
-                : (queuePromptCount && config.agentOnly ? queuePromptCount : config.maxPrompts);
+                : (queuePromptCount && modeConfig.agentOnly ? queuePromptCount : modeConfig.maxPrompts);
+            const outputQuantity = getCreativeAutoLegilOutputQuantity();
             return {
                 mode,
-                label: config.label,
+                label: modeConfig.label,
                 maxPrompts,
                 unlimitedPrompts,
-                fullScale: config.fullScale,
-                agentOnly: config.agentOnly,
-                expectedImages: config.agentOnly ? 0 : (unlimitedPrompts ? null : maxPrompts * 4),
-                confirmNote: config.confirmNote
+                fullScale: modeConfig.fullScale,
+                agentOnly: modeConfig.agentOnly,
+                outputQuantity,
+                expectedImages: modeConfig.agentOnly ? 0 : (unlimitedPrompts ? null : maxPrompts * outputQuantity),
+                confirmNote: modeConfig.confirmNote
             };
         }
 
@@ -358,8 +419,15 @@ let creativeAutoCurrentRunId = '';
         }
 
         function getCreativeAutoDirectionLabel(direction = null, fallbackId = '') {
-            if (!direction) return fallbackId || '';
+            if (!direction) return formatCreativeAutoFallbackDirectionLabel(fallbackId);
             return direction.path || direction.name || direction.id || fallbackId || '';
+        }
+
+        function formatCreativeAutoFallbackDirectionLabel(directionId = '') {
+            const id = String(directionId || '').trim();
+            if (!id) return '';
+            if (/^direction_[a-z0-9]+$/i.test(id)) return `方向 ${id.slice(-6).toUpperCase()}`;
+            return id;
         }
 
         function getCreativeAutoDirectionOrder(direction = {}, fallback = 999999) {
@@ -370,7 +438,7 @@ let creativeAutoCurrentRunId = '';
         function getCreativeAutoManualInputDirectionIds() {
             const enabled = document.getElementById('creativeAutoManualDirection')?.checked === true;
             if (!enabled || creativeAutoSelectedTargets.length) return [];
-            return creativeAutoUnique(String(document.getElementById('creativeAutoDirectionId')?.value || '').split(/[,锛孿s]+/));
+            return creativeAutoUnique(String(document.getElementById('creativeAutoDirectionId')?.dataset.directionIds || '').split(/[,，\s]+/));
         }
 
         function getCreativeAutoSelectedDirectionIds() {
@@ -428,7 +496,7 @@ let creativeAutoCurrentRunId = '';
             const manualDirection = getCreativeAutoManualDirectionSelection();
             if (manualDirection.ids.length) return `手动 ${manualDirection.label}`;
             const briefLabel = getCreativeAutoBriefTargetLabel();
-            if (briefLabel) return `素材分析 ${briefLabel}`;
+            if (briefLabel) return `${creativeAutoSourceName()} ${briefLabel}`;
             return getCreativeAutoSuggestionLabel();
         }
 
@@ -485,20 +553,21 @@ let creativeAutoCurrentRunId = '';
                     : (settings.unlimitedPrompts ? `${settings.label}，不限额` : `${settings.label}，预计 ${settings.expectedImages} 张`)
             );
 
-            let activeIndex = preflight.ok === false ? 0 : 2;
+            let activeIndex = preflight.ok === false ? 0 : 1;
             let hasError = false;
+            const overallComplete = isCreativeAutoOverallComplete(run || {});
             if (run) {
                 if (run.status === 'failed') {
-                    activeIndex = 3;
+                    activeIndex = 2;
                     hasError = true;
-                } else if (run.status === 'completed') {
-                    activeIndex = 4;
+                } else if (overallComplete) {
+                    activeIndex = 3;
                 } else if (run.status === 'paused') {
-                    activeIndex = 3;
+                    activeIndex = 2;
                 } else if (String(run.phase || '').startsWith('agent_')) {
-                    activeIndex = 3;
+                    activeIndex = 1;
                 } else if (String(run.phase || '').startsWith('legil_')) {
-                    activeIndex = 3;
+                    activeIndex = 2;
                 }
             }
             updateCreativeS3StepState(activeIndex, hasError);
@@ -520,15 +589,15 @@ let creativeAutoCurrentRunId = '';
             const queueLabel = getCreativeAutoRunQueueLabel(run);
             creativeAutoSetText(
                 'creativeS3ProgressText',
-                (run.status === 'completed'
+                (overallComplete
                     ? `完成：通过 ${accepted}，丢弃 ${rejected}，保存 ${saved}`
                     : `${run.phase || run.status || '运行中'}：通过 ${accepted}，丢弃 ${rejected}，失败 ${failed}`) +
                     (queueLabel ? `；${queueLabel}` : '')
             );
             creativeAutoSetText(
                 'creativeS3ReviewText',
-                run.status === 'completed'
-                    ? (run.agentOnly ? '仅 prompt，无图片审核' : `可审核 ${saved || Number(run.assets?.newAssetCount) || 0} 张`)
+                overallComplete
+                    ? (run.agentOnly ? '仅提示词，无图片审核' : `可审核 ${saved || Number(run.assets?.newAssetCount) || 0} 张`)
                     : '等待运行完成'
             );
             updateCreativeS3ReviewPanel(run);
@@ -671,7 +740,10 @@ let creativeAutoCurrentRunId = '';
             const manualToggle = document.getElementById('creativeAutoManualDirection');
             const input = document.getElementById('creativeAutoDirectionId');
             if (manualToggle) manualToggle.checked = selection.ids.length > 0;
-            if (input) input.value = selection.ids.join(', ');
+            if (input) {
+                input.value = selection.label || '';
+                input.dataset.directionIds = selection.ids.join(',');
+            }
         }
 
         function renderCreativeAutoSelectedTargets() {
@@ -681,7 +753,7 @@ let creativeAutoCurrentRunId = '';
             if (!creativeAutoSelectedTargets.length) {
                 const briefLabel = getCreativeAutoBriefTargetLabel();
                 container.textContent = briefLabel
-                    ? `未手动选择，默认使用素材分析 brief：${briefLabel}`
+                    ? `未手动选择，默认使用${creativeAutoSourceName()}方向包：${briefLabel}`
                     : '未选择，默认使用自动推荐。';
                 return;
             }
@@ -690,7 +762,7 @@ let creativeAutoCurrentRunId = '';
                 chip.type = 'button';
                 chip.className = 'creative-selected-target-chip';
                 chip.textContent = `${target.level === '细分方向' ? '方向' : `${target.level}级标签`}：${target.label}`;
-                chip.title = '鐐瑰嚮绉婚櫎';
+                chip.title = '点击移除';
                 chip.addEventListener('click', () => toggleCreativeAutoTarget(target, false));
                 container.appendChild(chip);
             });
@@ -704,14 +776,24 @@ let creativeAutoCurrentRunId = '';
 
             const targets = getCreativeAutoTargetQueueTargets();
             const expectedPrompts = getCreativeAutoTargetQueueExpectedPromptCount();
+            const directionDefaults = getCreativeAutoTargetQueueDefaults();
+            const expectedCandidateDirections = targets.length * directionDefaults.newDirectionsPerSource * directionDefaults.candidateMultiplier;
+            const expectedSelectedDirections = targets.length * directionDefaults.newDirectionsPerSource;
             const manualSelection = getCreativeAutoManualDirectionSelection();
             const sourceLabel = manualSelection.ids.length
-                ? '方向库手动选择'
-                : (getCreativeAutoBriefTargets().length ? '素材分析' : (targets.length ? '方向库手动选择' : '自动推荐'));
+                ? '方向库选择'
+                : (getCreativeAutoBriefTargets().length ? creativeAutoSourceName() : (targets.length ? '方向库选择' : '自动推荐'));
 
             meta.textContent = targets.length
-                ? `${sourceLabel}：${targets.length} 个原始方向，预计 ${expectedPrompts} 条 prompt。数量在这里统一调整。`
-                : '默认使用自动推荐；从素材分析或方向库加入后在这里统一调整。';
+                ? `${sourceLabel}：${targets.length} 个原始方向，先生成 ${expectedCandidateDirections} 个候选方向，筛选 ${expectedSelectedDirections} 个新方向，预计 ${expectedPrompts} 条提示词。数量在这里统一调整。`
+                : '默认使用自动推荐；从素材分析、方案迭代或方向库加入后在这里统一调整。';
+            renderCreativeAutoSourceHint(creativeAutoExternalBrief);
+            updateCreativeMiniStatus({
+                stage: creativeAutoLastRun ? getCreativeAutoStageText(creativeAutoLastRun) : '待启动',
+                source: targets.length ? `${sourceLabel} · ${targets.length} 个方向` : '未导入方向',
+                progress: targets.length ? `0 / ${targets.length}` : '0 / 0',
+                state: targets.length ? 'ready' : 'idle'
+            });
             list.textContent = '';
 
             if (!targets.length) {
@@ -764,6 +846,7 @@ let creativeAutoCurrentRunId = '';
                 };
             const baseData = creativeAutoBriefData(baseEnvelope) || {};
             const settings = getCreativeAutoTargetQueueDefaults();
+            const candidateDirectionsPerSource = settings.newDirectionsPerSource * settings.candidateMultiplier;
             const enrichedTargets = targets.map((target, index) => {
                 const targetId = creativeAutoQueueTargetId(target, index);
                 return {
@@ -772,9 +855,13 @@ let creativeAutoCurrentRunId = '';
                     targetType: target.targetType || 'source-direction',
                     selected: true,
                     newDirectionsPerSource: settings.newDirectionsPerSource,
+                    candidateDirectionsPerSource,
                     promptGroupsPerNewDirection: settings.promptGroupsPerNewDirection,
+                    diversityMode: settings.diversityMode,
+                    historyScope: settings.historyScope,
+                    candidateMultiplier: settings.candidateMultiplier,
                     expectedPromptCount: settings.newDirectionsPerSource * settings.promptGroupsPerNewDirection,
-                    task: `输出 ${settings.newDirectionsPerSource} 个新方向，每个新方向 ${settings.promptGroupsPerNewDirection} 组 Legil 提示词`
+                    task: `先生成 ${candidateDirectionsPerSource} 个候选方向，筛选 ${settings.newDirectionsPerSource} 个新方向，每个新方向 ${settings.promptGroupsPerNewDirection} 组生图提示词`
                 };
             });
             const source = baseData.source || baseEnvelope.source || enrichedTargets[0]?.source || 'creative-auto';
@@ -788,7 +875,7 @@ let creativeAutoCurrentRunId = '';
                 targetCount: enrichedTargets.length,
                 creativeTargets: enrichedTargets,
                 targets: enrichedTargets,
-                request: '请逐个执行 creativeTargets；每个原始方向的新方向数和每个新方向提示词数以 target 字段为准，只生成 Prompt，不调用 Legil。'
+                request: '请逐个执行 creativeTargets；每个原始方向的新方向数和每个新方向提示词数以 target 字段为准，只生成提示词，不调用生图平台。'
             };
 
             return {
@@ -856,6 +943,8 @@ let creativeAutoCurrentRunId = '';
                     const img = document.createElement('img');
                     img.src = image.imageUrl;
                     img.alt = image.fileName || target.label;
+                    img.loading = 'lazy';
+                    img.decoding = 'async';
                     refs.appendChild(img);
                 });
             } else {
@@ -934,24 +1023,12 @@ let creativeAutoCurrentRunId = '';
                 return;
             }
 
-            const tagTargets = targets
-                .filter(target => target.type === 'tag')
-                .sort((a, b) => Number(a.level) - Number(b.level) || Number(a.order) - Number(b.order));
-            const directionTargets = targets
-                .filter(target => target.type === 'direction')
-                .sort((a, b) => Number(a.order) - Number(b.order));
-
-            const tagSection = document.createElement('div');
-            tagSection.className = 'creative-direction-section';
-            tagSection.appendChild(document.createElement('strong')).textContent = '标签聚合迭代';
-            tagTargets.forEach(target => renderCreativeAutoTargetCard(tagSection, target));
-            container.appendChild(tagSection);
-
-            const directionSection = document.createElement('div');
-            directionSection.className = 'creative-direction-section';
-            directionSection.appendChild(document.createElement('strong')).textContent = '细分方向迭代';
-            directionTargets.forEach(target => renderCreativeAutoTargetCard(directionSection, target));
-            container.appendChild(directionSection);
+            const sortedTargets = targets.slice().sort((a, b) => {
+                const aLevel = a.type === 'tag' ? Number(a.level) || 0 : 9;
+                const bLevel = b.type === 'tag' ? Number(b.level) || 0 : 9;
+                return aLevel - bLevel || Number(a.order) - Number(b.order);
+            });
+            sortedTargets.forEach(target => renderCreativeAutoTargetCard(container, target));
         }
 
         function setCreativeAutoSelectedDirection(directionId = '') {
@@ -1016,8 +1093,10 @@ let creativeAutoCurrentRunId = '';
             const button = document.getElementById('creativeS3ReviewBtn');
             const title = document.getElementById('creativeS3ReviewTitle');
             const hint = document.getElementById('creativeS3ReviewHint');
+            const panel = document.getElementById('creativeS3ReviewPanel');
             if (!button || !title || !hint) return;
             button.onclick = null;
+            if (panel) panel.classList.remove('is-ready');
 
             if (!run || !run.runId) {
                 button.disabled = true;
@@ -1033,18 +1112,20 @@ let creativeAutoCurrentRunId = '';
                 || Number(run.assets?.newAssetCount)
                 || 0;
             if (run.status === 'completed' && !run.agentOnly) {
+                if (panel) panel.classList.add('is-ready');
                 button.disabled = false;
                 button.textContent = '打开本轮审核';
                 button.onclick = () => openCreativeReviewForRun(run.runId);
                 title.textContent = '结果审核';
-                hint.textContent = `runId ${run.runId}，已保存 ${saved} 张；点击后筛选本轮资产。`;
+                hint.textContent = `任务 ${run.runId}，已保存 ${saved} 张；点击后筛选本轮资产。`;
             } else if (run.status === 'completed' && run.agentOnly) {
                 const accepted = Number(run.promptTotal) || (Array.isArray(run.prompts) ? run.prompts.length : 0);
+                if (panel && accepted > 0) panel.classList.add('is-ready');
                 button.disabled = accepted <= 0;
-                button.textContent = '继续用 Prompt 生图';
+                button.textContent = '继续用提示词生图';
                 button.onclick = () => continueCreativeAutoRunToLegil(run.runId);
-                title.textContent = 'Prompt Gate 已完成';
-                hint.textContent = `runId ${run.runId} 已保留 ${accepted} 条 prompt；可先在下方查看，也可以继续调用 Legil 生成图片。`;
+                title.textContent = '提示词质检已完成';
+                hint.textContent = `任务 ${run.runId} 已保留 ${accepted} 条提示词；可先在下方查看，也可以继续调用生图平台生成图片。`;
             } else {
                 button.disabled = true;
                 button.textContent = '打开本轮审核';
@@ -1061,7 +1142,7 @@ let creativeAutoCurrentRunId = '';
             if (!runs.length) {
                 const empty = document.createElement('div');
                 empty.className = 'creative-s3-empty';
-                empty.textContent = '暂无历史 run。';
+                empty.textContent = '暂无历史任务。';
                 container.appendChild(empty);
                 return;
             }
@@ -1074,7 +1155,7 @@ let creativeAutoCurrentRunId = '';
             const meta = document.createElement('div');
             meta.className = 'creative-s3-history-meta creative-s3-history-toolbar';
             const label = document.createElement('span');
-            label.textContent = `显示 ${currentStart}-${currentEnd} / ${total} 条 run，面板高度固定为 2 条`;
+            label.textContent = `显示 ${currentStart}-${currentEnd} / ${total} 条任务，面板高度固定为 2 条`;
             meta.appendChild(label);
 
             const pager = document.createElement('div');
@@ -1111,7 +1192,7 @@ let creativeAutoCurrentRunId = '';
                 const top = document.createElement('div');
                 top.className = 'creative-run-history-top';
                 const id = document.createElement('strong');
-                id.textContent = run.runId || '未知 run';
+                id.textContent = run.runId || '未知任务';
                 const pill = document.createElement('span');
                 pill.className = `creative-s3-status-pill ${run.status === 'completed' ? 'is-ok' : (run.status === 'failed' ? 'is-error' : 'is-running')}`;
                 pill.textContent = `${run.status || '--'} / ${run.phase || '--'}`;
@@ -1127,7 +1208,7 @@ let creativeAutoCurrentRunId = '';
                 const stats = document.createElement('div');
                 stats.className = 'creative-run-history-stats';
                 [
-                    ['prompt', `${run.promptTotal || 0}/${run.promptTotalRaw || run.promptTotal || 0}`],
+                    ['提示词', `${run.promptTotal || 0}/${run.promptTotalRaw || run.promptTotal || 0}`],
                     ['丢弃', run.promptTotalRejected || 0],
                     ['保存', run.savedCount || 0],
                     ['资产', run.assetCount || (Array.isArray(run.assetIds) ? run.assetIds.length : 0)]
@@ -1151,7 +1232,7 @@ let creativeAutoCurrentRunId = '';
                 reviewBtn.type = 'button';
                 reviewBtn.className = 'creative-mini-btn';
                 if (run.agentOnly === true) {
-                    reviewBtn.textContent = '查看 Prompt';
+                    reviewBtn.textContent = '查看提示词';
                     reviewBtn.addEventListener('click', () => loadCreativeAutoRunFromHistory(run.runId));
                     const continueBtn = document.createElement('button');
                     continueBtn.type = 'button';
@@ -1182,10 +1263,53 @@ let creativeAutoCurrentRunId = '';
             if (hasLegacyCreativeResume()) return true;
             if (!run || !run.runId) return false;
             if (run.status === 'paused') return true;
+            const queue = run.targetQueueProgress || run.targetQueue || null;
+            if (
+                run.status === 'completed' &&
+                String(run.phase || '') === 'legil_completed' &&
+                queue &&
+                String(queue.nextAction || '') === 'advance_next_target'
+            ) {
+                return true;
+            }
             return run.status === 'completed' && run.phase === 'agent_completed' && Number(run.promptTotal) > 0;
         }
 
+        function isCreativeAutoPausedRun(run = creativeAutoLastRun) {
+            return String(run && run.status || '').toLowerCase() === 'paused' ||
+                String(run && run.phase || '').toLowerCase() === 'paused' ||
+                String(run && run.phase || '').toLowerCase() === 'legil_paused';
+        }
+
+        function isCreativeAutoStaleRunningText(value) {
+            const text = String(value || '').trim();
+            if (!text) return false;
+            if (/已暂停|暂停|已停止|停止|失败|完成|未完成|可继续|继续之前任务/.test(text)) return false;
+            return /正在生成|正在处理|运行中|生成第\s*\d+|等待.*开始|排队中|running|queued/i.test(text);
+        }
+
+        function pickCreativeAutoDisplayText(...values) {
+            for (const value of values) {
+                const text = String(value || '').trim();
+                if (text && !isCreativeAutoStaleRunningText(text)) return text;
+            }
+            return '';
+        }
+
+        function getCreativeAutoDisplayMessage(run = {}, legil = run.legilProgress || {}) {
+            if (isCreativeAutoPausedRun(run)) {
+                return pickCreativeAutoDisplayText(
+                    run.message,
+                    run.currentAction,
+                    legil && legil.currentAction,
+                    run.legilResult && run.legilResult.message
+                ) || '任务已暂停，可继续之前任务';
+            }
+            return run.message || run.currentAction || (legil && legil.currentAction) || '自动创意运行中...';
+        }
+
         function getCreativeAutoLiveLegilTask(run = creativeAutoLastRun) {
+            if (run && String(run.status || '').toLowerCase() !== 'running') return null;
             const task = creativeAutoLastStatus && creativeAutoLastStatus.legilTask;
             if (!task || task.running !== true || task.taskType !== 'creative-batch') return null;
 
@@ -1202,49 +1326,93 @@ let creativeAutoCurrentRunId = '';
             const refreshBtn = document.getElementById('creativeAutoRefreshBtn');
             const resumeBtn = document.getElementById('creativeAutoResumeBtn');
             const newTaskBtn = document.getElementById('creativeAutoNewTaskBtn');
+            const stickyBtn = document.getElementById('creativeStickyPrimaryBtn');
+            const runStatus = String(run && run.status || '').toLowerCase();
             const phase = String(run && run.phase || '');
             const liveLegilTask = getCreativeAutoLiveLegilTask(run);
             const liveLegilRunning = Boolean(liveLegilTask);
             const isStopping = (running && (phase.includes('stopping') || phase.includes('stop'))) ||
                 (liveLegilTask && liveLegilTask.stopRequested === true);
             const queue = run && (run.targetQueueProgress || run.targetQueue);
-            const queueRunning = queue && String(queue.queueStatus || queue.status || '') === 'running';
-            const effectivelyRunning = running || queueRunning || liveLegilRunning;
+            const runRunning = running === true || runStatus === 'running';
+            const queueRunning = runRunning && queue && String(queue.queueStatus || queue.status || '') === 'running';
+            const effectivelyRunning = runRunning || queueRunning || liveLegilRunning;
+            const canResume = !effectivelyRunning && canResumeCreativeAutoRun(run);
             if (runBtn) {
+                runBtn.hidden = canResume;
                 runBtn.disabled = effectivelyRunning;
-                runBtn.textContent = effectivelyRunning ? '运行中...' : '运行一次自动创意';
+                runBtn.textContent = effectivelyRunning ? '运行中...' : '开始创意拓展产图';
             }
             if (stopBtn) {
+                stopBtn.hidden = !effectivelyRunning;
                 stopBtn.disabled = !effectivelyRunning || isStopping;
                 stopBtn.textContent = isStopping ? '停止中...' : '停止任务';
             }
             if (refreshBtn) refreshBtn.disabled = effectivelyRunning;
-            if (resumeBtn) resumeBtn.disabled = effectivelyRunning || !canResumeCreativeAutoRun(run);
-            if (newTaskBtn) newTaskBtn.disabled = effectivelyRunning;
+            if (resumeBtn) {
+                resumeBtn.hidden = !canResume;
+                resumeBtn.disabled = !canResume;
+            }
+            if (newTaskBtn) {
+                newTaskBtn.hidden = !canResume;
+                newTaskBtn.disabled = !canResume || effectivelyRunning;
+                newTaskBtn.textContent = '新任务';
+            }
+            if (stickyBtn) {
+                stickyBtn.classList.toggle('btn-danger', effectivelyRunning);
+                stickyBtn.classList.toggle('btn-primary', !effectivelyRunning);
+                stickyBtn.disabled = isStopping;
+                if (effectivelyRunning) {
+                    stickyBtn.textContent = isStopping ? '停止中...' : '停止任务';
+                    stickyBtn.dataset.creativeStickyAction = 'stop';
+                } else if (canResume) {
+                    stickyBtn.textContent = '继续产图';
+                    stickyBtn.dataset.creativeStickyAction = 'resume';
+                } else {
+                    stickyBtn.textContent = '开始产图';
+                    stickyBtn.dataset.creativeStickyAction = 'start';
+                }
+            }
         }
 
-        function renderCreativeAutoChecks(preflight = {}) {
-            const container = document.getElementById('creativeAutoChecks');
-            if (!container) return;
-            container.textContent = '';
-
-            const checks = Array.isArray(preflight.checks) ? preflight.checks : [];
-            if (checks.length === 0) {
-                const empty = document.createElement('span');
-                empty.className = 'creative-auto-check is-warning';
-                empty.textContent = '未读取检查项';
-                container.appendChild(empty);
+        function handleCreativeStickyPrimaryAction() {
+            const action = document.getElementById('creativeStickyPrimaryBtn')?.dataset.creativeStickyAction || 'start';
+            if (action === 'stop') {
+                stopCreativeAutoRun();
                 return;
             }
+            if (action === 'resume') {
+                resumeCreativeAutoRun();
+                return;
+            }
+            startCreativeAutoRun();
+        }
 
-            checks.forEach(check => {
-                const item = document.createElement('span');
-                item.className = `creative-auto-check ${check.ok ? 'is-ok' : (check.level === 'error' ? 'is-error' : 'is-warning')}`;
-                item.textContent = `${check.label || check.id}: ${check.ok ? '通过' : '待处理'}`;
-                if (check.path || check.actual) {
+        window.handleCreativeStickyPrimaryAction = handleCreativeStickyPrimaryAction;
+
+        function renderCreativeAutoChecks(preflight = {}) {
+            const checks = Array.isArray(preflight.checks) ? preflight.checks : [];
+            const visibleIds = new Set([
+                'knowledgeImported',
+                'outputFolderWritable',
+                'referenceFolderExists',
+                'browserModeConfigured'
+            ]);
+            const checkMap = new Map(checks
+                .filter(check => visibleIds.has(String(check.id || '')))
+                .map(check => [String(check.id || ''), check]));
+
+            document.querySelectorAll('[data-creative-check-id]').forEach(item => {
+                const check = checkMap.get(item.dataset.creativeCheckId || '');
+                const stateClass = check
+                    ? (check.ok ? 'status-online' : (check.level === 'error' ? 'status-offline' : 'status-busy'))
+                    : 'status-busy';
+                item.className = `status-item product-status-item creative-check-status-item ${stateClass}`;
+                if (check?.path || check?.actual) {
                     item.title = check.path || check.actual;
+                } else {
+                    item.removeAttribute('title');
                 }
-                container.appendChild(item);
             });
         }
 
@@ -1254,6 +1422,7 @@ let creativeAutoCurrentRunId = '';
             const next = data.suggestion && data.suggestion.next ? data.suggestion.next : null;
             const activeRun = data.activeRun || null;
             const resumableRun = data.resumableRun || null;
+            const latestRun = data.latestRun || null;
             creativeAutoLastStatus = data;
             creativeAutoLastSuggestion = next;
 
@@ -1280,7 +1449,7 @@ let creativeAutoCurrentRunId = '';
             if (directionEl) {
                 const briefLabel = getCreativeAutoBriefTargetLabel();
                 if (briefLabel) {
-                    directionEl.textContent = `素材分析 brief 指定：${briefLabel}`;
+                    directionEl.textContent = `${creativeAutoSourceName()}指定：${briefLabel}`;
                 } else if (next && next.direction) {
                     const reasons = Array.isArray(next.reasons) && next.reasons.length
                         ? `：${next.reasons.join('；')}`
@@ -1305,7 +1474,13 @@ let creativeAutoCurrentRunId = '';
                 creativeAutoLastRun = resumableRun;
                 renderCreativeAutoRun(resumableRun);
                 setCreativeAutoRunning(false, resumableRun);
-                setCreativeAutoInfo('info-box loading', resumableRun.message || '已找到可继续的上次任务');
+                setCreativeAutoInfo('info-box loading', getCreativeAutoDisplayMessage(resumableRun) || '已找到可继续的上次任务');
+            } else if (latestRun) {
+                creativeAutoCurrentRunId = latestRun.runId;
+                creativeAutoLastRun = latestRun;
+                renderCreativeAutoRun(latestRun);
+                setCreativeAutoRunning(false, latestRun);
+                setCreativeAutoInfo('info-box success', latestRun.message || '已加载最近一次自动创意结果');
             } else {
                 creativeAutoLastRun = null;
                 creativeAutoCurrentRunId = null;
@@ -1319,6 +1494,7 @@ let creativeAutoCurrentRunId = '';
             const panel = document.getElementById('creativeAutoProgressPanel');
             const progressLabel = document.getElementById('creativeAutoProgressLabel');
             const progressText = document.getElementById('creativeAutoProgressText');
+            const estimateText = document.getElementById('creativeAutoEstimateText');
             const progressBar = document.getElementById('creativeAutoProgressBar');
             const statusText = document.getElementById('creativeAutoCurrentStatusText');
             const detail = document.getElementById('creativeAutoRunDetail');
@@ -1330,18 +1506,28 @@ let creativeAutoCurrentRunId = '';
             if (panel) panel.classList.add('active');
             if (progressLabel) progressLabel.textContent = '等待启动';
             if (progressText) progressText.textContent = '0 / 0';
+            if (estimateText) {
+                estimateText.textContent = '预计完成时间：计算中';
+                estimateText.title = '启动任务后会根据当前队列和生图进度估算。';
+            }
             if (progressBar) {
                 progressBar.style.width = '0%';
                 progressBar.classList.remove('success');
             }
-            if (statusText) statusText.textContent = '选择方向和执行模式后，点击“运行一次自动创意”。';
+            if (statusText) statusText.textContent = '选择方向后，点击“开始创意拓展产图”。';
             if (detail) detail.textContent = '';
             if (acceptedEl) acceptedEl.textContent = '0';
             if (rejectedEl) rejectedEl.textContent = '0';
             if (savedEl) savedEl.textContent = '0';
             if (failedEl) failedEl.textContent = '0';
             renderCreativeAutoPromptPanel({});
-            clearCreativeAutoRecentAssets({}, 'Legil 完成并写入资产索引后，这里会显示最近图片和反馈入口。');
+            clearCreativeAutoRecentAssets({}, '生图完成并写入资产索引后，这里会显示最近图片和反馈入口。');
+            updateCreativeMiniStatus({
+                stage: '待启动',
+                source: getCreativeAutoTargetQueueTargets().length ? `${creativeAutoSourceName()} · ${getCreativeAutoTargetQueueTargets().length} 个方向` : '未导入方向',
+                progress: '0 / 0',
+                state: getCreativeAutoTargetQueueTargets().length ? 'ready' : 'idle'
+            });
         }
 
         function getCreativeAutoProgress(run = {}) {
@@ -1350,7 +1536,7 @@ let creativeAutoCurrentRunId = '';
                 const total = Math.max(0, Number(legil.total) || Number(run.promptTotal) || 0);
                 const completed = Math.max(0, Number(legil.completed) || 0);
                 return {
-                    label: 'Legil 生图',
+                    label: '生图平台',
                     total,
                     completed: String(legil.phase || '') === 'completed' ? total : completed
                 };
@@ -1359,18 +1545,335 @@ let creativeAutoCurrentRunId = '';
             if (run.promptQualityReport) {
                 const total = Math.max(0, Number(run.promptQualityReport.rawPromptCount) || Number(run.promptTotalRaw) || 0);
                 return {
-                    label: 'Prompt Gate',
+                    label: '提示词质检',
                     total,
                     completed: Math.max(0, Number(run.promptTotal) || 0)
                 };
             }
 
             return {
-                label: 'Agent 拓展',
+                label: '创意助手拓展',
                 total: 1,
                 completed: ['agent_completed', 'legil_starting', 'legil_queued'].includes(run.phase) ? 1 : 0
             };
         }
+
+        function formatCreativeAutoEstimateMinutes(minutes) {
+            const value = Math.max(1, Math.ceil(Number(minutes) || 0));
+            if (value < 60) return `约 ${value} 分钟`;
+            if (value >= 1440) {
+                const days = Math.floor(value / 1440);
+                const hours = Math.round((value % 1440) / 60);
+                if (hours >= 24) return `约 ${days + 1} 天`;
+                return hours ? `约 ${days} 天 ${hours} 小时` : `约 ${days} 天`;
+            }
+            const hours = Math.floor(value / 60);
+            const remain = value % 60;
+            return remain ? `约 ${hours} 小时 ${remain} 分钟` : `约 ${hours} 小时`;
+        }
+
+        function safeCreativeAutoLocalStorage(action, fallback = null) {
+            try {
+                return action();
+            } catch (error) {
+                return fallback;
+            }
+        }
+
+        function readCreativeAutoEtaStoredBasis() {
+            const raw = safeCreativeAutoLocalStorage(() => localStorage.getItem(CREATIVE_AUTO_ETA_STORAGE_KEY), '');
+            if (!raw) return null;
+            try {
+                const data = JSON.parse(raw);
+                const minutesPerGroup = Number(data.minutesPerGroup);
+                if (!Number.isFinite(minutesPerGroup) ||
+                    minutesPerGroup < CREATIVE_AUTO_ETA_MIN_SAMPLE_MINUTES ||
+                    minutesPerGroup > CREATIVE_AUTO_ETA_MAX_SAMPLE_MINUTES) {
+                    return null;
+                }
+                return {
+                    minutesPerGroup,
+                    runId: String(data.runId || ''),
+                    updatedAt: Number(data.updatedAt) || 0
+                };
+            } catch (error) {
+                return null;
+            }
+        }
+
+        function writeCreativeAutoEtaStoredBasis(runId, minutesPerGroup) {
+            const value = Number(minutesPerGroup);
+            if (!Number.isFinite(value) ||
+                value < CREATIVE_AUTO_ETA_MIN_SAMPLE_MINUTES ||
+                value > CREATIVE_AUTO_ETA_MAX_SAMPLE_MINUTES) {
+                return;
+            }
+            safeCreativeAutoLocalStorage(() => localStorage.setItem(CREATIVE_AUTO_ETA_STORAGE_KEY, JSON.stringify({
+                runId: String(runId || ''),
+                minutesPerGroup: value,
+                updatedAt: Date.now()
+            })));
+        }
+
+        function getCreativeAutoEtaRunId(run = {}) {
+            return String(run.runId || creativeAutoCurrentRunId || 'creative-auto-active').trim();
+        }
+
+        function getCreativeAutoEtaProgressKey(run = {}, progress = getCreativeAutoProgress(run)) {
+            const queue = getCreativeAutoQueueProgress(run);
+            return [
+                getCreativeAutoEtaRunId(run),
+                queue.current || 0,
+                Number(progress.total) || 0
+            ].join('|');
+        }
+
+        function resetCreativeAutoEtaSegment(run = {}, reason = 'manual') {
+            const runId = getCreativeAutoEtaRunId(run);
+            if (!runId) return null;
+            const progress = getCreativeAutoProgress(run || {});
+            const state = {
+                runId,
+                reason,
+                progressKey: getCreativeAutoEtaProgressKey(run || {}, progress),
+                lastCompleted: Math.max(0, Number(progress.completed) || 0),
+                lastAt: Date.now(),
+                calibrated: false,
+                minutesPerGroup: null,
+                basisSource: 'pending'
+            };
+            creativeAutoEtaStateByRun.set(runId, state);
+            return state;
+        }
+
+        function getCreativeAutoEtaState(run = {}, progress = getCreativeAutoProgress(run)) {
+            const runId = getCreativeAutoEtaRunId(run);
+            if (!runId) return null;
+            const progressKey = getCreativeAutoEtaProgressKey(run, progress);
+            let state = creativeAutoEtaStateByRun.get(runId);
+            if (!state || state.progressKey !== progressKey) {
+                state = {
+                    runId,
+                    reason: state ? 'target-changed' : 'loaded',
+                    progressKey,
+                    lastCompleted: Math.max(0, Number(progress.completed) || 0),
+                    lastAt: Date.now(),
+                    calibrated: false,
+                    minutesPerGroup: null,
+                    basisSource: 'pending'
+                };
+                creativeAutoEtaStateByRun.set(runId, state);
+            }
+            return state;
+        }
+
+        function updateCreativeAutoEtaCalibration(run = {}, progress = getCreativeAutoProgress(run)) {
+            const state = getCreativeAutoEtaState(run, progress);
+            if (!state || run.status !== 'running') return state;
+            if (!run.legilProgress || Number(progress.total) <= 0) return state;
+
+            const completed = Math.max(0, Number(progress.completed) || 0);
+            const now = Date.now();
+            const deltaCompleted = completed - Number(state.lastCompleted || 0);
+            const deltaMs = now - Number(state.lastAt || now);
+
+            if (!state.calibrated && deltaCompleted > 0 && deltaMs > 0) {
+                const sampleMinutes = (deltaMs / 60000) / deltaCompleted;
+                if (Number.isFinite(sampleMinutes) &&
+                    sampleMinutes >= CREATIVE_AUTO_ETA_MIN_SAMPLE_MINUTES &&
+                    sampleMinutes <= CREATIVE_AUTO_ETA_MAX_SAMPLE_MINUTES) {
+                    state.minutesPerGroup = sampleMinutes;
+                    state.calibrated = true;
+                    state.basisSource = 'current-segment';
+                    writeCreativeAutoEtaStoredBasis(state.runId, sampleMinutes);
+                }
+            }
+
+            state.lastCompleted = completed;
+            state.lastAt = now;
+            return state;
+        }
+
+        function getCreativeAutoEtaBasis(run = {}, etaState = null) {
+            if (etaState &&
+                etaState.calibrated &&
+                Number(etaState.minutesPerGroup) >= CREATIVE_AUTO_ETA_MIN_SAMPLE_MINUTES &&
+                Number(etaState.minutesPerGroup) <= CREATIVE_AUTO_ETA_MAX_SAMPLE_MINUTES) {
+                return {
+                    minutesPerGroup: Number(etaState.minutesPerGroup),
+                    source: 'current-segment',
+                    calibrated: true
+                };
+            }
+
+            const stored = readCreativeAutoEtaStoredBasis();
+            if (stored) {
+                return {
+                    minutesPerGroup: stored.minutesPerGroup,
+                    source: stored.runId === getCreativeAutoEtaRunId(run) ? 'same-run-history' : 'history',
+                    calibrated: false
+                };
+            }
+
+            return {
+                minutesPerGroup: CREATIVE_AUTO_ETA_DEFAULT_MINUTES_PER_GROUP,
+                source: 'default',
+                calibrated: false
+            };
+        }
+
+        function getCreativeAutoQueueProgress(run = {}) {
+            const queue = run.targetQueueProgress || run.targetQueue || {};
+            const total = Math.max(
+                0,
+                Number(queue.total) ||
+                Number(queue.targetCount) ||
+                Number(queue.totalTargets) ||
+                Number(run.targetCount) ||
+                0
+            );
+            const currentRaw = Math.max(
+                0,
+                Number(queue.currentIndex) ||
+                Number(queue.currentTargetIndex) ||
+                Number(queue.targetIndex) ||
+                Number(queue.index) ||
+                0
+            );
+            const completedRaw = Math.max(
+                0,
+                Number(queue.completed) ||
+                Number(queue.completedTargets) ||
+                Number(queue.finishedTargets) ||
+                0
+            );
+            const completed = completedRaw || (currentRaw > 0 ? currentRaw - 1 : 0);
+            const current = currentRaw || (total && completed < total ? completed + 1 : completed);
+            return {
+                total,
+                completed: total ? Math.min(completed, total) : completed,
+                current: total ? Math.min(Math.max(current, 1), total) : current
+            };
+        }
+
+        function isCreativeAutoOverallComplete(run = {}) {
+            if (!run || run.status !== 'completed') return false;
+            const queue = run.targetQueueProgress || run.targetQueue || null;
+            const totalTargets = queue
+                ? Math.max(0, Number(queue.totalTargets) || Number(queue.total) || 0)
+                : 0;
+            if (totalTargets > 1) {
+                return String(queue.queueStatus || queue.status || '').toLowerCase() === 'completed';
+            }
+            return true;
+        }
+
+        function getCreativeAutoGroupsPerTarget(run = {}, progress = getCreativeAutoProgress(run)) {
+            const queue = getCreativeAutoQueueProgress(run);
+            const queueRaw = run.targetQueueProgress || run.targetQueue || {};
+            const totalGroups = Math.max(0, Number(progress.total) || 0);
+            const averageGroupsPerTarget = queue.total
+                ? Math.ceil((Number(queueRaw.totalExpectedPromptCount) || 0) / queue.total)
+                : 0;
+            const defaultGroupsPerTarget = CREATIVE_AUTO_TARGET_QUEUE_DEFAULTS.newDirectionsPerSource *
+                CREATIVE_AUTO_TARGET_QUEUE_DEFAULTS.promptGroupsPerNewDirection;
+            return Math.max(
+                1,
+                totalGroups || Number(run.promptTotal) || averageGroupsPerTarget || defaultGroupsPerTarget
+            );
+        }
+
+        function getCreativeAutoOverallProgress(run = {}, progress = getCreativeAutoProgress(run)) {
+            const queue = getCreativeAutoQueueProgress(run);
+            const phaseTotal = Math.max(0, Number(progress.total) || 0);
+            const phaseCompleted = Math.max(0, Math.min(phaseTotal, Number(progress.completed) || 0));
+            if (!queue.total || queue.total <= 1) {
+                return {
+                    label: progress.label || '整体进度',
+                    total: phaseTotal,
+                    completed: phaseCompleted,
+                    percent: phaseTotal > 0 ? Math.round((phaseCompleted / phaseTotal) * 100) : 0,
+                    currentCompleted: phaseCompleted,
+                    currentTotal: phaseTotal,
+                    currentLabel: progress.label || '',
+                    queue
+                };
+            }
+
+            const groupsPerTarget = getCreativeAutoGroupsPerTarget(run, progress);
+            const queueRaw = run.targetQueueProgress || run.targetQueue || {};
+            const expectedTotal = Number(queueRaw.totalExpectedPromptCount) || 0;
+            const total = Math.max(queue.total * groupsPerTarget, expectedTotal, phaseTotal);
+            const completedTargets = Math.max(0, Math.min(queue.total, Number(queue.completed) || 0));
+            const completed = isCreativeAutoOverallComplete(run)
+                ? total
+                : Math.max(0, Math.min(total, (completedTargets * groupsPerTarget) + phaseCompleted));
+            return {
+                label: '整体进度',
+                total,
+                completed,
+                percent: total > 0 ? Math.round((completed / total) * 100) : 0,
+                currentCompleted: phaseCompleted,
+                currentTotal: phaseTotal,
+                currentLabel: progress.label || '',
+                groupsPerTarget,
+                queue
+            };
+        }
+
+        function getCreativeAutoEstimate(run = {}, progress = getCreativeAutoProgress(run), etaState = null) {
+            if (!run || !run.status) {
+                return {
+                    text: '预计完成时间：计算中',
+                    title: '启动任务后会根据当前队列和生图进度估算。'
+                };
+            }
+            if (isCreativeAutoOverallComplete(run)) return { text: '预计完成时间：已完成', title: '任务已完成。' };
+            if (run.status === 'paused') return { text: '预计完成时间：已暂停', title: '任务已暂停，继续后会重新计算预计完成时间。' };
+            if (run.status === 'failed') return { text: '预计完成时间：任务失败', title: run.message || '任务失败。' };
+
+            const queue = getCreativeAutoQueueProgress(run);
+            const overall = getCreativeAutoOverallProgress(run, progress);
+            const totalGroups = Math.max(0, Number(progress.total) || 0);
+            const completedGroups = Math.max(0, Math.min(totalGroups, Number(progress.completed) || 0));
+            const currentRemainingGroups = totalGroups ? Math.max(0, totalGroups - completedGroups) : 0;
+            const remainingTargets = queue.total
+                ? Math.max(0, queue.total - Math.max(queue.current || 1, 1))
+                : 0;
+            const totalRemainingGroups = Math.max(0, Number(overall.total) - Number(overall.completed));
+
+            const basis = getCreativeAutoEtaBasis(run, etaState);
+            const remainingMinutes = (totalRemainingGroups * basis.minutesPerGroup) +
+                (remainingTargets * CREATIVE_AUTO_ETA_TARGET_SWITCH_BUFFER_MINUTES);
+
+            if (!Number.isFinite(remainingMinutes) || remainingMinutes <= 0) {
+                return {
+                    text: '预计完成时间：计算中',
+                    title: '当前阶段缺少足够进度数据，暂时无法估算。'
+                };
+            }
+
+            const basisLabel = formatCreativeAutoEstimateMinutes(basis.minutesPerGroup).replace(/^约\s*/, '');
+            const titlePrefix = basis.source === 'current-segment'
+                ? `按本次运行段第一次有效生成耗时估算，单组约 ${basisLabel}；同一段连续运行不反复滚动平均。`
+                : (basis.source === 'default'
+                    ? `暂无本次任务实际耗时，先按默认单组耗时 ${basisLabel}估算；完成一组后会校准。`
+                    : `当前使用上次有效生成速度估算，单组耗时约 ${basisLabel}；继续完成一组后会重新校准。`);
+            return {
+                text: `预计完成时间：${formatCreativeAutoEstimateMinutes(remainingMinutes)}`,
+                title: `${titlePrefix} 当前方向剩余 ${currentRemainingGroups} 组，剩余方向 ${remainingTargets} 个，预计剩余 ${totalRemainingGroups} 组。`
+            };
+        }
+
+        window.CreativeAutoRuntime = {
+            getProgress: getCreativeAutoProgress,
+            getQueueProgress: getCreativeAutoQueueProgress,
+            getOverallProgress: getCreativeAutoOverallProgress,
+            updateEtaCalibration: updateCreativeAutoEtaCalibration,
+            getEstimate: getCreativeAutoEstimate,
+            resetEtaSegment: resetCreativeAutoEtaSegment,
+            formatEstimateMinutes: formatCreativeAutoEstimateMinutes
+        };
 
         function appendCreativeAutoDetail(container, label, value) {
             if (!container || value === undefined || value === null || value === '') return;
@@ -1397,6 +1900,49 @@ let creativeAutoCurrentRunId = '';
 
         function getCreativeAutoPromptText(item = {}) {
             return String(item.finalPrompt || item.prompt || '').trim();
+        }
+
+        function getCreativeAutoFailedPrompts(run = {}) {
+            const sources = [
+                run.legilProgress && run.legilProgress.failedPromptResults,
+                run.legilTask && run.legilTask.progress && run.legilTask.progress.failedPromptResults
+            ];
+            const seen = new Set();
+            return sources.flatMap(source => Array.isArray(source) ? source : [])
+                .filter(Boolean)
+                .filter(item => {
+                    const key = [
+                        item.promptHash || '',
+                        item.promptListIndex || '',
+                        item.displayIndex || '',
+                        item.sourceRow || '',
+                        item.promptTitle || ''
+                    ].join('|');
+                    if (seen.has(key)) return false;
+                    seen.add(key);
+                    return true;
+                });
+        }
+
+        function getCreativeAutoStageText(run = {}) {
+            const queue = run.targetQueueProgress || run.targetQueue || null;
+            const queueStatus = queue && String(queue.queueStatus || queue.status || '');
+            if (queue && String(queue.nextAction || '') === 'advance_next_target') {
+                return '当前目标已完成，队列可继续推进到下一个目标';
+            }
+            if (queue && queueStatus === 'completed') {
+                return '目标队列已完成';
+            }
+            if (queue && run.status === 'completed' && String(run.phase || '') === 'legil_completed') {
+                return '当前目标批次已完成';
+            }
+            if (run.legilProgress && String(run.legilProgress.phase || '') === 'completed') {
+                return '当前生图批次已完成';
+            }
+            if (run.status === 'paused') {
+                return '任务已暂停，可继续之前任务';
+            }
+            return '';
         }
 
         function setCreativeAutoPromptSelected(runId = '', item = {}, selected = true) {
@@ -1484,16 +2030,17 @@ let creativeAutoCurrentRunId = '';
 
             const acceptedPrompts = getCreativeAutoAcceptedPrompts(run);
             const selectedPrompts = getCreativeAutoSelectedPrompts(run);
+            const failedPrompts = getCreativeAutoFailedPrompts(run);
             const rejectedPrompts = Array.isArray(run.promptQualityReport?.rejectedPrompts)
                 ? run.promptQualityReport.rejectedPrompts
                 : [];
-            if (!acceptedPrompts.length && !rejectedPrompts.length) {
+            if (!acceptedPrompts.length && !rejectedPrompts.length && !failedPrompts.length) {
                 renderCreativeAutoEmptyState(
                     container,
-                    'Prompt Gate 结果',
+                    '提示词质检结果',
                     run && run.runId
-                        ? '本轮还没有可展示的 Prompt Gate 结果。Agent 产出并通过 Prompt Gate 后会显示通过、丢弃和可复制 prompt。'
-                        : '运行一次自动创意后，这里会显示 Prompt Gate 通过和丢弃的 prompt。'
+                        ? '本轮还没有可展示的 提示词质检结果。创意助手产出并通过质检后会显示通过、丢弃和可复制提示词。'
+                        : '开始创意拓展产图后，这里会显示提示词质检通过和丢弃的提示词。'
                 );
                 return;
             }
@@ -1501,23 +2048,26 @@ let creativeAutoCurrentRunId = '';
             const header = document.createElement('div');
             header.className = 'creative-auto-prompt-header';
             const title = document.createElement('strong');
-            title.textContent = `Prompt Gate 结果：通过 ${acceptedPrompts.length} 条，已选 ${selectedPrompts.length} 条，丢弃 ${rejectedPrompts.length} 条`;
+            title.textContent = `提示词质检结果：通过 ${acceptedPrompts.length} 条，已选 ${selectedPrompts.length} 条，丢弃 ${rejectedPrompts.length} 条，失败 ${failedPrompts.length} 条`;
             header.appendChild(title);
 
             const actions = document.createElement('div');
             actions.className = 'creative-auto-prompt-actions';
             if (acceptedPrompts.length) {
-                actions.appendChild(makeCreativeMiniButton('复制全部通过 Prompt', () => {
+                actions.appendChild(makeCreativeMiniButton('复制全部通过提示词', () => {
                     const content = acceptedPrompts
-                        .map((item, index) => `【Prompt ${index + 1}】${item.promptTitle || item.newDirectionName || ''}\n${getCreativeAutoPromptText(item)}`)
+                        .map((item, index) => `【提示词 ${index + 1}】${item.promptTitle || item.newDirectionName || ''}\n${getCreativeAutoPromptText(item)}`)
                         .join('\n\n');
-                    copyCreativeAutoText(content, '全部通过 Prompt');
+                    copyCreativeAutoText(content, '全部通过提示词');
                 }));
             }
             if (run.status === 'completed' && run.agentOnly === true && acceptedPrompts.length) {
-                const continueButton = makeCreativeMiniButton('继续调用 Legil', () => continueCreativeAutoRunToLegil(run.runId));
+                const continueButton = makeCreativeMiniButton('继续调用生图平台', () => continueCreativeAutoRunToLegil(run.runId));
                 continueButton.disabled = selectedPrompts.length === 0;
                 actions.appendChild(continueButton);
+            }
+            if (failedPrompts.length && run.status !== 'running') {
+                actions.appendChild(makeCreativeMiniButton('重试失败提示词', () => retryCreativeAutoFailedPrompts(run.runId)));
             }
             header.appendChild(actions);
             container.appendChild(header);
@@ -1542,10 +2092,10 @@ let creativeAutoCurrentRunId = '';
                 });
                 selector.appendChild(checkbox);
                 const name = document.createElement('span');
-                name.textContent = `${index + 1}. ${item.promptTitle || item.newDirectionName || item.direction || 'Prompt'}`;
+                name.textContent = `${index + 1}. ${item.promptTitle || item.newDirectionName || item.direction || '提示词'}`;
                 selector.appendChild(name);
                 top.appendChild(selector);
-                top.appendChild(makeCreativeMiniButton('复制', () => copyCreativeAutoText(getCreativeAutoPromptText(item), `Prompt ${index + 1}`)));
+                top.appendChild(makeCreativeMiniButton('复制', () => copyCreativeAutoText(getCreativeAutoPromptText(item), `提示词 ${index + 1}`)));
                 card.appendChild(top);
                 card.classList.toggle('is-unselected', item.selected === false);
 
@@ -1571,12 +2121,35 @@ let creativeAutoCurrentRunId = '';
                 const top = document.createElement('div');
                 top.className = 'creative-auto-prompt-title';
                 const name = document.createElement('span');
-                name.textContent = `丢弃 ${index + 1}. ${item.promptTitle || item.newDirectionName || item.direction || 'Prompt'}`;
+                name.textContent = `丢弃 ${index + 1}. ${item.promptTitle || item.newDirectionName || item.direction || '提示词'}`;
                 top.appendChild(name);
                 card.appendChild(top);
                 const meta = document.createElement('div');
                 meta.className = 'creative-auto-prompt-meta';
-                meta.textContent = `${item.reason || 'rejected'} · ${item.message || 'Prompt Gate 已丢弃'}`;
+                meta.textContent = `${item.reason || 'rejected'} · ${item.message || '提示词质检已丢弃'}`;
+                card.appendChild(meta);
+                list.appendChild(card);
+            });
+
+            failedPrompts.slice(0, 20).forEach((item, index) => {
+                const card = document.createElement('div');
+                card.className = 'creative-auto-prompt-card is-rejected';
+                const top = document.createElement('div');
+                top.className = 'creative-auto-prompt-title';
+                const name = document.createElement('span');
+                name.textContent = `失败 ${index + 1}. ${item.promptTitle || item.newDirectionName || item.direction || '提示词'}`;
+                top.appendChild(name);
+                if (getCreativeAutoPromptText(item)) {
+                    top.appendChild(makeCreativeMiniButton('复制', () => copyCreativeAutoText(getCreativeAutoPromptText(item), `失败提示词 ${index + 1}`)));
+                }
+                card.appendChild(top);
+                const meta = document.createElement('div');
+                meta.className = 'creative-auto-prompt-meta';
+                meta.textContent = [
+                    item.displayIndex ? `批次序号 ${item.displayIndex}` : '',
+                    item.promptHash ? `hash ${item.promptHash}` : '',
+                    item.error || item.message || '生图生成失败'
+                ].filter(Boolean).join(' · ');
                 card.appendChild(meta);
                 list.appendChild(card);
             });
@@ -1593,7 +2166,7 @@ let creativeAutoCurrentRunId = '';
             renderCreativeAutoEmptyState(
                 container,
                 '最近产出',
-                message || 'Legil 完成并写入资产索引后，这里会显示最近图片和反馈入口。',
+                message || '生图完成并写入资产索引后，这里会显示最近图片和反馈入口。',
                 actions
             );
         }
@@ -1613,7 +2186,7 @@ let creativeAutoCurrentRunId = '';
             if (!assets.length) {
                 const message = run.status === 'completed'
                     ? '本轮暂未找到已写入资产索引的图片。可以刷新产出，或进入反馈审核查看本轮记录。'
-                    : 'Legil 还没有完成可回流的图片。任务完成后会在这里显示最近产出。';
+                    : '生图平台还没有完成可回流的图片。任务完成后会在这里显示最近产出。';
                 renderCreativeAutoEmptyState(container, '最近产出：暂无图片', message, [
                     makeCreativeMiniButton('刷新产出', () => loadCreativeAutoRecentAssets(run, { force: true })),
                     makeCreativeMiniButton('进入反馈审核', () => openCreativeReviewForRun(run.runId))
@@ -1679,7 +2252,7 @@ let creativeAutoCurrentRunId = '';
                 clearCreativeAutoRecentAssets(
                     run,
                     run && run.agentOnly === true
-                        ? '当前是只生成 prompt 模式，不会调用 Legil 生图；继续调用 Legil 后这里会显示最近产出。'
+                        ? '当前是只生成提示词模式，不会调用生图平台；继续调用生图平台后这里会显示最近产出。'
                         : ''
                 );
                 return null;
@@ -1718,6 +2291,7 @@ let creativeAutoCurrentRunId = '';
             const panel = document.getElementById('creativeAutoProgressPanel');
             const progressLabel = document.getElementById('creativeAutoProgressLabel');
             const progressText = document.getElementById('creativeAutoProgressText');
+            const estimateText = document.getElementById('creativeAutoEstimateText');
             const progressBar = document.getElementById('creativeAutoProgressBar');
             const statusText = document.getElementById('creativeAutoCurrentStatusText');
             const detail = document.getElementById('creativeAutoRunDetail');
@@ -1727,36 +2301,67 @@ let creativeAutoCurrentRunId = '';
             const failedEl = document.getElementById('creativeAutoFailed');
 
             const progress = getCreativeAutoProgress(run);
-            const total = Math.max(0, progress.total);
-            const completed = Math.max(0, Math.min(total, progress.completed));
+            const overallProgress = getCreativeAutoOverallProgress(run, progress);
+            const total = Math.max(0, Number(overallProgress.total) || 0);
+            const completed = Math.max(0, Math.min(total, Number(overallProgress.completed) || 0));
             const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
             const report = run.promptQualityReport || {};
             const legil = run.legilProgress || {};
             const result = run.legilResult || {};
             const queueLabel = getCreativeAutoRunQueueLabel(run);
+            const stageText = getCreativeAutoStageText(run);
+            const failedPrompts = getCreativeAutoFailedPrompts(run);
+            const displayMessage = getCreativeAutoDisplayMessage(run, legil);
+            const overallComplete = isCreativeAutoOverallComplete(run);
 
             if (panel) panel.classList.add('active');
-            if (progressLabel) progressLabel.textContent = queueLabel ? `${progress.label} · ${queueLabel}` : progress.label;
-            if (progressText) progressText.textContent = queueLabel ? `${completed} / ${total} · ${queueLabel}` : `${completed} / ${total}`;
+            if (progressLabel) progressLabel.textContent = queueLabel ? `整体进度 · ${queueLabel}` : (overallProgress.label || '整体进度');
+            if (progressText) progressText.textContent = total ? `${completed} / ${total}` : '0 / 0';
+            const etaState = updateCreativeAutoEtaCalibration(run, progress);
+            const estimate = getCreativeAutoEstimate(run, progress, etaState);
+            if (estimateText) {
+                estimateText.textContent = estimate.text;
+                estimateText.title = estimate.title || '';
+            }
             if (progressBar) {
                 progressBar.style.width = `${pct}%`;
-                progressBar.classList.toggle('success', run.status === 'completed');
+                progressBar.classList.toggle('success', overallComplete);
             }
             if (statusText) {
-                statusText.textContent = run.message || legil.currentAction || '自动创意运行中...';
+                statusText.textContent = displayMessage;
             }
             if (acceptedEl) acceptedEl.textContent = Number(report.acceptedPromptCount) || Number(run.promptTotal) || 0;
             if (rejectedEl) rejectedEl.textContent = Number(report.rejectedPromptCount) || Number(run.promptTotalRejected) || 0;
             if (savedEl) savedEl.textContent = Number(legil.saved) || Number(result.savedCount) || 0;
             if (failedEl) failedEl.textContent = Number(legil.failed) || Number(result.failedCount) || 0;
+            updateCreativeMiniStatus({
+                stage: run.status === 'paused' ? '已暂停' : (overallComplete ? '已完成' : (run.status === 'failed' ? '失败' : '运行中')),
+                source: queueLabel || getCreativeAutoEffectiveTargetLabel(),
+                progress: total ? `${completed} / ${total}` : '0 / 0',
+                state: run.status === 'failed' ? 'error' : (overallComplete ? 'done' : (run.status === 'paused' ? 'paused' : 'running'))
+            });
 
             if (detail) {
                 detail.textContent = '';
-                appendCreativeAutoDetail(detail, 'runId', run.runId);
+                const planReport = run.directionPlanReport || {};
+                const repairReport = run.directionPlanRepairReport || {};
+                const planSummary = planReport.candidateExtensionCount
+                    ? `候选 ${planReport.candidateExtensionCount}，入选 ${planReport.selectedExtensionCount || 0}，淘汰 ${planReport.rejectedExtensionCount || 0}，输出 ${planReport.selectedPromptCount || 0} 条提示词`
+                    : '';
+                const repairSummary = repairReport && repairReport.attempts && repairReport.attempts.length
+                    ? `修复 ${repairReport.attempts.length} 轮，补候选 ${repairReport.generatedPromptCount || 0} 条，最终 ${repairReport.finalAcceptedPromptCount || 0}/${repairReport.targetPromptCount || 0}`
+                    : '';
+                appendCreativeAutoDetail(detail, '任务 ID', run.runId);
                 appendCreativeAutoDetail(detail, '闃舵', `${run.status || ''} / ${run.phase || ''}`);
+                appendCreativeAutoDetail(detail, '阶段说明', stageText);
+                appendCreativeAutoDetail(detail, '方向规划', planSummary);
+                appendCreativeAutoDetail(detail, '自动修复', repairSummary);
                 appendCreativeAutoDetail(detail, '队列', queueLabel);
+                appendCreativeAutoDetail(detail, '当前方向进度', overallProgress.currentTotal ? `${overallProgress.currentCompleted} / ${overallProgress.currentTotal}` : '');
                 appendCreativeAutoDetail(detail, '方向', run.sourceDirection && run.sourceDirection.path);
                 appendCreativeAutoDetail(detail, '棰濆害', run.quota && run.quota.unlimitedImages ? '不限额' : (run.quota ? `${run.quota.expectedImages || 0} 寮?/ 鍓╀綑 ${run.quota.remainingImagesToday ?? '--'}` : ''));
+                appendCreativeAutoDetail(detail, '预计完成时间', estimate.text.replace(/^预计完成时间：/, ''));
+                appendCreativeAutoDetail(detail, '失败提示词', failedPrompts.length ? `${failedPrompts.length} 条，可重试` : '');
                 appendCreativeAutoDetail(detail, '资产', run.assets ? `新增 ${run.assets.newAssetCount || 0}，匹配 ${run.assets.matchedFileCount || 0}` : '');
                 const files = run.assets && Array.isArray(run.assets.filePaths) ? run.assets.filePaths.slice(0, 4) : [];
                 if (files.length) appendCreativeAutoDetail(detail, '文件', files.join(' | '));
@@ -1767,24 +2372,27 @@ let creativeAutoCurrentRunId = '';
                 loadCreativeAutoRecentAssets(run).catch(() => {});
             } else {
                 const message = run.agentOnly === true
-                    ? '当前是只生成 prompt 模式，还没有进入 Legil 生图。点击“继续调用 Legil”后会回流最近产出。'
-                    : 'Legil 任务完成并写入资产索引后，这里会显示最近产出和反馈入口。';
+                    ? '当前是只生成提示词模式，还没有进入生图环节。点击“继续调用生图平台”后会回流最近产出。'
+                    : '生图任务完成并写入资产索引后，这里会显示最近产出和反馈入口。';
                 clearCreativeAutoRecentAssets(run, message);
             }
 
             setCreativeAutoRunning(run.status === 'running', run);
             updateCreativeS3Flow(run, creativeAutoLastStatus);
-            if (run.status === 'completed') {
-                setCreativeAutoInfo('info-box success', `自动创意完成：保存 ${Number(result.savedCount) || Number(run.assets?.newAssetCount) || 0} 张，runId ${run.runId}`);
+            if (run.status === 'completed' && overallComplete) {
+                setCreativeAutoInfo('info-box success', `自动创意完成：保存 ${Number(result.savedCount) || Number(run.assets?.newAssetCount) || 0} 张，任务 ${run.runId}`);
+                loadCreativeS3RunHistory({ silent: true });
+            } else if (run.status === 'completed') {
+                setCreativeAutoInfo('info-box loading', stageText || '当前目标批次已完成，队列可继续推进');
                 loadCreativeS3RunHistory({ silent: true });
             } else if (run.status === 'failed') {
                 setCreativeAutoInfo('info-box error', run.message || '自动创意运行失败');
                 loadCreativeS3RunHistory({ silent: true });
             } else if (run.status === 'paused') {
-                setCreativeAutoInfo('info-box loading', run.message || '自动创意已停止，可继续之前任务');
+                setCreativeAutoInfo('info-box loading', displayMessage || '自动创意已停止，可继续之前任务');
                 loadCreativeS3RunHistory({ silent: true });
             } else {
-                setCreativeAutoInfo('info-box loading', run.message || '自动创意运行中...');
+                setCreativeAutoInfo('info-box loading', displayMessage || '自动创意运行中...');
             }
         }
 
@@ -1868,8 +2476,11 @@ let creativeAutoCurrentRunId = '';
             }
         }
 
+        window.loadCreativeAutoStatus = loadCreativeAutoStatus;
+
         async function startCreativeAutoRun() {
             const settings = getCreativeAutoRunSettings();
+            const directionDefaults = getCreativeAutoTargetQueueDefaults();
             const manualDirection = getCreativeAutoManualDirectionSelection();
             const maxPrompts = settings.maxPrompts;
             const fullScale = settings.fullScale;
@@ -1904,15 +2515,15 @@ let creativeAutoCurrentRunId = '';
                 } : null);
             const queueTargets = getCreativeAutoTargetQueueTargets();
             const queueLine = queueTargets.length
-                ? `待拓展方向：${queueTargets.length} 个，将按队列逐个拓展并生图，预计 ${getCreativeAutoTargetQueueExpectedPromptCount()} 条 prompt\n`
+                ? `待拓展方向：${queueTargets.length} 个，将按队列逐个拓展并生图，预计 ${getCreativeAutoTargetQueueExpectedPromptCount()} 条提示词\n`
                 : '';
             const expectedLine = settings.agentOnly
-                ? '本次不会调用 Legil，也不会消耗图片额度；Prompt Gate 接受多少就保留多少。'
+                ? '本次不会调用生图平台，也不会消耗图片额度；提示词质检接受多少就保留多少。'
                 : (settings.unlimitedPrompts
-                    ? '本次不会按数量截断，Prompt Gate 接受多少 prompt 就持续提交多少。'
-                    : `本次最多 ${maxPrompts} 条 prompt，预计最多 ${settings.expectedImages} 张图。`);
+                    ? '本次不会按数量截断，提示词质检接受多少提示词就持续提交多少。'
+                    : `本次最多 ${maxPrompts} 条提示词，预计最多 ${settings.expectedImages} 张图。`);
             const confirmed = confirm(
-                '确认启动“运行一次自动创意”：\n\n' +
+                '确认启动“开始创意拓展产图”：\n\n' +
                 `模式：${settings.label}\n` +
                 `目标：${getCreativeAutoEffectiveTargetLabel()}\n` +
                 queueLine +
@@ -1922,12 +2533,12 @@ let creativeAutoCurrentRunId = '';
             );
             if (!confirmed) return;
             if (settings.mode === 'full') {
-                const fullConfirmed = confirm('持续生图不会按 25 条或每日图片额度截断。请确认已经准备好让 Legil 持续执行。');
+                const fullConfirmed = confirm('持续生图不会按 25 条或每日图片额度截断。请确认已经准备好让生图平台持续执行。');
                 if (!fullConfirmed) return;
             }
 
             setCreativeAutoRunning(true);
-            setCreativeAutoInfo('info-box loading', '正在启动运行一次自动创意...');
+            setCreativeAutoInfo('info-box loading', '正在启动创意拓展产图...');
 
             try {
                 const saved = await saveCreativeConfig({ silent: true });
@@ -1943,26 +2554,40 @@ let creativeAutoCurrentRunId = '';
                         unlimitedPrompts: settings.unlimitedPrompts,
                         fullScale,
                         agentOnly: settings.agentOnly,
+                        creativePromptStyle: (typeof config !== 'undefined' && config && config.creativePromptStyle) ? config.creativePromptStyle : 'cinematic_photo',
+                        directionPlanning: {
+                            enabled: true,
+                            candidateExtensionsPerSource: directionDefaults.newDirectionsPerSource * directionDefaults.candidateMultiplier,
+                            selectedExtensionsPerSource: directionDefaults.newDirectionsPerSource,
+                            promptsPerExtension: directionDefaults.promptGroupsPerNewDirection,
+                            diversityMode: directionDefaults.diversityMode,
+                            historyScope: directionDefaults.historyScope,
+                            candidateMultiplier: directionDefaults.candidateMultiplier,
+                            minScore: 70,
+                            preferredScore: 85,
+                            maxRepairAttempts: 2
+                        },
                         directionIds: manualDirection.ids.length ? manualDirection.ids : undefined,
                         directionId: manualDirection.ids.length === 1 ? manualDirection.ids[0] : undefined,
                         targetSelection: targetSelection || undefined,
                         creativeBrief: creativeBriefForRun || undefined
                     })
-                }, 30000, '启动运行一次自动创意失败，请重启服务器后刷新页面');
+                }, 120000, '启动创意拓展产图失败，请重启服务器后刷新页面');
 
                 if (!data.success || !data.run) {
                     throw new Error(data.message || '启动失败');
                 }
 
                 creativeAutoCurrentRunId = data.run.runId;
+                resetCreativeAutoEtaSegment(data.run, 'new-run');
                 renderCreativeAutoRun(data.run);
                 startCreativeAutoPolling();
-                addLog(`运行一次自动创意已启动：${data.run.runId}`, 'success');
-                showToast('运行一次自动创意已启动');
+                addLog(`创意拓展产图已启动：${data.run.runId}`, 'success');
+                showToast('创意拓展产图已启动');
             } catch (error) {
                 setCreativeAutoRunning(false);
-                setCreativeAutoInfo('info-box error', error.message || '启动运行一次自动创意失败');
-                showToast(error.message || '启动运行一次自动创意失败', 'error');
+                setCreativeAutoInfo('info-box error', error.message || '启动创意拓展产图失败');
+                showToast(error.message || '启动创意拓展产图失败', 'error');
             }
         }
 
@@ -2001,7 +2626,7 @@ let creativeAutoCurrentRunId = '';
                 if (!data.success || !data.run) throw new Error(data.message || '读取自动创意运行记录失败');
                 creativeAutoCurrentRunId = data.run.runId;
                 renderCreativeAutoRun(data.run);
-                setCreativeAutoInfo('info-box success', `已加载 runId ${data.run.runId}`);
+                setCreativeAutoInfo('info-box success', `已加载 任务 ${data.run.runId}`);
                 document.getElementById('creativeAutoProgressPanel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
             } catch (error) {
                 setCreativeAutoInfo('info-box error', error.message || '读取自动创意运行记录失败');
@@ -2017,14 +2642,14 @@ let creativeAutoCurrentRunId = '';
             const promptTotal = Number(queue.totalExpectedPromptCount) || 0;
             return [
                 total ? `目标 ${current}/${total}` : '',
-                promptTotal ? `总 prompt 约 ${promptTotal}` : ''
+                promptTotal ? `总提示词约 ${promptTotal}` : ''
             ].filter(Boolean).join('，');
         }
 
         async function continueCreativeAutoRunToLegil(runId = '') {
             const targetRunId = String(runId || creativeAutoCurrentRunId || '').trim();
             if (!targetRunId) {
-                showToast('还没有可继续生图的 runId', 'error');
+                showToast('还没有可继续生图的任务', 'error');
                 return;
             }
 
@@ -2032,20 +2657,20 @@ let creativeAutoCurrentRunId = '';
             const selectedPrompts = getCreativeAutoSelectedPrompts(run || {});
             const promptCount = run ? selectedPrompts.length : '';
             if (run && promptCount === 0) {
-                showToast('请至少勾选 1 条 prompt 再继续生图', 'error');
+                showToast('请至少勾选 1 条提示词再继续生图', 'error');
                 return;
             }
             const browserModeLabel = typeof getCreativeBrowserModeLabel === 'function'
                 ? getCreativeBrowserModeLabel(config.creativeBrowserMode)
                 : config.creativeBrowserMode;
             const confirmed = confirm(
-                `确认用当前勾选的 ${promptCount || ''} 条 prompt 继续调用 Legil 生图：\n\n` +
+                `确认用当前勾选的 ${promptCount || ''} 条提示词继续调用生图平台：\n\n` +
                 `这会开始 ${browserModeLabel} 浏览器自动化；图片数量不按每日额度截断。`
             );
             if (!confirmed) return;
 
             setCreativeAutoRunning(true);
-            setCreativeAutoInfo('info-box loading', `正在从 Prompt Gate 结果继续启动 Legil：${targetRunId}`);
+            setCreativeAutoInfo('info-box loading', `正在从提示词质检结果继续启动生图平台：${targetRunId}`);
 
             try {
                 const saved = await saveCreativeConfig({ silent: true });
@@ -2060,22 +2685,73 @@ let creativeAutoCurrentRunId = '';
                         ...(run ? buildCreativeAutoPromptSelection(run) : {}),
                         browserMode: config.creativeBrowserMode
                     })
-                }, 30000, '继续启动 Legil 失败');
+                }, 30000, '继续启动生图平台失败');
 
                 if (!data.success || !data.run) {
-                    throw new Error(data.message || '继续启动 Legil 失败');
+                    throw new Error(data.message || '继续启动生图平台失败');
                 }
 
                 creativeAutoCurrentRunId = data.run.runId;
+                resetCreativeAutoEtaSegment(data.run, 'continue-legil');
                 renderCreativeAutoRun(data.run);
                 startCreativeAutoPolling();
                 loadCreativeS3RunHistory({ silent: true });
-                showToast('已继续调用 Legil 生图');
-                addLog(`已从 Prompt Gate 继续调用 Legil：${data.run.runId}`, 'success');
+                showToast('已继续调用生图平台');
+                addLog(`已从提示词质检结果继续调用生图平台：${data.run.runId}`, 'success');
             } catch (error) {
                 setCreativeAutoRunning(false);
-                setCreativeAutoInfo('info-box error', error.message || '继续启动 Legil 失败');
-                showToast(error.message || '继续启动 Legil 失败', 'error');
+                setCreativeAutoInfo('info-box error', error.message || '继续启动生图平台失败');
+                showToast(error.message || '继续启动生图平台失败', 'error');
+            }
+        }
+
+        async function retryCreativeAutoFailedPrompts(runId = '') {
+            const targetRunId = String(runId || creativeAutoCurrentRunId || creativeAutoLastRun?.runId || '').trim();
+            if (!targetRunId) {
+                showToast('还没有可重试的任务', 'error');
+                return;
+            }
+            const run = creativeAutoLastRun && creativeAutoLastRun.runId === targetRunId ? creativeAutoLastRun : null;
+            const failedPrompts = getCreativeAutoFailedPrompts(run || {});
+            if (!failedPrompts.length) {
+                showToast('没有可重试的失败提示词', 'error');
+                return;
+            }
+            const confirmed = confirm(`确认只重试 ${failedPrompts.length} 条失败提示词？\n\n这会重新调用生图平台，并把重试结果追加到当前任务记录。`);
+            if (!confirmed) return;
+
+            setCreativeAutoRunning(true, run || creativeAutoLastRun);
+            setCreativeAutoInfo('info-box loading', `正在重试失败提示词：${targetRunId}`);
+
+            try {
+                const saved = await saveCreativeConfig({ silent: true });
+                if (!saved) {
+                    throw new Error('创意拓展配置保存失败');
+                }
+
+                const data = await fetchJsonWithTimeout(`/api/creative-auto/runs/${encodeURIComponent(targetRunId)}/retry-failed-prompts`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        browserMode: config.creativeBrowserMode
+                    })
+                }, 30000, '重试失败提示词 失败');
+
+                if (!data.success || !data.run) {
+                    throw new Error(data.message || '重试失败提示词 失败');
+                }
+
+                creativeAutoCurrentRunId = data.run.runId;
+                resetCreativeAutoEtaSegment(data.run, 'retry-failed');
+                renderCreativeAutoRun(data.run);
+                startCreativeAutoPolling();
+                loadCreativeS3RunHistory({ silent: true });
+                showToast('已开始重试失败提示词');
+                addLog(`已开始重试失败提示词：${data.run.runId}`, 'success');
+            } catch (error) {
+                setCreativeAutoRunning(false, creativeAutoLastRun);
+                setCreativeAutoInfo('info-box error', error.message || '重试失败提示词 失败');
+                showToast(error.message || '重试失败提示词 失败', 'error');
             }
         }
 
@@ -2103,7 +2779,7 @@ let creativeAutoCurrentRunId = '';
                 return;
             }
 
-            const confirmed = confirm('确认继续之前的自动创意任务？\n\n如果上次停在 Legil 阶段，会从剩余 prompt 继续；如果停在 Agent 阶段，会基于同一方向重新生成 prompt。');
+            const confirmed = confirm('确认继续之前的自动创意任务？\n\n如果上次停在生图阶段，会从剩余提示词继续；如果停在创意助手阶段，会基于同一方向重新生成提示词。');
             if (!confirmed) return;
 
             setCreativeAutoRunning(true, run || creativeAutoLastRun);
@@ -2129,6 +2805,7 @@ let creativeAutoCurrentRunId = '';
                 }
 
                 creativeAutoCurrentRunId = data.run.runId;
+                resetCreativeAutoEtaSegment(data.run, 'resume');
                 renderCreativeAutoRun(data.run);
                 startCreativeAutoPolling();
                 loadCreativeS3RunHistory({ silent: true });
@@ -2146,8 +2823,30 @@ let creativeAutoCurrentRunId = '';
                 showToast('当前任务还在运行，请先停止后再开始新任务', 'error');
                 return;
             }
+            const statusData = await loadCreativeAutoStatus({ silent: true });
+            const activeRun = statusData && statusData.activeRun ? statusData.activeRun : null;
+            const targetQueue = statusData && statusData.targetQueue ? statusData.targetQueue : null;
+            const queueRunning = targetQueue && String(targetQueue.status || targetQueue.queueStatus || '') === 'running';
+            if (activeRun || queueRunning) {
+                const run = activeRun || creativeAutoLastRun || null;
+                if (run && run.runId) {
+                    creativeAutoCurrentRunId = run.runId;
+                    renderCreativeAutoRun(run);
+                    startCreativeAutoPolling();
+                } else {
+                    setCreativeAutoRunning(true, {
+                        status: 'running',
+                        targetQueueProgress: targetQueue,
+                        targetQueue
+                    });
+                }
+                setCreativeAutoInfo('info-box loading', '已有自动创意任务正在运行，请先停止后再开始新任务。');
+                showToast('当前任务还在运行，请先停止后再开始新任务', 'error');
+                return;
+            }
             creativeAutoCurrentRunId = '';
             creativeAutoLastRun = null;
+            creativeAutoEtaStateByRun.clear();
             stopCreativeAutoPolling();
             setCreativeAutoRunning(false, null);
             updateCreativeS3Flow(null, creativeAutoLastStatus);
@@ -2158,7 +2857,7 @@ let creativeAutoCurrentRunId = '';
         async function openCreativeReviewForRun(runId = '') {
             const targetRunId = String(runId || document.getElementById('creativeS3ReviewBtn')?.dataset.runId || creativeAutoCurrentRunId || '').trim();
             if (!targetRunId) {
-                showToast('还没有可审核的 runId', 'error');
+                showToast('还没有可审核的任务', 'error');
                 return;
             }
 
@@ -2178,7 +2877,7 @@ let creativeAutoCurrentRunId = '';
                     await loadCreativeKnowledgePage({ silent: true });
                 }
                 document.getElementById('knowledgeAssetList')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                setCreativeAutoInfo('info-box success', `已跳转知识库审核 runId ${targetRunId}`);
+                setCreativeAutoInfo('info-box success', `已跳转知识库审核 任务 ${targetRunId}`);
             } catch (error) {
                 showToast(error.message || '打开资产审核失败', 'error');
             }
@@ -2196,12 +2895,12 @@ let creativeAutoCurrentRunId = '';
                 const targetRunId = String(creativeAutoCurrentRunId || creativeAutoLastRun?.runId || '').trim();
                 if (!targetRunId) {
                     const fallbackRes = await fetch('/api/legil/stop', { method: 'POST' });
-                    const fallbackData = await readJsonResponse(fallbackRes, '停止 Legil 任务失败');
+                    const fallbackData = await readJsonResponse(fallbackRes, '停止生图任务失败');
                     if (!fallbackData.success) {
                         throw new Error(fallbackData.message || '停止失败');
                     }
-                    setCreativeAutoInfo('info-box loading', fallbackData.message || '已发送 Legil 停止指令');
-                    addLog('已发送 Legil 创意拓展停止指令', 'system');
+                    setCreativeAutoInfo('info-box loading', fallbackData.message || '已发送生图停止指令');
+                    addLog('已发送创意拓展生图停止指令', 'system');
                     if (stopBtn) {
                         stopBtn.disabled = true;
                         stopBtn.textContent = '停止任务';
@@ -2246,11 +2945,56 @@ let creativeAutoCurrentRunId = '';
             }
         }
 
-        document.addEventListener('DOMContentLoaded', () => {
-            loadCreativeAutoMaterialBrief();
+        let creativeAutoInitialDataLoaded = false;
+
+        async function primeCreativeAutoRunState() {
+            try {
+                const data = window.ApiClient && typeof window.ApiClient.fetchJson === 'function'
+                    ? await window.ApiClient.fetchJson('/api/run-state/summary', {
+                        timeoutMs: 8000,
+                        fallbackMessage: '读取运行状态失败',
+                        toastOnError: false
+                    })
+                    : await (async () => {
+                        const res = await fetch('/api/run-state/summary');
+                        return await readJsonResponse(res, '读取运行状态失败');
+                    })();
+                const run = data && data.activeRun && data.activeRun.runType === 'creative-auto'
+                    ? data.activeRun
+                    : null;
+                if (!run || !run.runId) return null;
+                creativeAutoCurrentRunId = run.runId;
+                creativeAutoLastRun = run;
+                renderCreativeAutoRun(run);
+                setCreativeAutoRunning(run.status === 'running', run);
+                if (run.status === 'running') {
+                    startCreativeAutoPolling();
+                } else {
+                    stopCreativeAutoPolling();
+                }
+                return run;
+            } catch (error) {
+                return null;
+            }
+        }
+
+        function ensureCreativeAutoInitialData() {
+            if (creativeAutoInitialDataLoaded) return;
+            creativeAutoInitialDataLoaded = true;
+            primeCreativeAutoRunState();
             loadCreativeAutoStatus({ silent: true });
             loadCreativeAutoDirections();
             loadCreativeS3RunHistory({ silent: true });
+        }
+
+        window.ensureCreativeAutoInitialData = ensureCreativeAutoInitialData;
+        window.primeCreativeAutoRunState = primeCreativeAutoRunState;
+
+        document.addEventListener('DOMContentLoaded', () => {
+            loadCreativeAutoMaterialBrief();
+            if (document.getElementById('creativePage')?.classList.contains('active')) {
+                ensureCreativeAutoInitialData();
+            }
             const fullScale = document.getElementById('creativeAutoFullScale');
             document.querySelectorAll('input[name="creativeAutoPromptMode"]').forEach(input => {
                 input.addEventListener('change', () => syncCreativeAutoPromptMode());
@@ -2283,6 +3027,16 @@ let creativeAutoCurrentRunId = '';
                 renderCreativeAutoTargetQueue();
                 updateCreativeS3Flow(creativeAutoLastRun, creativeAutoLastStatus);
             });
+            ['creativeAutoDiversityMode', 'creativeAutoHistoryScope'].forEach(id => {
+                document.getElementById(id)?.addEventListener('change', () => {
+                    renderCreativeAutoTargetQueue();
+                    updateCreativeS3Flow(creativeAutoLastRun, creativeAutoLastStatus);
+                });
+            });
+            document.getElementById('creativeAutoCandidateMultiplier')?.addEventListener('input', () => {
+                renderCreativeAutoTargetQueue();
+                updateCreativeS3Flow(creativeAutoLastRun, creativeAutoLastStatus);
+            });
             document.getElementById('creativeAutoDirectionSearch')?.addEventListener('input', () => renderCreativeAutoDirectionTree());
             document.querySelectorAll('#creativeAutoTargetLevelOptions [data-creative-target-level]').forEach(button => {
                 button.addEventListener('click', () => setCreativeAutoTargetLevel(button.dataset.creativeTargetLevel || 'all'));
@@ -2292,4 +3046,9 @@ let creativeAutoCurrentRunId = '';
             document.getElementById('creativeAutoClearDirectionBtn')?.addEventListener('click', () => setCreativeAutoSelectedDirection(''));
             renderCreativeAutoTargetQueue();
             syncCreativeAutoPromptMode();
+        });
+
+        document.addEventListener('creative:auto:visible', () => {
+            primeCreativeAutoRunState();
+            ensureCreativeAutoInitialData();
         });

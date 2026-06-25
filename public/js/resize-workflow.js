@@ -207,7 +207,7 @@
             const generationSettings = getResizeWorkflowGenerationSettings(provider);
             const ratioText = getResizeWorkflowAspectRatios(generationSettings).join('、');
             const runLine = provider === 'legil'
-                ? `✅ Legil 会按输入图顺序改尺寸；每张图依次完成 ${ratioText}，每个比例生成 ${Number(config.resizeLegilGeneration.outputQuantity) || 1} 张结果\n`
+                ? `✅ Legil 会按输入图顺序改尺寸；每张图依次完成 ${ratioText}，每个尺寸生成 ${Number(config.resizeLegilGeneration.outputQuantity) || 1} 张结果\n`
                 : `✅ 即梦会单页顺序生成；每张图依次完成 ${ratioText}，每个比例保存4张结果后再处理下一张\n`;
             const stopLine = provider === 'legil'
                 ? '✅ 停止任务会停止本地 Legil 改尺寸队列，正在执行的浏览器动作可能需要等待当前步骤结束\n\n'
@@ -350,7 +350,7 @@
                 }
 
                 showToast('已发送停止指令');
-                addLog(`⏹️ 已发送${providerLabel}改尺寸任务停止指令`, 'system');
+                addLog(`已发送${providerLabel}改尺寸任务停止指令`, 'system');
                 startResizeStatusPolling(provider);
             } catch (e) {
                 if (infoBox) {

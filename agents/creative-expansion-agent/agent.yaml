@@ -41,6 +41,11 @@ skills:
     stage: "4_legil_prompt_contract"
     required_in_default_workflow: true
     responsibility: "约束输出稳定适配 run-once 自动创意、Legil Nano Banana 2、1:1、2K、每 prompt 4 张和程序解析表头。"
+  - name: "legil-creative-prompt-generator"
+    path: "skills/legil-creative-prompt-generator"
+    stage: "prompt_only"
+    required_in_default_workflow: false
+    responsibility: "在方向已确定时只生成 promptItems JSON，不自动选方向、不拓展新方向、不输出新方向拓展表。"
   - name: "strict-table-direction-iteration"
     path: "skills/strict-table-direction-iteration"
     stage: "constraint"

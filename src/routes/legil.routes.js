@@ -115,6 +115,13 @@ module.exports = function registerLegilRoutes(app, context) {
             `Prompt group: ${meta.displayIndex || promptItem.index || promptItem.batchIndex || ''}`,
             `Prompt title: ${promptItem.promptTitle || promptItem.title || ''}`,
             `Direction: ${promptItem.newDirectionName || promptItem.direction || promptItem.contentTitle || ''}`,
+            `Table direction: ${promptItem.direction || promptItem.sourceRawName || ''}`,
+            `Matched direction: ${promptItem.matchedDirectionPath || promptItem.sourceDirectionPath || ''}`,
+            `Primary tag: ${promptItem.primaryTag || ''}`,
+            `Secondary tag: ${promptItem.secondaryTag || ''}`,
+            `Tertiary tag: ${promptItem.tertiaryTag || ''}`,
+            `Content name: ${promptItem.contentName || promptItem.contentTitle || ''}`,
+            `Output name base: ${promptItem.outputNameBase || ''}`,
             '',
             'Output images:',
             ...(outputNames.length ? outputNames.map(name => `- ${name}`) : ['-']),
@@ -423,7 +430,8 @@ module.exports = function registerLegilRoutes(app, context) {
      * 返回数据：{ success: true/false, savePath: "保存路径", message: "提示信息" }
      */
     app.post('/api/legil/generate', async (req, res) => {
-        const { prompt, promptIndex, index } = req.body;
+        const requestBody = req.body || {};
+        const { prompt, promptIndex, index } = requestBody;
         const safePromptIndex = toPositiveIndex(promptIndex ?? index, 1);
 
         console.log('\n🎨 收到 Legil 生成图片请求（第七阶段）');
@@ -453,6 +461,9 @@ module.exports = function registerLegilRoutes(app, context) {
             automationState.legilTaskType = 'single-generate';
             // 调用 Legil 自动化模块
             const result = await legilAutomation.generateImage(prompt.trim(), safePromptIndex, {
+                generationSettings: requestBody.generationSettings && typeof requestBody.generationSettings === 'object'
+                    ? normalizeLegilGenerationSettings(requestBody.generationSettings, legilAutomation.getConfig().settings || {})
+                    : undefined,
                 taskType: 'Legil单张生成',
                 autoRecoveryEnabled: appConfig.notifications.autoRecoveryEnabled,
                 captureErrorScreenshot: appConfig.notifications.legilScreenshotEnabled
@@ -533,7 +544,12 @@ module.exports = function registerLegilRoutes(app, context) {
             try {
                 let outputSequence = 1;
                 let consecutiveFailures = 0;
-                const batchGenerationSettings = legilAutomation.getConfig().settings || {};
+                const batchGenerationSettings = normalizeLegilGenerationSettings(
+                    requestBody && typeof requestBody.generationSettings === 'object'
+                        ? requestBody.generationSettings
+                        : (legilAutomation.getConfig().settings || {}),
+                    legilAutomation.getConfig().settings || {}
+                );
                 const legilOutputQuantity = batchGenerationSettings.outputQuantity || 1;
                 const outputTotal = normalizedPrompts.length * legilOutputQuantity;
                 const savedFiles = [];
@@ -547,6 +563,7 @@ module.exports = function registerLegilRoutes(app, context) {
 
                     try {
                         const result = await legilAutomation.generateImage(promptText, i + 1, {
+                            generationSettings: batchGenerationSettings,
                             outputSequence,
                             outputTotal,
                             runId: batchRunId,
@@ -1299,7 +1316,7 @@ module.exports = function registerLegilRoutes(app, context) {
             creativeConfig.generationSettings || DEFAULT_CREATIVE_CONFIG.generationSettings
         );
         const promptItems = Array.isArray(req.body && req.body.prompts) ? req.body.prompts : [];
-        const normalizedPrompts = normalizeCreativeBatchPromptItems(promptItems);
+        const normalizedPrompts = normalizeCreativeBatchPromptItems(promptItems, creativeConfig.creativePromptStyle);
         const directionLibrary = readCreativeDirectionLibrary(req.body || {});
         const creativeTableFileName = String(req.body && req.body.tableFileName ? req.body.tableFileName : '').trim();
 
@@ -1340,14 +1357,16 @@ module.exports = function registerLegilRoutes(app, context) {
                 }
             }
 
-            appConfig.creative = {
-                ...creativeConfig,
-                browserMode: creativeBrowserMode,
-                generationSettings: creativeGenerationSettings
-            };
-            persistRuntimeConfig({
-                creative: appConfig.creative
-            });
+            if (!(req.body && req.body.persistCreativeConfig === false)) {
+                appConfig.creative = {
+                    ...creativeConfig,
+                    browserMode: creativeBrowserMode,
+                    generationSettings: creativeGenerationSettings
+                };
+                persistRuntimeConfig({
+                    creative: appConfig.creative
+                });
+            }
 
             automationState.legilTaskRunning = true;
             automationState.legilStopRequested = false;
@@ -1380,6 +1399,7 @@ module.exports = function registerLegilRoutes(app, context) {
                 creativeAutoRunId: String(req.body && req.body.creativeAutoRunId || ''),
                 savedFiles: [],
                 promptResults: [],
+                failedPromptResults: [],
                 startedAt: new Date().toISOString(),
                 updatedAt: new Date().toISOString()
             };
@@ -1391,6 +1411,7 @@ module.exports = function registerLegilRoutes(app, context) {
                 outputFolder: creativeConfig.outputFolder,
                 referenceFolder: creativeConfig.referenceFolder,
                 browserMode: creativeBrowserMode,
+                creativePromptStyle: creativeConfig.creativePromptStyle,
                 generationSettings: creativeGenerationSettings,
                 prompts: normalizedPrompts,
                 total: progressTotal,
@@ -1448,6 +1469,7 @@ module.exports = function registerLegilRoutes(app, context) {
                 let savedTotal = 0;
                 const savedFiles = [];
                 const promptResults = [];
+                const failedPromptResults = [];
                 let consecutiveFailures = 0;
                 let stopped = false;
                 let interruptedMessage = '';
@@ -1456,6 +1478,34 @@ module.exports = function registerLegilRoutes(app, context) {
                 const getAggregateSuccess = () => runContext.baseSuccess + successCount;
                 const getAggregateFailed = () => runContext.baseFailed + failedCount;
                 const getAggregateSaved = () => runContext.baseSaved + savedTotal;
+                const buildFailedPromptResult = (enrichedPromptItem = {}, meta = {}) => ({
+                    promptListIndex: meta.promptListIndex,
+                    displayIndex: meta.displayIndex,
+                    sourceRow: enrichedPromptItem.sourceRow || '',
+                    direction: enrichedPromptItem.direction || '',
+                    promptTitle: enrichedPromptItem.promptTitle || '',
+                    promptHash: enrichedPromptItem.promptHash || '',
+                    sourceDirectionId: enrichedPromptItem.sourceDirectionId || '',
+                    sourceDirectionPath: enrichedPromptItem.sourceDirectionPath || '',
+                    sourceRawName: enrichedPromptItem.sourceRawName || '',
+                    sourceParsedParts: enrichedPromptItem.sourceParsedParts || [],
+                    sourceContentTitle: enrichedPromptItem.sourceContentTitle || '',
+                    droppedLabelParts: enrichedPromptItem.droppedLabelParts || [],
+                    newDirectionName: enrichedPromptItem.newDirectionName || '',
+                    outputNameBase: meta.outputNameBase || enrichedPromptItem.outputNameBase || '',
+                    finalPrompt: enrichedPromptItem.finalPrompt || '',
+                    prompt: enrichedPromptItem.prompt || '',
+                    contentTitle: enrichedPromptItem.contentTitle || '',
+                    standardLabelPath: enrichedPromptItem.standardLabelPath || [],
+                    primaryTag: enrichedPromptItem.primaryTag || '',
+                    secondaryTag: enrichedPromptItem.secondaryTag || '',
+                    tertiaryTag: enrichedPromptItem.tertiaryTag || '',
+                    namingSource: enrichedPromptItem.namingSource || '',
+                    tagConfidence: enrichedPromptItem.tagConfidence || '',
+                    message: meta.message || '',
+                    error: meta.error || meta.message || '',
+                    failedAt: meta.failedAt || new Date().toISOString()
+                });
 
                 try {
                     for (let i = 0; i < normalizedPrompts.length; i++) {
@@ -1469,10 +1519,10 @@ module.exports = function registerLegilRoutes(app, context) {
                         const namingContext = buildCreativeOutputNamingContext({
                             ...promptItem,
                             sourceDirectionPath: promptItem.sourceDirectionPath || promptItem.direction,
-                            contentTitle: promptItem.contentTitle || promptItem.newDirectionName || promptItem.direction,
-                            fallbackName: promptItem.newDirectionName || promptItem.direction || `表格第${promptItem.sourceRow}行`,
+                            contentTitle: promptItem.contentTitle || promptItem.newDirectionName || promptItem.direction || promptItem.outputNameBase,
+                            fallbackName: promptItem.newDirectionName || promptItem.direction || promptItem.outputNameBase || `表格第${promptItem.sourceRow}行`,
                             directionLibrary,
-                            strictLibraryTags: true
+                            strictLibraryTags: false
                         });
                         const outputNameBase = namingContext.outputNameBase || promptItem.outputNameBase || promptItem.newDirectionName || promptItem.direction || `表格第${promptItem.sourceRow}行`;
                         const enrichedPromptItem = {
@@ -1531,6 +1581,7 @@ module.exports = function registerLegilRoutes(app, context) {
                                 headless: creativeHeadless,
                                 taskType: '创意拓展产图',
                                 acceptStablePartialOutputs: true,
+                                autoRefreshOnStuck: false,
                                 autoRecoveryEnabled: appConfig.notifications.autoRecoveryEnabled,
                                 captureErrorScreenshot: appConfig.notifications.legilScreenshotEnabled,
                                 shouldAbort: isLegilStopRequested
@@ -1626,6 +1677,7 @@ module.exports = function registerLegilRoutes(app, context) {
                                     saved: getAggregateSaved(),
                                     savedFiles,
                                     promptResults,
+                                    failedPromptResults,
                                     currentAction: `第 ${displayIndex}/${progressTotal} 组已完成，保存 ${savedCount} 张`,
                                     updatedAt: new Date().toISOString()
                                 };
@@ -1663,8 +1715,16 @@ module.exports = function registerLegilRoutes(app, context) {
                                 logger.warn('⏹️ 创意拓展任务已停止');
                                 break;
                             } else {
+                                const failedAt = new Date().toISOString();
                                 failedCount += 1;
                                 consecutiveFailures += 1;
+                                failedPromptResults.push(buildFailedPromptResult(enrichedPromptItem, {
+                                    promptListIndex: i + 1,
+                                    displayIndex,
+                                    outputNameBase,
+                                    message: result.message || 'Legil generation failed',
+                                    failedAt
+                                }));
                                 automationState.legilTaskProgress = {
                                     ...(automationState.legilTaskProgress || {}),
                                     phase: 'running',
@@ -1673,6 +1733,7 @@ module.exports = function registerLegilRoutes(app, context) {
                                     success: getAggregateSuccess(),
                                     failed: getAggregateFailed(),
                                     saved: getAggregateSaved(),
+                                    failedPromptResults,
                                     currentAction: `第 ${displayIndex}/${progressTotal} 组失败：${result.message}`,
                                     updatedAt: new Date().toISOString()
                                 };
@@ -1748,6 +1809,14 @@ module.exports = function registerLegilRoutes(app, context) {
                             }
                             failedCount += 1;
                             consecutiveFailures += 1;
+                            failedPromptResults.push(buildFailedPromptResult(enrichedPromptItem, {
+                                promptListIndex: i + 1,
+                                displayIndex,
+                                outputNameBase,
+                                message: error.message,
+                                error: error.message,
+                                failedAt: new Date().toISOString()
+                            }));
                             automationState.legilTaskProgress = {
                                 ...(automationState.legilTaskProgress || {}),
                                 phase: 'running',
@@ -1756,6 +1825,7 @@ module.exports = function registerLegilRoutes(app, context) {
                                 success: getAggregateSuccess(),
                                 failed: getAggregateFailed(),
                                 saved: getAggregateSaved(),
+                                failedPromptResults,
                                 currentAction: `第 ${displayIndex}/${progressTotal} 组出错：${error.message}`,
                                 updatedAt: new Date().toISOString()
                             };
@@ -1839,6 +1909,7 @@ module.exports = function registerLegilRoutes(app, context) {
                             success: getAggregateSuccess(),
                             failed: getAggregateFailed(),
                             saved: getAggregateSaved(),
+                            failedPromptResults,
                             currentAction: `创意拓展任务已停止：成功 ${getAggregateSuccess()} 组，失败 ${getAggregateFailed()} 组`,
                             updatedAt: new Date().toISOString()
                         };
@@ -1863,7 +1934,8 @@ module.exports = function registerLegilRoutes(app, context) {
                             success: getAggregateSuccess(),
                             failed: getAggregateFailed(),
                             saved: getAggregateSaved(),
-                            currentAction: `创意拓展任务完成：成功 ${getAggregateSuccess()} 组，失败 ${getAggregateFailed()} 组`,
+                            failedPromptResults,
+                            currentAction: `创意拓展当前批次完成：共 ${progressTotal} 组，成功 ${getAggregateSuccess()} 组，失败 ${getAggregateFailed()} 组，保存 ${getAggregateSaved()} 张`,
                             updatedAt: new Date().toISOString()
                         };
                         if (completedAllPrompts) {
@@ -1880,7 +1952,7 @@ module.exports = function registerLegilRoutes(app, context) {
                                 currentAction: automationState.legilTaskProgress.currentAction
                             });
                         }
-                        logger.system(`✅ Legil 创意拓展任务完成：成功 ${getAggregateSuccess()} 组，失败 ${getAggregateFailed()} 组`);
+                        logger.system(`✅ Legil 创意拓展当前批次完成：共 ${progressTotal} 组，成功 ${getAggregateSuccess()} 组，失败 ${getAggregateFailed()} 组，保存 ${getAggregateSaved()} 张`);
                     }
                     logger.system('========================================');
                 } catch (error) {
@@ -1898,6 +1970,7 @@ module.exports = function registerLegilRoutes(app, context) {
                         saved: getAggregateSaved(),
                         outputTotal,
                         browserMode: creativeBrowserMode,
+                        failedPromptResults,
                         currentAction: `创意拓展任务被中断：${safeMessage}`,
                         updatedAt: new Date().toISOString()
                     };
@@ -1930,18 +2003,20 @@ module.exports = function registerLegilRoutes(app, context) {
                                 batchRunId,
                                 savedFiles,
                                 promptResults,
+                                failedPromptResults,
                                 updatedAt: new Date().toISOString()
                             }
                         });
                     }
-                    if (req.body && req.body.suppressLegilNotification !== true) {
+                    const isCreativeAutoLegilRun = Boolean(req.body && req.body.creativeAutoRunId);
+                    if (req.body && req.body.suppressLegilNotification !== true && !isCreativeAutoLegilRun) {
                         notifyLegilResult('creative-batch', {
                             successCount: getAggregateSuccess(),
                             failedCount: getAggregateFailed(),
                             interrupted: Boolean(interruptedMessage),
                             message: interruptedMessage || (stopped
                                 ? `任务已停止：成功 ${getAggregateSuccess()} 组，失败 ${getAggregateFailed()} 组`
-                                : `任务完成：成功 ${getAggregateSuccess()} 组，失败 ${getAggregateFailed()} 组`)
+                                : `当前批次完成：共 ${progressTotal} 组，成功 ${getAggregateSuccess()} 组，失败 ${getAggregateFailed()} 组，保存 ${getAggregateSaved()} 张`)
                         });
                     }
                     legilAutomation.saveFolder = previousSaveFolder;

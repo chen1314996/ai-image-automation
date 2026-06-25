@@ -427,7 +427,7 @@
 
         function downloadCreativeAgentTable() {
             if (!creativeAgentLastResult?.downloadUrl) {
-                showToast('当前 Agent 结果没有下载文件', 'error');
+                showToast('当前助手结果没有下载文件', 'error');
                 return;
             }
             window.location.href = creativeAgentLastResult.downloadUrl;

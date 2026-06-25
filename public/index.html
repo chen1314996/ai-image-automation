@@ -4,131 +4,205 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI生图自动化平台</title>
-    <link rel="stylesheet" href="/css/app.css">
-    <link rel="stylesheet" href="/css/task-workbook.css?v=20260602-stage2c">
+    <link rel="icon" type="image/png" href="/assets/app-icon.png">
+    <link rel="stylesheet" href="/css/app.css?v=20260618-mass-buttons">
+    <link rel="stylesheet" href="/css/task-workbook.css?v=20260617-task-compact">
 </head>
 <body class="run-center-mode">
     <div class="app">
         <!-- Header -->
-        <header class="header">
-            <nav class="page-tabs" aria-label="页面切换">
-                <button type="button" class="page-tab active" id="runCenterPageTab" onclick="switchPage('runCenter')">运行中心</button>
-                <button type="button" class="page-tab" id="materialAnalysisPageTab" onclick="switchPage('materialAnalysis')">素材分析</button>
-                <button type="button" class="page-tab" id="taskWorkbookPageTab" onclick="switchPage('taskWorkbook')">任务方向池</button>
-                <button type="button" class="page-tab" id="creativePageTab" onclick="switchPage('creative')">创意拓展</button>
-                <button type="button" class="page-tab" id="massPageTab" onclick="switchPage('mass')">批量产图</button>
-                <button type="button" class="page-tab" id="knowledgePageTab" onclick="switchPage('knowledge')">知识库</button>
-                <button type="button" class="page-tab" id="deliveryPageTab" onclick="switchPage('delivery')">改尺寸</button>
-                <button type="button" class="page-tab" id="configPageTab" onclick="switchPage('config')">配置</button>
-            </nav>
+        <header class="header app-header">
+            <div class="header-main">
+                <div class="header-copy">
+                    <h1><span class="brand-icon" aria-hidden="true"><img src="/assets/app-icon.png" alt=""></span><span>AI生图自动化平台</span></h1>
+                    <p id="pageSubtitle">运行中心：统一查看批量产图、创意拓展和交付任务的运行状态</p>
+                </div>
+                <button type="button" class="mobile-nav-toggle" id="mobileNavToggle" aria-expanded="false" aria-controls="pageTabs" onclick="toggleMobileNav()">
+                    <span id="currentPageLabel">运行中心</span>
+                    <span class="mobile-nav-toggle-meta">页面切换</span>
+                </button>
+            </div>
 
-            <h1><span class="brand-icon" aria-hidden="true"></span><span>AI生图自动化平台</span></h1>
-            <p id="pageSubtitle">运行中心：统一查看老流程、新流程、当前 Agent 和 Legil 队列</p>
+            <nav class="page-tabs page-tabs-grouped" id="pageTabs" aria-label="页面切换">
+                <div class="page-tab-group">
+                    <span class="page-tab-group-label">运行</span>
+                    <div class="page-tab-group-items">
+                        <button type="button" class="page-tab active" id="runCenterPageTab" onclick="switchPage('runCenter')">运行中心</button>
+                        <!-- 暂时隐藏自动化策略入口，保留页面代码便于后续恢复。 -->
+                        <button type="button" class="page-tab" id="autonomyPolicyPageTab" onclick="switchPage('autonomyPolicy')" hidden>自动化策略</button>
+                    </div>
+                </div>
+                <div class="page-tab-group">
+                    <span class="page-tab-group-label">生产</span>
+                    <div class="page-tab-group-items">
+                        <button type="button" class="page-tab" id="creativePageTab" onclick="switchPage('creative')">创意拓展</button>
+                        <button type="button" class="page-tab" id="materialAnalysisPageTab" onclick="switchPage('materialAnalysis')">素材分析</button>
+                        <button type="button" class="page-tab" id="taskWorkbookPageTab" onclick="switchPage('taskWorkbook')">方案迭代</button>
+                        <button type="button" class="page-tab" id="massPageTab" onclick="switchPage('mass')">批量产图</button>
+                    </div>
+                </div>
+                <div class="page-tab-group">
+                    <span class="page-tab-group-label">资产交付</span>
+                    <div class="page-tab-group-items">
+                        <button type="button" class="page-tab" id="knowledgePageTab" onclick="switchPage('knowledge')">知识库</button>
+                        <button type="button" class="page-tab" id="deliveryPageTab" onclick="switchPage('delivery')">改尺寸</button>
+                    </div>
+                </div>
+                <div class="page-tab-group">
+                    <span class="page-tab-group-label">系统</span>
+                    <div class="page-tab-group-items">
+                        <button type="button" class="page-tab" id="configPageTab" onclick="switchPage('config')">配置</button>
+                    </div>
+                </div>
+            </nav>
         </header>
+        <div class="mobile-nav-backdrop" id="mobileNavBackdrop" onclick="closeMobileNav()" hidden></div>
 
         <!-- Status Bar -->
-        <div class="status-bar">
-            <div class="status-item" id="browserStatusItem">
+        <div class="status-bar product-status-strip">
+            <div class="status-item product-status-item status-offline" id="browserStatusItem">
                 <span class="status-dot"></span>
                 <span id="browserStatusText">浏览器未启动</span>
             </div>
-            <div class="status-item" id="doubaoStatusItem">
+            <div class="status-item product-status-item status-offline" id="doubaoStatusItem">
                 <span class="status-dot"></span>
                 <span id="doubaoStatusText">提示词模型未配置</span>
             </div>
-            <div class="status-item" id="legilStatusItem">
+            <div class="status-item product-status-item status-offline" id="legilStatusItem">
                 <span class="status-dot"></span>
-                <span id="legilStatusText">Legil未连接</span>
+                <span id="legilStatusText">生图平台未连接</span>
+            </div>
+            <div class="status-item product-status-item status-busy creative-check-status-item" data-creative-check-id="knowledgeImported">
+                <span class="status-dot"></span>
+                <span>创意知识库已导入</span>
+            </div>
+            <div class="status-item product-status-item status-busy creative-check-status-item" data-creative-check-id="outputFolderWritable">
+                <span class="status-dot"></span>
+                <span>输出目录可写</span>
+            </div>
+            <div class="status-item product-status-item status-busy creative-check-status-item" data-creative-check-id="referenceFolderExists">
+                <span class="status-dot"></span>
+                <span>参考图目录存在</span>
+            </div>
+            <div class="status-item product-status-item status-busy creative-check-status-item" data-creative-check-id="browserModeConfigured">
+                <span class="status-dot"></span>
+                <span>浏览器模式已设置</span>
             </div>
         </div>
 
         <section class="page-view active" id="runCenterPage">
-            <div class="run-center-workbench">
-                <div class="run-center-hero card card-wide">
+            <div class="run-center-workbench product-workbench">
+                <div class="run-center-hero card card-wide product-task-surface">
                     <div>
+                        <div class="autonomy-stage-row">
+                            <span class="autonomy-stage-badge" id="runCenterStageBadge">辅助自动</span>
+                            <span class="autonomy-stage-note">系统状态</span>
+                        </div>
                         <div class="card-title">
                             <span class="icon icon-blue icon-run" aria-hidden="true"></span>
                             统一运行中心
                         </div>
-                        <p class="run-center-copy">老流程参考图批量生图与新流程自动创意共用同一个状态视图。这里显示 run、phase、当前 Agent、进度、控制能力和 Legil 队列。</p>
+                        <p class="run-center-copy">统一查看批量产图、创意拓展和交付任务的运行状态，集中展示任务阶段、进度和控制能力。</p>
                     </div>
                     <div class="run-center-hero-actions">
-                        <button type="button" class="btn btn-danger" id="runCenterStopAllBtn" onclick="stopAllRunCenterTasks()" disabled>停止所有任务</button>
-                        <button type="button" class="btn btn-primary" id="runCenterResumeBtn" onclick="resumeRunCenterTask()" disabled>继续任务</button>
-                        <button type="button" class="btn btn-secondary" onclick="refreshRunCenterStatus()">刷新状态</button>
+                        <div class="run-center-platform-actions">
+                            <button type="button" class="btn btn-primary" onclick="openSingleWebsite('legil')">打开生图平台</button>
+                            <button type="button" class="btn btn-secondary" onclick="closeBrowser()">关闭浏览器</button>
+                        </div>
+                        <div class="run-center-task-actions">
+                            <button type="button" class="btn btn-danger" id="runCenterStopAllBtn" onclick="stopAllRunCenterTasks()" disabled>停止所有任务</button>
+                            <button type="button" class="btn btn-primary" id="runCenterResumeBtn" onclick="resumeRunCenterTask()" disabled>继续任务</button>
+                            <button type="button" class="btn btn-secondary" onclick="refreshRunCenterStatus()">刷新状态</button>
+                        </div>
                     </div>
                 </div>
 
-                <div class="run-center-overview">
-                    <div class="run-center-metric">
+                <div class="run-center-overview product-metric-grid">
+                    <div class="run-center-metric product-metric-card">
                         <span>全局状态</span>
                         <strong id="runCenterGlobalStatus">读取中</strong>
                     </div>
-                    <div class="run-center-metric">
-                        <span>当前 Phase</span>
+                    <div class="run-center-metric product-metric-card">
+                        <span>当前阶段</span>
                         <strong id="runCenterGlobalPhase">--</strong>
                     </div>
-                    <div class="run-center-metric">
-                        <span>当前 Agent</span>
+                    <div class="run-center-metric product-metric-card">
+                        <span>当前执行模块</span>
                         <strong id="runCenterCurrentAgent">--</strong>
                     </div>
-                    <div class="run-center-metric">
+                    <div class="run-center-metric product-metric-card">
                         <span>最近更新</span>
                         <strong id="runCenterUpdatedAt">--</strong>
                     </div>
                 </div>
 
+                <div class="autonomy-health-panel" id="runCenterHealthSummary">
+                    <div class="autonomy-health-title">
+                        <strong>系统健康摘要</strong>
+                        <span>真实状态</span>
+                    </div>
+                    <div class="autonomy-health-grid">
+                        <div class="autonomy-health-item">
+                            <span>运行状态</span>
+                            <strong class="autonomy-health-value" id="runCenterHealthRunStatus">读取中</strong>
+                        </div>
+                        <div class="autonomy-health-item">
+                            <span>队列状态</span>
+                            <strong class="autonomy-health-value" id="runCenterHealthQueueStatus">--</strong>
+                        </div>
+                        <div class="autonomy-health-item">
+                            <span>今日产量</span>
+                            <strong class="autonomy-health-value" id="runCenterHealthTodayOutput">--</strong>
+                        </div>
+                        <div class="autonomy-health-item">
+                            <span>关键异常</span>
+                            <strong class="autonomy-health-value" id="runCenterHealthP0">--</strong>
+                        </div>
+                        <div class="autonomy-health-item">
+                            <span>未评审资产</span>
+                            <strong class="autonomy-health-value" id="runCenterHealthUnreviewed">--</strong>
+                        </div>
+                    </div>
+                    <div class="autonomy-warning-list" id="runCenterP0Warnings">
+                        <span class="autonomy-warning-chip">诊断中</span>
+                    </div>
+                </div>
+
                 <div class="run-center-grid">
-                    <div class="card run-center-card" id="runCenterActiveRunCard">
+                    <div class="card run-center-card product-task-card" id="runCenterActiveRunCard">
                         <div class="run-center-card-heading">
                             <div class="card-title">
                                 <span class="icon icon-green icon-chat" aria-hidden="true"></span>
-                                当前 Run
+                                当前任务
                             </div>
-                            <span class="run-center-pill" id="runCenterActiveRunStatus">空闲</span>
+                            <span class="run-center-estimate" id="runCenterEstimateText">预计完成时间：计算中</span>
                         </div>
                         <div class="run-center-current-message" id="runCenterCurrentMessage">暂无运行中的任务。</div>
                         <div class="run-center-progress">
                             <div class="progress-label">
-                                <span>统一进度</span>
+                                <span id="runCenterProgressLabel">整体进度</span>
                                 <span id="runCenterProgressText">0%</span>
                             </div>
                             <div class="progress-bar">
                                 <div class="progress-fill" id="runCenterProgressBar" style="width: 0%"></div>
                             </div>
                         </div>
-                        <div class="run-center-detail-grid">
-                            <div><span>Run ID</span><strong id="runCenterRunId">--</strong></div>
+                        <div class="run-center-detail-grid product-detail-grid">
+                            <div><span>任务 ID</span><strong id="runCenterRunId">--</strong></div>
                             <div><span>流程</span><strong id="runCenterRunType">--</strong></div>
                             <div><span>模式</span><strong id="runCenterMode">--</strong></div>
                             <div><span>来源</span><strong id="runCenterSource">--</strong></div>
                         </div>
                         <div class="run-center-control-row">
+                            <span class="run-center-pill" id="runCenterActiveRunStatus">空闲</span>
                             <span id="runCenterCanPause" class="run-center-control">暂停不可用</span>
                             <span id="runCenterCanResume" class="run-center-control">继续不可用</span>
                             <span id="runCenterCanStop" class="run-center-control">停止不可用</span>
                         </div>
                     </div>
-
-                    <div class="card run-center-card">
-                        <div class="run-center-card-heading">
-                            <div class="card-title">
-                                <span class="icon icon-purple icon-image" aria-hidden="true"></span>
-                                Legil 队列
-                            </div>
-                            <span class="run-center-pill" id="runCenterLegilStatus">空闲</span>
-                        </div>
-                        <div class="run-center-detail-grid">
-                            <div><span>任务类型</span><strong id="runCenterLegilTaskType">--</strong></div>
-                            <div><span>队列长度</span><strong id="runCenterLegilQueueLength">0</strong></div>
-                            <div><span>提示词进度</span><strong id="runCenterLegilProgress">0 / 0</strong></div>
-                            <div><span>保存图片</span><strong id="runCenterLegilSaved">0</strong></div>
-                        </div>
-                        <div class="run-center-current-message" id="runCenterLegilMessage">暂无 Legil 任务。</div>
-                    </div>
                 </div>
 
-                <div class="card card-wide run-center-card">
+                <div class="card card-wide run-center-card product-task-card">
                     <div class="card-title">
                         <span class="icon icon-pink icon-link" aria-hidden="true"></span>
                         流程状态
@@ -139,434 +213,360 @@
         </section>
 
         <section class="page-view" id="massPage">
-        <!-- Main Grid -->
-        <div class="main-grid">
-            <!-- Configuration Card -->
-            <div class="card">
-                <div class="card-title">
-                    <span class="icon icon-blue icon-folder" aria-hidden="true"></span>
-                    文件夹配置
+            <div class="mass-workbench product-workbench" id="massWorkbench">
+                <div class="mass-page-heading product-page-heading">
+                    <div>
+                        <h2>批量产图</h2>
+                        <p>根据参考图自动生成提示词，并批量提交生图任务。</p>
+                    </div>
+                    <div class="mass-mode-tabs" role="tablist" aria-label="批量产图模式">
+                        <button type="button" class="mass-mode-tab active" data-mass-mode="reference" onclick="switchMassMode('reference')">参考图自动产图</button>
+                        <button type="button" class="mass-mode-tab" data-mass-mode="table" onclick="switchMassMode('table')">表格提示词产图</button>
+                    </div>
                 </div>
 
-                <div class="form-group folder-field">
-                    <div class="folder-field-heading">
-                        <label for="referenceFolder">参考图文件夹</label>
-                        <span class="folder-desc">提示词模型会按文件名顺序读取这里的参考图</span>
-                    </div>
-                    <div class="folder-path-row">
-                        <div class="folder-input-combo">
-                            <input type="text" id="referenceFolder" placeholder="默认：D:\工作\自动化工作流1\批量产图\输入" value="D:\工作\自动化工作流1\批量产图\输入">
-                            <button type="button" class="folder-history-button" id="referenceFolderHistoryButton" onclick="toggleFolderHistory('referenceFolder')"><span class="history-caret">▼</span>历史</button>
-                            <div class="folder-history-menu" id="referenceFolderHistoryMenu"></div>
+                <div class="mass-mode-panel active" id="massModeReference" data-mass-mode-panel="reference">
+                    <div class="mass-primary-surface product-task-surface">
+                        <div class="mass-primary-intro">
+                            <div>
+                                <span class="mass-eyebrow">默认流程</span>
+                                <h3>参考图自动产图</h3>
+                                <p>读取参考图文件夹，调用 Winky 生成提示词，再提交到生图平台批量生成并保存结果。</p>
+                            </div>
+                            <div class="mass-mini-status" id="massMiniStatus" data-state="idle">
+                                <span class="mass-mini-dot" aria-hidden="true"></span>
+                                <span>任务状态</span>
+                                <strong id="massMiniStage">待启动</strong>
+                                <span id="massMiniCurrentImage">未扫描参考图</span>
+                                <span id="massMiniProgress">0 / 0</span>
+                            </div>
                         </div>
-                        <button class="btn btn-secondary btn-folder-browse" onclick="browseFolder('referenceFolder')">浏览</button>
-                    </div>
-                    <div class="info-box" id="refCountInfo"></div>
-                </div>
 
-                <div class="form-group folder-field">
-                    <div class="folder-field-heading">
-                        <label for="legilReferenceFolder">Legil参考图文件夹</label>
-                        <span class="folder-desc">Legil 图生图时循环上传这里的参考图</span>
-                    </div>
-                    <div class="folder-path-row">
-                        <div class="folder-input-combo">
-                            <input type="text" id="legilReferenceFolder" placeholder="默认：D:\工作\自动化工作流1\批量产图\参考图" value="D:\工作\自动化工作流1\批量产图\参考图">
-                            <button type="button" class="folder-history-button" id="legilReferenceFolderHistoryButton" onclick="toggleFolderHistory('legilReferenceFolder')"><span class="history-caret">▼</span>历史</button>
-                            <div class="folder-history-menu" id="legilReferenceFolderHistoryMenu"></div>
+                        <div class="mass-primary-grid">
+                            <div class="mass-folder-panel">
+                                <div class="form-group folder-field product-folder-field">
+                                    <div class="folder-field-heading">
+                                        <label for="referenceFolder">参考图文件夹</label>
+                                        <span class="folder-desc">提示词模型按文件名顺序读取这里的参考图</span>
+                                    </div>
+                                    <div class="folder-path-row">
+                                        <div class="folder-input-combo">
+                                            <input type="text" id="referenceFolder" placeholder="默认：D:\工作\自动化工作流1\批量产图\输入" value="D:\工作\自动化工作流1\批量产图\输入">
+                                            <button type="button" class="folder-history-button" id="referenceFolderHistoryButton" onclick="toggleFolderHistory('referenceFolder')"><span class="history-caret">▼</span>历史</button>
+                                            <div class="folder-history-menu" id="referenceFolderHistoryMenu"></div>
+                                        </div>
+                                        <button class="btn btn-secondary btn-folder-browse" onclick="browseFolder('referenceFolder')">浏览</button>
+                                    </div>
+                                    <div class="info-box" id="refCountInfo"></div>
+                                </div>
+
+                                <div class="form-group folder-field product-folder-field">
+                                    <div class="folder-field-heading">
+                                        <label for="legilReferenceFolder">生图参考图文件夹</label>
+                                        <span class="folder-desc">图生图任务会循环上传这里的参考图</span>
+                                    </div>
+                                    <div class="folder-path-row">
+                                        <div class="folder-input-combo">
+                                            <input type="text" id="legilReferenceFolder" placeholder="默认：D:\工作\自动化工作流1\批量产图\参考图" value="D:\工作\自动化工作流1\批量产图\参考图">
+                                            <button type="button" class="folder-history-button" id="legilReferenceFolderHistoryButton" onclick="toggleFolderHistory('legilReferenceFolder')"><span class="history-caret">▼</span>历史</button>
+                                            <div class="folder-history-menu" id="legilReferenceFolderHistoryMenu"></div>
+                                        </div>
+                                        <button class="btn btn-secondary btn-folder-browse" onclick="browseFolder('legilReferenceFolder')">浏览</button>
+                                    </div>
+                                    <div class="info-box" id="legilRefCountInfo"></div>
+                                </div>
+
+                                <div class="form-group folder-field product-folder-field">
+                                    <div class="folder-field-heading">
+                                        <label for="saveFolder">输出文件夹</label>
+                                        <span class="folder-desc">生成结果按任务顺序保存到这个目录</span>
+                                    </div>
+                                    <div class="folder-path-row">
+                                        <div class="folder-input-combo">
+                                            <input type="text" id="saveFolder" placeholder="默认：D:\工作\自动化工作流1\批量产图\输出" value="D:\工作\自动化工作流1\批量产图\输出">
+                                            <button type="button" class="folder-history-button" id="saveFolderHistoryButton" onclick="toggleFolderHistory('saveFolder')"><span class="history-caret">▼</span>历史</button>
+                                            <div class="folder-history-menu" id="saveFolderHistoryMenu"></div>
+                                        </div>
+                                        <button class="btn btn-secondary btn-folder-browse" onclick="browseFolder('saveFolder')">浏览</button>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
-                        <button class="btn btn-secondary btn-folder-browse" onclick="browseFolder('legilReferenceFolder')">浏览</button>
-                    </div>
-                    <div class="info-box" id="legilRefCountInfo"></div>
-                </div>
 
-                <div class="form-group folder-field">
-                    <div class="folder-field-heading">
-                        <label for="saveFolder">输出文件夹</label>
-                        <span class="folder-desc">生成结果会按顺序保存到这个本地目录</span>
-                    </div>
-                    <div class="folder-path-row">
-                        <div class="folder-input-combo">
-                            <input type="text" id="saveFolder" placeholder="默认：D:\工作\自动化工作流1\批量产图\输出" value="D:\工作\自动化工作流1\批量产图\输出">
-                            <button type="button" class="folder-history-button" id="saveFolderHistoryButton" onclick="toggleFolderHistory('saveFolder')"><span class="history-caret">▼</span>历史</button>
-                            <div class="folder-history-menu" id="saveFolderHistoryMenu"></div>
-                        </div>
-                        <button class="btn btn-secondary btn-folder-browse" onclick="browseFolder('saveFolder')">浏览</button>
-                    </div>
-                </div>
-
-                <div class="action-grid action-grid-compact">
-                    <button class="btn btn-secondary" onclick="openSingleWebsite('legil')">打开Legil</button>
-                    <button class="btn btn-secondary" onclick="closeBrowser()">关闭浏览器</button>
-                </div>
-            </div>
-
-            <!-- Settings Card -->
-            <div class="card" id="legilUrlConfigCard">
-                <div class="card-title">
-                    <span class="icon icon-pink icon-link" aria-hidden="true"></span>
-                    Legil网址
-                </div>
-
-                <div class="form-group">
-                    <label>Legil网址</label>
-                    <input type="text" id="legilUrl" value="https://lumos.diandian.info/legil/image-ai/image-to-image">
-                </div>
-            </div>
-
-            <details class="card card-wide collapsible-card compact-config-card" id="promptGenerationConfigCard" open>
-                <summary class="card-title">
-                    <span class="icon icon-green icon-chat" aria-hidden="true"></span>
-                    提示词生成模型配置
-                </summary>
-
-                <div class="setting-group">
-                    <label>提示词生成方式</label>
-                    <div class="model-options workflow-browser-mode-options" id="promptProviderOptions">
-                        <button type="button" class="model-option" data-prompt-provider="lumos" onclick="setPromptProvider('lumos')">
-                            <span class="model-option-title">Lumos Winky</span>
-                            <span class="model-option-desc">使用后端安全密钥调用可用模型</span>
-                        </button>
-                    </div>
-                </div>
-
-                <div id="lumosPromptConfigPanel" data-prompt-provider-panel="lumos">
-                    <div class="form-group">
-                        <label>Lumos Winky API Key</label>
-                        <input type="text" id="lumosPromptApiKeyStatus" value="等待读取后端配置" readonly>
-                        <div class="field-meta">
-                            <span>密钥仅由后端读取，页面不会显示或保存明文</span>
+                        <div class="mass-primary-actions product-action-row">
+                            <button type="button" class="btn btn-primary" id="massScanBtn" onclick="scanMassReferenceFolders()">扫描参考图</button>
+                            <button type="button" class="btn btn-primary" id="oneClickStartBtn" onclick="startWorkflowWithConfirm()">开始自动产图</button>
+                            <button type="button" class="btn btn-secondary" id="massViewProgressBtn" onclick="scrollMassProgressIntoView()">查看日志</button>
+                            <button type="button" class="btn btn-secondary" id="massPauseBtn" onclick="stopWorkflow()">暂停任务</button>
+                            <div class="resume-actions" id="workflowResumeActions">
+                                <button class="btn btn-primary" id="resumeWorkflowBtn" onclick="resumeWorkflowFromStop()">继续任务</button>
+                                <button class="btn btn-secondary" id="newWorkflowBtn" onclick="startNewWorkflowFromStop()">新建任务</button>
+                            </div>
+                            <button type="button" class="btn btn-secondary" onclick="openSingleWebsite('legil')">打开生图平台</button>
                         </div>
                     </div>
 
-                    <div class="form-group">
-                        <label for="lumosPromptModelSelect">Lumos Winky GPT-5.5 模型</label>
-                        <select id="lumosPromptModelSelect" class="model-select" onchange="setLumosPromptModelFromSelect()">
-                            <option value="">正在自动读取 GPT-5.5 系列模型...</option>
-                        </select>
-                        <div class="field-meta">
-                            <span id="lumosPromptModelStatus">系统只展示 GPT-5.5 系列模型，你只需要选择</span>
-                        </div>
-                    </div>
-                    <input type="hidden" id="lumosPromptModel">
+                    <details class="mass-legil-panel" id="legilGenerationConfigCard" aria-label="参考图自动产图参数">
+                        <summary class="mass-legil-summary">
+                            <span>参考图自动产图参数</span>
+                            <small>
+                                <strong id="massSummaryWinky">gpt-5.5</strong>
+                                <strong id="massSummaryModel">Nano Banana 2</strong>
+                                <em id="massSummaryRatio">1:1</em>
+                                <em id="massSummaryResolution">2K</em>
+                                <em id="massSummaryOutput">4 张</em>
+                                <em id="massSummaryBrowserMode">无头</em>
+                            </small>
+                            <b class="mass-legil-toggle-label" aria-hidden="true"></b>
+                        </summary>
 
-                    <details class="compact-advanced-config">
-                        <summary>高级连接配置</summary>
-                        <div class="form-group">
-                            <label>Lumos Winky API URL</label>
-                            <input type="text" id="lumosPromptApiUrl" placeholder="留空则使用后端 WINKY_API_BASE_URL">
-                        </div>
+                        <div class="mass-legil-body">
+                            <div class="mass-legil-heading">
+                                <span>生成设置</span>
+                                <button type="button" class="mass-text-button" onclick="saveMassGenerationConfig()">保存产图参数</button>
+                            </div>
 
-                        <div class="form-group">
-                            <label>Lumos Provider（可选）</label>
-                            <input type="text" id="lumosPromptProvider" placeholder="如 API 代理需要指定 provider，可在这里填写">
+                            <div class="mass-prompt-card mass-legil-prompt-card" id="massPromptTemplateCard">
+                                <div class="workflow-prompt-box">
+                                    <div class="workflow-prompt-heading">
+                                        <div class="workflow-prompt-title">
+                                            <label for="lumosPromptTemplate">提示词生成要求</label>
+                                            <span class="workflow-prompt-provider">Lumos Winky</span>
+                                        </div>
+                                        <span class="workflow-prompt-count" id="lumosPromptCount">0 字</span>
+                                    </div>
+                                    <textarea id="lumosPromptTemplate" rows="7" placeholder="输入想对模型说的话，例如：参考这张图生成 4 组差异明显的新画面提示词，保留核心主题，忽略原图文字，保持冰雪极寒氛围，避免科幻、高科技和奇幻元素。"></textarea>
+                                    <div class="workflow-prompt-meta">随每张参考图发送给 Winky，用来控制提示词组数、画面风格、主题保留、禁忌项和差异化方向。Winky 生成的提示词会继续发送给 Legil 产图。</div>
+                                </div>
+                            </div>
+
+                            <div class="setting-group mass-legil-side-group">
+                                <label>运行模式</label>
+                                <div class="model-options workflow-browser-mode-options" id="workflowLegilBrowserModeOptions">
+                                    <button type="button" class="model-option" data-workflow-browser-mode="headless" onclick="setWorkflowBrowserMode('headless')">
+                                        <span class="model-option-title">无头模式</span>
+                                        <span class="model-option-desc">后台运行不显示窗口</span>
+                                    </button>
+                                    <button type="button" class="model-option" data-workflow-browser-mode="headed" onclick="setWorkflowBrowserMode('headed')">
+                                        <span class="model-option-title">有头模式</span>
+                                        <span class="model-option-desc">显示浏览器窗口</span>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div class="setting-group mass-legil-model-group">
+                                <label>图生图模型</label>
+                                <div class="model-options" id="legilImageModelOptions"></div>
+                            </div>
+
+                            <div class="mass-legil-compact-grid">
+                                <div class="setting-group">
+                                    <label>宽高比</label>
+                                    <div class="setting-options" id="legilAspectRatioOptions"></div>
+                                </div>
+
+                                <div class="setting-group">
+                                    <label>分辨率</label>
+                                    <div class="setting-options" id="legilResolutionOptions"></div>
+                                </div>
+
+                                <div class="setting-group">
+                                    <label>输出数量</label>
+                                    <div class="setting-options" id="legilOutputQuantityOptions"></div>
+                                </div>
+                            </div>
+
+                            <div class="info-box" id="legilGenerationConfigInfo" data-legil-generation-info></div>
                         </div>
                     </details>
 
-                </div>
+                    <div class="mass-mobile-sticky-actions product-mobile-sticky-actions" id="massMobileStickyActions">
+                        <button type="button" class="btn btn-primary" id="massStickyPrimaryBtn" onclick="handleMassStickyPrimaryAction()">扫描参考图</button>
+                        <button type="button" class="btn btn-secondary" onclick="openSingleWebsite('legil')">打开生图平台</button>
+                    </div>
 
-                <div class="input-actions">
-                    <button class="btn btn-primary" onclick="savePromptGenerationConfig()">保存提示词模型配置</button>
-                    <button class="btn btn-secondary" onclick="loadLumosPromptModels()">刷新Lumos模型</button>
-                    <button class="btn btn-secondary" onclick="testPromptGenerationConfig()">测试生成提示词</button>
-                    <button class="btn btn-secondary" onclick="resetDoubaoPrompt()">恢复默认指令</button>
-                    <button class="btn btn-secondary" onclick="refreshPromptGenerationConfig()">刷新配置</button>
-                </div>
-                <div class="info-box" id="doubaoConfigInfo"></div>
-            </details>
-
-            <details class="card card-wide collapsible-card compact-config-card" id="legilGenerationConfigCard" open>
-                <summary class="card-title">
-                    <span class="icon icon-purple icon-image" aria-hidden="true"></span>
-                    Legil生成参数
-                </summary>
-
-                <div class="setting-group">
-                    <label>运行模式</label>
-                    <div class="model-options workflow-browser-mode-options" id="workflowLegilBrowserModeOptions">
-                        <button type="button" class="model-option" data-workflow-browser-mode="headless" onclick="setWorkflowBrowserMode('headless')">
-                            <span class="model-option-title">无头模式</span>
-                            <span class="model-option-desc">后台运行不显示窗口</span>
-                        </button>
-                        <button type="button" class="model-option" data-workflow-browser-mode="headed" onclick="setWorkflowBrowserMode('headed')">
-                            <span class="model-option-title">有头模式</span>
-                            <span class="model-option-desc">显示浏览器窗口</span>
-                        </button>
+                    <div class="mass-hidden-runtime" hidden>
+                        <input type="text" id="legilUrl" value="https://lumos.diandian.info/legil/image-ai/image-to-image">
+                        <input type="text" id="lumosPromptApiKeyStatus" value="等待读取后端配置" readonly>
+                        <select id="lumosPromptModelSelect" onchange="setLumosPromptModelFromSelect()">
+                            <option value="">正在自动读取 GPT-5.5 系列模型...</option>
+                        </select>
+                        <span id="lumosPromptModelStatus"></span>
+                        <input type="hidden" id="lumosPromptModel">
+                        <input type="hidden" id="lumosPromptApiUrl">
+                        <input type="hidden" id="lumosPromptProvider">
+                        <div id="doubaoConfigInfo"></div>
+                        <div class="progress-panel" id="progressPanel">
+                            <span id="imageProgressText">0 / 0</span>
+                            <div id="imageProgressBar" style="width: 0%"></div>
+                            <span id="promptProgressText">0 / 0</span>
+                            <div id="promptProgressBar" style="width: 0%"></div>
+                            <div id="currentStatusText">准备就绪...</div>
+                            <div id="statsSuccess">0</div>
+                            <div id="statsFailed">0</div>
+                            <div id="statsGenerated">0</div>
+                        </div>
                     </div>
                 </div>
 
-                <div class="setting-group">
-                    <label>图生图模型</label>
-                    <div class="model-options" id="legilImageModelOptions"></div>
-                </div>
+                <div class="mass-mode-panel" id="massModeTable" data-mass-mode-panel="table">
+                    <div class="card card-wide table-prompts-panel" id="tablePromptsPanel">
+                        <div class="table-prompts-heading">
+                            <div>
+                                <div class="card-title">表格提示词批量产图</div>
+                                <p class="table-prompts-subtitle">上传 CSV 或 XLSX，自动提取所有 AI提示词 列，并使用这里配置的生图参考图文件夹和输出文件夹批量产图。</p>
+                            </div>
+                            <div class="table-prompts-actions">
+                                <input type="file" id="tablePromptFileInput" multiple accept=".csv,.xlsx,.xls" hidden onchange="handleTablePromptFilesChange(this)">
+                                <button type="button" class="btn btn-secondary" onclick="document.getElementById('tablePromptFileInput')?.click()">选择表格</button>
+                                <button type="button" class="btn btn-secondary" onclick="clearTablePromptImport()">清空</button>
+                                <button type="button" class="btn btn-secondary" onclick="refreshTablePromptResume()">刷新续跑</button>
+                            </div>
+                        </div>
 
-                <div class="setting-group">
-                    <label>宽高比</label>
-                    <div class="setting-options" id="legilAspectRatioOptions"></div>
-                </div>
+                        <div class="table-prompts-folder-grid">
+                            <div class="form-group folder-field">
+                                <div class="folder-field-heading">
+                                    <label for="tablePromptReferenceFolder">生图参考图文件夹</label>
+                                    <span class="folder-desc">表格提示词批量产图时循环上传这里的参考图</span>
+                                </div>
+                                <div class="folder-path-row">
+                                    <div class="folder-input-combo">
+                                        <input type="text" id="tablePromptReferenceFolder" placeholder="默认：D:\工作\自动化工作流1\批量产图\参考图" value="D:\工作\自动化工作流1\批量产图\参考图">
+                                        <button type="button" class="folder-history-button" id="tablePromptReferenceFolderHistoryButton" onclick="toggleFolderHistory('tablePromptReferenceFolder')"><span class="history-caret">▼</span>历史</button>
+                                        <div class="folder-history-menu" id="tablePromptReferenceFolderHistoryMenu"></div>
+                                    </div>
+                                    <button class="btn btn-secondary btn-folder-browse" onclick="browseFolder('tablePromptReferenceFolder')">浏览</button>
+                                </div>
+                            </div>
 
-                <div class="setting-group">
-                    <label>分辨率</label>
-                    <div class="setting-options" id="legilResolutionOptions"></div>
-                </div>
+                            <div class="form-group folder-field">
+                                <div class="folder-field-heading">
+                                    <label for="tablePromptOutputFolder">输出文件夹</label>
+                                    <span class="folder-desc">表格提示词生成结果保存到这个本地目录</span>
+                                </div>
+                                <div class="folder-path-row">
+                                    <div class="folder-input-combo">
+                                        <input type="text" id="tablePromptOutputFolder" placeholder="默认：D:\工作\自动化工作流1\批量产图\输出" value="D:\工作\自动化工作流1\批量产图\输出">
+                                        <button type="button" class="folder-history-button" id="tablePromptOutputFolderHistoryButton" onclick="toggleFolderHistory('tablePromptOutputFolder')"><span class="history-caret">▼</span>历史</button>
+                                        <div class="folder-history-menu" id="tablePromptOutputFolderHistoryMenu"></div>
+                                    </div>
+                                    <button class="btn btn-secondary btn-folder-browse" onclick="browseFolder('tablePromptOutputFolder')">浏览</button>
+                                </div>
+                            </div>
+                        </div>
 
-                <div class="setting-group">
-                    <label>输出数量</label>
-                    <div class="setting-options" id="legilOutputQuantityOptions"></div>
-                </div>
+                        <details class="mass-legil-panel table-legil-panel" id="tableLegilGenerationConfigCard" aria-label="表格提示词产图 Legil生成参数">
+                            <summary class="mass-legil-summary">
+                                <span>Legil生成参数</span>
+                                <small>
+                                    <strong id="tableSummaryModel">Nano Banana 2</strong>
+                                    <em id="tableSummaryRatio">1:1</em>
+                                    <em id="tableSummaryResolution">2K</em>
+                                    <em id="tableSummaryOutput">4 张</em>
+                                    <em id="tableSummaryBrowserMode">无头</em>
+                                </small>
+                                <b class="mass-legil-toggle-label" aria-hidden="true"></b>
+                            </summary>
 
-                <div class="input-actions">
-                    <button class="btn btn-primary" onclick="saveLegilGenerationConfig()">保存Legil参数</button>
-                    <button class="btn btn-secondary" onclick="loadLegilGenerationConfig()">刷新参数</button>
-                </div>
-                <div class="info-box" id="legilGenerationConfigInfo"></div>
-            </details>
+                            <div class="mass-legil-body">
+                                <div class="mass-legil-heading">
+                                    <span>生成设置</span>
+                                    <button type="button" class="mass-text-button" onclick="saveLegilGenerationConfig()">保存参数</button>
+                                </div>
 
-            <details class="card card-wide collapsible-card compact-config-card" id="notificationConfigCard" open>
-                <summary class="card-title">
-                    <span class="icon icon-green icon-link" aria-hidden="true"></span>
-                    飞书通知与异常监控
-                </summary>
+                                <div class="setting-group">
+                                    <label>运行模式</label>
+                                    <div class="model-options workflow-browser-mode-options" id="tableWorkflowLegilBrowserModeOptions">
+                                        <button type="button" class="model-option" data-workflow-browser-mode="headless" onclick="setWorkflowBrowserMode('headless')">
+                                            <span class="model-option-title">无头模式</span>
+                                            <span class="model-option-desc">后台运行不显示窗口</span>
+                                        </button>
+                                        <button type="button" class="model-option" data-workflow-browser-mode="headed" onclick="setWorkflowBrowserMode('headed')">
+                                            <span class="model-option-title">有头模式</span>
+                                            <span class="model-option-desc">显示浏览器窗口</span>
+                                        </button>
+                                    </div>
+                                </div>
 
-                <div class="notification-grid">
-                    <label class="notification-toggle">
-                        <input type="checkbox" id="notifyFeishuEnabled">
-                        <span>启用飞书异常通知</span>
-                    </label>
-                    <label class="notification-toggle">
-                        <input type="checkbox" id="notifyTaskCompletionEnabled">
-                        <span>启用任务完成通知</span>
-                    </label>
-                    <label class="notification-toggle">
-                        <input type="checkbox" id="notifyServerStartupEnabled">
-                        <span>启用服务器启动通知</span>
-                    </label>
-                    <label class="notification-toggle">
-                        <input type="checkbox" id="notifyStaleProgressEnabled">
-                        <span>启用长时间无进展通知</span>
-                    </label>
-                </div>
+                                <div class="setting-group">
+                                    <label>图生图模型</label>
+                                    <div class="model-options" id="tableLegilImageModelOptions" data-legil-model-options></div>
+                                </div>
 
-                <div class="notification-number-grid">
-                    <div class="form-group">
-                        <label for="notifyStaleThresholdMinutes">无进展阈值（分钟）</label>
-                        <input type="number" id="notifyStaleThresholdMinutes" min="1" max="1440" step="1" value="15">
+                                <div class="mass-legil-compact-grid">
+                                    <div class="setting-group">
+                                        <label>宽高比</label>
+                                        <div class="setting-options" id="tableLegilAspectRatioOptions" data-legil-options="aspectRatio"></div>
+                                    </div>
+
+                                    <div class="setting-group">
+                                        <label>分辨率</label>
+                                        <div class="setting-options" id="tableLegilResolutionOptions" data-legil-options="resolution"></div>
+                                    </div>
+
+                                    <div class="setting-group">
+                                        <label>输出数量</label>
+                                        <div class="setting-options" id="tableLegilOutputQuantityOptions" data-legil-options="outputQuantity"></div>
+                                    </div>
+                                </div>
+
+                                <div class="info-box" id="tableLegilGenerationConfigInfo" data-legil-generation-info></div>
+                            </div>
+                        </details>
+
+                        <div class="table-prompts-dropzone" id="tablePromptsDropzone">
+                            <strong>拖入一个或多个表格文件</strong>
+                            <span>支持 .csv、.xlsx、.xls；列名包含“AI提示词”的内容会被提取。</span>
+                        </div>
+
+                        <div class="table-prompts-stats" id="tablePromptsStats">
+                            <div><span>文件</span><strong id="tablePromptFileCount">0</strong></div>
+                            <div><span>Sheet</span><strong id="tablePromptSheetCount">0</strong></div>
+                            <div><span>行</span><strong id="tablePromptRowCount">0</strong></div>
+                            <div><span>提示词</span><strong id="tablePromptPromptCount">0</strong></div>
+                            <div><span>预计产图</span><strong id="tablePromptImageCount">0</strong></div>
+                        </div>
+
+                        <div class="table-prompts-toolbar">
+                            <div class="input-actions">
+                                <button type="button" class="btn btn-secondary" onclick="setAllTablePromptsSelected(true)">全选</button>
+                                <button type="button" class="btn btn-secondary" onclick="setAllTablePromptsSelected(false)">全不选</button>
+                                <button type="button" class="btn btn-secondary" onclick="selectFirstTablePrompts(5)">只选前5条测试</button>
+                                <button type="button" class="btn btn-secondary" onclick="selectFirstTablePrompts(10)">只选前10条</button>
+                            </div>
+                            <div class="table-prompts-run-actions">
+                                <button type="button" class="btn btn-primary" id="tablePromptStartBtn" onclick="startTablePromptBatch()">开始表格批量产图</button>
+                                <button type="button" class="btn btn-danger" id="tablePromptStopBtn" onclick="stopTablePromptBatch()" disabled>暂停任务</button>
+                                <button type="button" class="btn btn-success" id="tablePromptResumeBtn" onclick="resumeTablePromptBatch()" disabled>继续任务</button>
+                            </div>
+                        </div>
+
+                        <div class="info-box" id="tablePromptsInfo">等待上传表格。</div>
+                        <div class="table-prompts-warning-list" id="tablePromptsWarnings"></div>
+                        <div class="table-prompts-preview" id="tablePromptsPreview"></div>
                     </div>
-                    <div class="form-group">
-                        <label for="notifyCooldownMinutes">通知冷却时间（分钟）</label>
-                        <input type="number" id="notifyCooldownMinutes" min="0" max="1440" step="1" value="10">
-                    </div>
                 </div>
 
-                <div class="notification-grid notification-grid-secondary">
-                    <label class="notification-toggle">
-                        <input type="checkbox" id="notifyLegilScreenshotEnabled">
-                        <span>Legil异常自动截图并发送</span>
-                    </label>
-                    <label class="notification-toggle">
-                        <input type="checkbox" id="notifyAutoRecoveryEnabled">
-                        <span>启用自动恢复策略</span>
-                    </label>
-                    <label class="notification-toggle">
-                        <input type="checkbox" id="notifyPauseOnFailuresEnabled">
-                        <span>连续失败后暂停等待确认</span>
-                    </label>
-                    <label class="notification-toggle">
-                        <input type="checkbox" id="notifyWatchdogRestartEnabled">
-                        <span>Watchdog掉线自动重启服务</span>
-                    </label>
-                </div>
-
-                <div class="notification-number-grid">
-                    <div class="form-group">
-                        <label for="notifyFailureThreshold">连续失败阈值（次）</label>
-                        <input type="number" id="notifyFailureThreshold" min="1" max="20" step="1" value="3">
-                    </div>
-                    <div class="form-group notification-status-box">
-                        <label>Watchdog状态</label>
-                        <div class="info-box" id="watchdogStatusInfo">等待读取...</div>
-                    </div>
-                </div>
-
-                <div class="input-actions">
-                    <button class="btn btn-primary" onclick="saveNotificationConfig()">保存通知配置</button>
-                    <button class="btn btn-secondary" onclick="loadNotificationConfig()">刷新配置</button>
-                    <button class="btn btn-secondary" onclick="refreshWatchdogStatus()">刷新Watchdog</button>
-                </div>
-                <div class="info-box" id="notificationConfigInfo"></div>
-            </details>
-        </div>
-
-        <!-- Workflow Section -->
-        <div class="workflow-section">
-            <div class="workflow-header">
-                <h2><span class="section-icon icon-run" aria-hidden="true"></span><span>一键启动完整工作流</span></h2>
-                <p>自动处理所有参考图：提示词模型获取提示词 → Legil生成 → 循环处理</p>
             </div>
-
-            <div class="workflow-steps">
-                <div class="step">
-                    <span class="step-number">1</span>
-                    <span>提示词模型</span>
-                </div>
-                <div class="step">
-                    <span class="step-number">2</span>
-                    <span>获取提示词</span>
-                </div>
-                <div class="step">
-                    <span class="step-number">3</span>
-                    <span>Legil生成</span>
-                </div>
-                <div class="step">
-                    <span class="step-number">4</span>
-                    <span>保存图片</span>
-                </div>
-                <div class="step">
-                    <span class="step-number">5</span>
-                    <span>循环下一张</span>
-                </div>
-            </div>
-
-            <div class="workflow-prompt-box">
-                <div class="workflow-prompt-heading">
-                    <div class="workflow-prompt-title">
-                        <label for="lumosPromptTemplate">LLM 固定指令</label>
-                        <span class="workflow-prompt-provider">Lumos Winky</span>
-                    </div>
-                    <span class="workflow-prompt-count" id="lumosPromptCount">0 字</span>
-                </div>
-                <textarea id="lumosPromptTemplate" rows="7" placeholder="输入想对模型说的话，例如：参考这张图生成 2 组差异明显的新画面提示词，保留核心主题，忽略原图文字，保持冰雪极寒氛围，低科技冰封末世题材，避免科幻、高科技和奇幻元素。"></textarea>
-                <div class="workflow-prompt-meta">随每张参考图一起发送，用来控制生成组数、题材、风格和禁忌项。</div>
-            </div>
-
-            <div class="workflow-actions">
-                <button class="btn btn-large" id="oneClickStartBtn" onclick="startWorkflowWithConfirm()">
-                    ▶️ 开始自动化流程
-                </button>
-                <div class="resume-actions" id="workflowResumeActions">
-                    <button class="btn btn-primary" id="resumeWorkflowBtn" onclick="resumeWorkflowFromStop()">↩️ 继续之前任务</button>
-                    <button class="btn btn-secondary" id="newWorkflowBtn" onclick="startNewWorkflowFromStop()">🆕 开启新任务</button>
-                </div>
-            </div>
-
-            <!-- Progress Panel -->
-            <div class="progress-panel" id="progressPanel">
-                <div class="progress-header">📊 执行进度</div>
-
-                <div class="progress-item">
-                    <div class="progress-label">
-                        <span>📷 参考图处理进度</span>
-                        <span id="imageProgressText">0 / 0</span>
-                    </div>
-                    <div class="progress-bar">
-                        <div class="progress-fill" id="imageProgressBar" style="width: 0%"></div>
-                    </div>
-                </div>
-
-                <div class="progress-item">
-                    <div class="progress-label">
-                        <span>🎨 当前图片生成进度</span>
-                        <span id="promptProgressText">0 / 0</span>
-                    </div>
-                    <div class="progress-bar">
-                        <div class="progress-fill" id="promptProgressBar" style="width: 0%"></div>
-                    </div>
-                </div>
-
-                <div class="status-text" id="currentStatusText">准备就绪...</div>
-
-                <div class="stats-grid">
-                    <div class="stat-item">
-                        <div class="stat-value" id="statsSuccess">0</div>
-                        <div class="stat-label">成功</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-value" id="statsFailed">0</div>
-                        <div class="stat-label">失败</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-value" id="statsGenerated">0</div>
-                        <div class="stat-label">已生成</div>
-                    </div>
-                </div>
-
-                <div class="stop-actions">
-                    <button class="btn btn-danger" onclick="stopWorkflow()">⏹️ 停止工作流</button>
-                </div>
-            </div>
-        </div>
-
-        <!-- Prompts Management Section -->
-        <div class="prompts-section" id="promptsSection">
-            <div class="prompts-header">
-                <span class="prompts-title">📝 提示词管理</span>
-                <div class="prompts-actions">
-                    <button class="btn btn-secondary" onclick="fetchLatestPrompts()">🔄 获取最新提示词</button>
-                    <button class="btn btn-primary" onclick="sendAllPromptsToLegil()">🚀 全部发送到Legil</button>
-                </div>
-            </div>
-            <div class="prompts-container" id="promptsContainer">
-                <div class="prompts-empty" id="promptsEmpty">
-                    <div class="empty-icon">📝</div>
-                    <div class="empty-text">暂无提示词</div>
-                    <div class="empty-hint">工作流运行后会自动提取提示词，或点击"获取最新提示词"按钮</div>
-                </div>
-                <div class="prompts-list" id="promptsList" style="display: none;"></div>
-            </div>
-        </div>
         </section>
 
         <section class="page-view" id="deliveryPage">
-            <div class="delivery-workbench">
-                <div class="delivery-hero card card-wide">
-                    <div>
-                        <div class="card-title">
-                            <span class="icon icon-purple icon-image" aria-hidden="true"></span>
-                            OK 图改尺寸
-                        </div>
-                        <p class="delivery-hero-copy">从本地 OK 图文件夹开始，为每张图建立 800x800、1280x720、1080x1920 三个交付目标。S10.3 已接入 Legil 图生图候选生成，每个尺寸独立记录生成中、完成和失败状态。</p>
-                    </div>
-                    <div class="delivery-hero-stats" aria-label="交付流程区分">
-                        <div class="stat-item">
-                            <div class="stat-value">A</div>
-                            <div class="stat-label">自动创意量产</div>
-                        </div>
-                        <div class="stat-item active">
-                            <div class="stat-value">B</div>
-                            <div class="stat-label">OK 图改尺寸</div>
-                        </div>
-                    </div>
-                </div>
-
+            <div class="delivery-workbench product-workbench">
                 <div class="delivery-grid">
-                    <div class="card">
-                        <div class="card-title">
-                            <span class="icon icon-blue icon-folder" aria-hidden="true"></span>
-                            输入输出
+                    <div class="card delivery-setup-card product-task-surface">
+                        <div class="delivery-setup-heading">
+                            <div class="card-title">改尺寸交付</div>
+                            <p class="delivery-hero-copy">支持用固定提示词批量控制 Legil 图生图，也可继续完成标准化、LOGO、命名与打包交付。</p>
                         </div>
-
-                        <div class="delivery-scope-panel">
-                            <label>处理范围</label>
-                            <div class="model-options delivery-scope-options" id="deliveryProcessModeOptions">
-                                <button type="button" class="model-option" data-delivery-process-mode="legil-only">
-                                    <span class="model-option-title">仅 Legil AI 适配</span>
-                                    <span class="model-option-desc">只生成所选比例候选图，不加 LOGO、不重命名、不打包</span>
-                                </button>
-                                <button type="button" class="model-option active" data-delivery-process-mode="full-delivery">
-                                    <span class="model-option-title">完整改尺寸交付</span>
-                                    <span class="model-option-desc">点击开始后由后端一次跑完，结束即生成 final-package</span>
-                                </button>
-                            </div>
-                        </div>
-
-                        <div class="form-group folder-field">
+                        <div class="form-group folder-field product-folder-field">
                             <div class="folder-field-heading">
-                                <label for="deliveryInputFolder">OK 图输入文件夹</label>
-                                <span class="folder-desc">只读取人工挑选后的 OK 图</span>
+                                <label for="deliveryInputFolder">源图文件夹</label>
+                                <span class="folder-desc">只读取需要交付处理的图片</span>
                             </div>
                             <div class="folder-path-row">
                                 <div class="folder-input-combo">
-                                    <input type="text" id="deliveryInputFolder" placeholder="默认：D:\工作\自动化工作流1\三尺寸交付\OK图输入" value="D:\工作\自动化工作流1\三尺寸交付\OK图输入">
+                                    <input type="text" id="deliveryInputFolder" placeholder="默认：D:\工作\自动化工作流1\改尺寸交付\源图输入" value="D:\工作\自动化工作流1\改尺寸交付\源图输入">
                                     <button type="button" class="folder-history-button" id="deliveryInputFolderHistoryButton" onclick="toggleFolderHistory('deliveryInputFolder')"><span class="history-caret">▼</span>历史</button>
                                     <div class="folder-history-menu" id="deliveryInputFolderHistoryMenu"></div>
                                 </div>
@@ -574,18 +574,33 @@
                             </div>
                         </div>
 
-                        <div class="form-group folder-field">
+                        <div class="form-group folder-field product-folder-field">
                             <div class="folder-field-heading">
                                 <label for="deliveryOutputFolder">交付输出文件夹</label>
-                                <span class="folder-desc">每张 OK 图输出一个独立交付文件夹</span>
+                                <span class="folder-desc">每张图片输出一个独立交付文件夹</span>
                             </div>
                             <div class="folder-path-row">
                                 <div class="folder-input-combo">
-                                    <input type="text" id="deliveryOutputFolder" placeholder="默认：D:\工作\自动化工作流1\三尺寸交付\输出" value="D:\工作\自动化工作流1\三尺寸交付\输出">
+                                    <input type="text" id="deliveryOutputFolder" placeholder="默认：D:\工作\自动化工作流1\改尺寸交付\输出" value="D:\工作\自动化工作流1\改尺寸交付\输出">
                                     <button type="button" class="folder-history-button" id="deliveryOutputFolderHistoryButton" onclick="toggleFolderHistory('deliveryOutputFolder')"><span class="history-caret">▼</span>历史</button>
                                     <div class="folder-history-menu" id="deliveryOutputFolderHistoryMenu"></div>
                                 </div>
                                 <button class="btn btn-secondary btn-folder-browse" onclick="browseFolder('deliveryOutputFolder')">浏览</button>
+                            </div>
+                        </div>
+
+                        <div class="form-group folder-field product-folder-field delivery-logo-folder-field">
+                            <div class="folder-field-heading">
+                                <label for="deliveryLogoFolder">LOGO 模板目录</label>
+                                <span class="folder-desc">用于交付图片的品牌标识素材</span>
+                            </div>
+                            <div class="folder-path-row">
+                                <div class="folder-input-combo">
+                                    <input type="text" id="deliveryLogoFolder" placeholder="默认：D:\工作\GOF\LOGO模版" value="D:\工作\GOF\LOGO模版">
+                                    <button type="button" class="folder-history-button" id="deliveryLogoFolderHistoryButton" onclick="toggleFolderHistory('deliveryLogoFolder')"><span class="history-caret">▼</span>历史</button>
+                                    <div class="folder-history-menu" id="deliveryLogoFolderHistoryMenu"></div>
+                                </div>
+                                <button class="btn btn-secondary btn-folder-browse" onclick="browseFolder('deliveryLogoFolder')">浏览</button>
                             </div>
                         </div>
 
@@ -598,112 +613,64 @@
                             </div>
                             <div class="field-meta">可单选或多选；勾选的尺寸会直接跑完候选、标准化、LOGO 和交付包。</div>
                         </div>
-                    </div>
 
-                    <div class="card">
-                        <div class="card-title">
-                            <span class="icon icon-green icon-run" aria-hidden="true"></span>
-                            Legil 适配设置
-                        </div>
-
-                        <div class="setting-group">
-                            <label>运行模式</label>
-                            <div class="model-options workflow-browser-mode-options" id="resizeJimengBrowserModeOptions">
-                                <button type="button" class="model-option" data-resize-browser-mode="headless" onclick="setResizeBrowserMode('headless')">
-                                    <span class="model-option-title">无头模式</span>
-                                    <span class="model-option-desc">后台顺序生成</span>
+                        <div class="delivery-scope-panel">
+                            <label>处理模式</label>
+                            <div class="model-options delivery-scope-options" id="deliveryProcessModeOptions">
+                                <button type="button" class="model-option" data-delivery-process-mode="legil-only">
+                                    <span class="model-option-title">固定提示词</span>
+                                    <span class="model-option-desc">使用当前提示词逐张处理源图，只生成 Legil 候选图</span>
                                 </button>
-                                <button type="button" class="model-option" data-resize-browser-mode="headed" onclick="setResizeBrowserMode('headed')">
-                                    <span class="model-option-title">有头模式</span>
-                                    <span class="model-option-desc">显示自动化窗口</span>
+                                <button type="button" class="model-option active" data-delivery-process-mode="full-delivery">
+                                    <span class="model-option-title">完整交付流程</span>
+                                    <span class="model-option-desc">自动完成尺寸适配、标准化、LOGO、命名和打包</span>
                                 </button>
                             </div>
-                        </div>
-
-                        <div class="setting-group">
-                            <label>Legil 图生图模型</label>
-                            <div class="model-options" id="resizeLegilImageModelOptions"></div>
-                        </div>
-
-                        <div class="setting-group">
-                            <label>目标尺寸固定比例映射</label>
-                            <div class="setting-options delivery-ratio-options" id="resizeLegilAspectRatioOptions"></div>
-                            <div class="field-meta">S10.3 固定使用 800x800 -> 1:1，1280x720 -> 16:9，1080x1920 -> 9:16。</div>
-                        </div>
-
-                        <div class="setting-group">
-                            <label>分辨率</label>
-                            <div class="setting-options" id="resizeLegilResolutionOptions"></div>
-                        </div>
-
-                        <div class="setting-group">
-                            <label>每比例候选数量</label>
-                            <div class="setting-options delivery-candidate-options" id="resizeLegilOutputQuantityOptions"></div>
                         </div>
 
                         <div class="delivery-prompt-box">
-                            <strong>画面适配提示词</strong>
-                            <span>通用模板会叠加对应尺寸专用模板，发送给 Legil 做图生图适配。</span>
-                            <label for="deliveryPromptCommon">通用模板</label>
-                            <textarea id="deliveryPromptCommon" rows="4">请基于输入图片进行图生图改造，保留主体、题材、情绪、核心卖点和可读性。
-不要简单拉伸或裁切。请根据目标画幅重新构图，适当扩展背景、补足空间、调整主体位置。
-保持广告素材风格清晰，主体关系明确，避免文字乱码和主体变形。
+                            <strong id="deliveryPromptBoxTitle">Legil 图生图提示词</strong>
+                            <span id="deliveryPromptBoxDesc">这条提示词会应用到源图文件夹中的每一张图片，并发送给 Legil 做图生图处理。</span>
+                            <div class="delivery-fixed-prompt-fields" id="deliveryFixedPromptFields">
+                                <label for="deliveryFixedPrompt">固定提示词</label>
+                                <textarea id="deliveryFixedPrompt" rows="5" placeholder="例如：去掉画面中的文案相关内容，保留主体、构图、风格、光影和广告质感，不要新增文字、logo、水印或乱码。"></textarea>
+                            </div>
+                            <div class="delivery-full-prompt-fields" id="deliveryFullPromptFields">
+                                <label for="deliveryPromptCommon">完整交付通用提示词</label>
+                                <textarea id="deliveryPromptCommon" rows="4">请基于输入图片进行图生图调整，保留主体、构图、风格、情绪、光影和广告质感。
+根据用户要求处理画面内容，不要简单拉伸或裁切，不要改变核心主体关系。
+成图中不要新增任何文字、字母、数字、可读标语、伪文字、乱码、签名、水印、logo、UI 文案、价格牌、标签或包装文字。
+如果原图已有文字或类似文字的纹理可以保留。
 目标尺寸：${targetSize}，目标比例：${aspectRatio}。</textarea>
-                            <div class="delivery-prompt-template-grid">
-                                <div>
-                                    <label for="deliveryPrompt800">800x800 专用模板</label>
-                                    <textarea id="deliveryPrompt800" rows="3">适配正方形广告图。主体居中偏稳，核心动作和冲突关系必须在第一眼可见。</textarea>
-                                </div>
-                                <div>
-                                    <label for="deliveryPrompt1280">1280x720 专用模板</label>
-                                    <textarea id="deliveryPrompt1280" rows="3">适配横版广告图。允许横向扩展背景和动作空间，主体不要过小，画面左右信息保持均衡。</textarea>
-                                </div>
-                                <div>
-                                    <label for="deliveryPrompt1080">1080x1920 专用模板</label>
-                                    <textarea id="deliveryPrompt1080" rows="3">适配竖版广告图。主体和关键动作应位于中上区域，保留竖屏浏览的视觉冲击，避免重要元素贴边。</textarea>
+                                <div class="delivery-prompt-template-grid">
+                                    <div>
+                                        <label for="deliveryPrompt800">800x800 尺寸补充</label>
+                                        <textarea id="deliveryPrompt800" rows="3">适配正方形广告图。主体居中偏稳，核心动作和冲突关系必须在第一眼可见。</textarea>
+                                    </div>
+                                    <div>
+                                        <label for="deliveryPrompt1280">1280x720 尺寸补充</label>
+                                        <textarea id="deliveryPrompt1280" rows="3">适配横版广告图。允许横向扩展背景和动作空间，主体不要过小，画面左右信息保持均衡。</textarea>
+                                    </div>
+                                    <div>
+                                        <label for="deliveryPrompt1080">1080x1920 尺寸补充</label>
+                                        <textarea id="deliveryPrompt1080" rows="3">适配竖版广告图。主体和关键动作应位于中间区域，保留竖屏浏览的视觉冲击，避免重要元素贴边。</textarea>
+                                    </div>
                                 </div>
                             </div>
                         </div>
-                        <div class="input-actions">
-                            <button type="button" class="btn btn-primary" onclick="saveResizeConfig()">保存 Legil 适配参数</button>
-                            <button type="button" class="btn btn-secondary" onclick="loadResizeConfig()">刷新参数</button>
-                        </div>
-                        <div class="info-box" id="resizeLegilGenerationConfigInfo"></div>
-                    </div>
 
-                    <div class="card card-wide" data-delivery-stage="logo">
-                        <div class="card-title">
-                            <span class="icon icon-green icon-image" aria-hidden="true"></span>
-                            LOGO 模板
-                        </div>
-                        <div class="form-group folder-field delivery-logo-folder-field">
-                            <div class="folder-field-heading">
-                                <label for="deliveryLogoFolder">LOGO 模板目录</label>
-                                <span class="folder-desc">目录内放 800x800、1280x720、1080x1920 三个 PNG 模板，系统按图片实际分辨率匹配。</span>
-                            </div>
-                            <div class="folder-path-row">
-                                <div class="folder-input-combo">
-                                    <input type="text" id="deliveryLogoFolder" placeholder="默认：D:\工作\GOF\LOGO模版" value="D:\工作\GOF\LOGO模版">
-                                    <button type="button" class="folder-history-button" id="deliveryLogoFolderHistoryButton" onclick="toggleFolderHistory('deliveryLogoFolder')"><span class="history-caret">▼</span>历史</button>
-                                    <div class="folder-history-menu" id="deliveryLogoFolderHistoryMenu"></div>
-                                </div>
-                                <button class="btn btn-secondary btn-folder-browse" onclick="browseFolder('deliveryLogoFolder')">浏览</button>
-                            </div>
+                        <div class="delivery-primary-actions product-action-row">
+                            <button type="button" class="btn btn-secondary" id="deliveryPreviewBtn">扫描源图</button>
+                            <button type="button" class="btn btn-primary" id="deliveryStartBtn">开始改尺寸交付</button>
+                            <button type="button" class="btn btn-secondary" id="deliveryResumeBtn">继续未完成</button>
+                            <button type="button" class="btn btn-secondary" id="deliveryStopBtn" disabled>停止</button>
+                            <span class="delivery-flow-note" id="deliveryFlowNote">完整交付流程会自动完成标准化、LOGO、命名和打包</span>
                         </div>
                     </div>
 
-                    <div class="card card-wide" data-delivery-stage="naming">
-                        <div class="card-title">
-                            <span class="icon icon-blue icon-link" aria-hidden="true"></span>
-                            命名规则
-                        </div>
+                    <div class="card delivery-naming-card" data-delivery-stage="naming">
+                        <div class="card-title">命名规则</div>
                         <div class="delivery-naming-panel">
-                            <div class="delivery-naming-example">
-                                <span>示例文件夹</span>
-                                <strong id="deliveryFolderNameExample">GOFCNIM28930_BJ_广点通_题材_探索发现_三级标签_细分命名</strong>
-                                <span>示例图片</span>
-                                <strong id="deliveryImageNameExample">GOFCNIM28930_BJ_广点通_题材_探索发现_三级标签_细分命名_800x800.jpg</strong>
-                            </div>
                             <div class="delivery-naming-grid">
                                 <div class="form-group">
                                     <label for="deliveryNamingPrefix">固定前缀</label>
@@ -722,68 +689,130 @@
                                     <input type="text" id="deliveryChannelText" value="广点通">
                                 </div>
                             </div>
-                            <details class="delivery-fallback-rule">
-                                <summary>
-                                    <span>备用业务命名</span>
-                                    <small>源图文件名解析失败时才使用</small>
-                                </summary>
-                                <div class="rename-tag-grid delivery-tag-grid">
-                                    <div class="form-group">
-                                        <label for="deliveryPrimaryTagInput">一级标签</label>
-                                        <div class="rename-tag-row">
-                                            <div class="rename-tag-combo">
-                                                <input type="text" id="deliveryPrimaryTagInput" placeholder="输入一级标签" value="题材">
-                                                <button type="button" class="rename-tag-menu-button" id="deliveryPrimaryTagMenuButton" onclick="toggleDeliveryTagMenu('primary')"><span class="history-caret">▼</span></button>
-                                                <div class="rename-tag-menu" id="deliveryPrimaryTagMenu"></div>
-                                            </div>
-                                            <button type="button" class="creative-mini-btn" onclick="addDeliveryTag('primary')">添加</button>
-                                        </div>
-                                    </div>
-                                    <div class="form-group">
-                                        <label for="deliverySecondaryTagInput">二级标签</label>
-                                        <div class="rename-tag-row">
-                                            <div class="rename-tag-combo">
-                                                <input type="text" id="deliverySecondaryTagInput" placeholder="输入二级标签" value="载具">
-                                                <button type="button" class="rename-tag-menu-button" id="deliverySecondaryTagMenuButton" onclick="toggleDeliveryTagMenu('secondary')"><span class="history-caret">▼</span></button>
-                                                <div class="rename-tag-menu" id="deliverySecondaryTagMenu"></div>
-                                            </div>
-                                            <button type="button" class="creative-mini-btn" onclick="addDeliveryTag('secondary')">添加</button>
-                                        </div>
-                                    </div>
-                                    <div class="form-group">
-                                        <label for="deliveryTertiaryTagInput">三级标签</label>
-                                        <div class="rename-tag-row">
-                                            <div class="rename-tag-combo">
-                                                <input type="text" id="deliveryTertiaryTagInput" placeholder="输入三级标签">
-                                                <button type="button" class="rename-tag-menu-button" id="deliveryTertiaryTagMenuButton" onclick="toggleDeliveryTagMenu('tertiary')"><span class="history-caret">▼</span></button>
-                                                <div class="rename-tag-menu" id="deliveryTertiaryTagMenu"></div>
-                                            </div>
-                                            <button type="button" class="creative-mini-btn" onclick="addDeliveryTag('tertiary')">添加</button>
-                                        </div>
-                                    </div>
-                                </div>
-                            </details>
-                            <div class="field-meta">命名优先从 OK 图文件名继承已有业务段；固定前缀、编号、区域和渠道仍按这里配置重新生成。</div>
+                            <div class="delivery-naming-example delivery-naming-example-inline">
+                                <span>示例图片</span>
+                                <strong id="deliveryImageNameExample">GOFCNIM28930_BJ_广点通_题材_探索发现_三级标签_细分命名_800x800.jpg</strong>
+                                <em>最终命名按前缀、编号、区域、渠道和尺寸后缀生成。</em>
+                            </div>
                         </div>
                     </div>
 
-                    <div class="card card-wide">
-                        <div class="delivery-task-header">
-                            <div class="card-title">
-                                <span class="icon icon-purple icon-run" aria-hidden="true"></span>
-                                任务列表
+                    <details class="mass-legil-panel delivery-legil-card delivery-production-params" id="deliveryLegilGenerationConfigCard">
+                        <summary class="mass-legil-summary">
+                            <span>Legil 生成参数</span>
+                            <small>
+                                <strong id="deliveryResizeSummaryModel">GPT-Image-2</strong>
+                                <em id="deliveryResizeSummaryRatio">1:1</em>
+                                <em id="deliveryResizeSummaryOutput">1 张</em>
+                                <em id="deliveryResizeSummaryBrowserMode">无头</em>
+                            </small>
+                            <b class="mass-legil-toggle-label" aria-hidden="true"></b>
+                        </summary>
+
+                        <div class="mass-legil-body delivery-legil-body">
+                            <div class="mass-legil-heading">
+                                <span>生成设置</span>
+                                <button type="button" class="mass-text-button" onclick="saveResizeConfig()">保存参数</button>
                             </div>
-                            <div class="delivery-task-actions">
-                                <button type="button" class="btn btn-secondary" id="deliveryPreviewBtn">扫描 OK 图</button>
-                                <button type="button" class="btn btn-primary" id="deliveryStartBtn">开始完整改尺寸并生成交付包</button>
-                                <button type="button" class="btn btn-secondary" id="deliveryResumeBtn">继续未完成</button>
-                                <button type="button" class="btn btn-secondary" id="deliveryStopBtn" disabled>停止</button>
-                                <span class="delivery-flow-note" id="deliveryFlowNote">完整交付会自动标准化、加 LOGO 并输出 final-package</span>
-                                <button type="button" class="btn btn-secondary delivery-manual-postprocess-action" id="deliveryStandardizeBtn" hidden>标准化全部候选</button>
-                                <button type="button" class="btn btn-secondary delivery-manual-postprocess-action" id="deliveryFinalizeBtn" hidden>生成最终交付包</button>
+
+                            <div class="setting-group">
+                                <label>运行模式</label>
+                                <div class="model-options workflow-browser-mode-options delivery-browser-mode-options" id="resizeJimengBrowserModeOptions">
+                                    <button type="button" class="model-option" data-resize-browser-mode="headed" onclick="setResizeBrowserMode('headed')">
+                                        <span class="model-option-title">有头模式</span>
+                                        <span class="model-option-desc">显示自动化窗口</span>
+                                    </button>
+                                    <button type="button" class="model-option" data-resize-browser-mode="headless" onclick="setResizeBrowserMode('headless')">
+                                        <span class="model-option-title">无头模式</span>
+                                        <span class="model-option-desc">后台顺序生成</span>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div class="setting-group">
+                                <label>图生图模型</label>
+                                <div class="model-options" id="resizeLegilImageModelOptions"></div>
+                            </div>
+
+                            <div class="mass-legil-compact-grid">
+                                <div class="setting-group">
+                                    <label>宽高比</label>
+                                    <div class="setting-options delivery-ratio-options" id="resizeLegilAspectRatioOptions"></div>
+                                </div>
+                                <div class="setting-group">
+                                    <label>分辨率</label>
+                                    <div class="setting-options" id="resizeLegilResolutionOptions"></div>
+                                </div>
+                                <div class="setting-group">
+                                    <label>输出数量</label>
+                                    <div class="setting-options delivery-candidate-options" id="resizeLegilOutputQuantityOptions"></div>
+                                </div>
                             </div>
                         </div>
-                        <div class="info-box" id="deliveryInfo">填写输入输出后点击扫描 OK 图；完整改尺寸会在后台直接跑到最终交付包。</div>
+                        <div class="info-box" id="resizeLegilGenerationConfigInfo"></div>
+                    </details>
+
+                    <button type="button" class="btn btn-secondary delivery-manual-postprocess-action" id="deliveryStandardizeBtn" hidden>标准化全部候选</button>
+                    <button type="button" class="btn btn-secondary delivery-manual-postprocess-action" id="deliveryFinalizeBtn" hidden>生成最终交付包</button>
+
+                    <details class="card card-wide vision-rename-card delivery-aux-card">
+                        <summary class="delivery-card-summary">
+                            <span>智能命名辅助</span>
+                            <small>用视觉分析辅助补齐业务标签，按需展开</small>
+                        </summary>
+                        <div class="rename-resize-layout">
+                            <div class="rename-resize-settings">
+                                <div class="form-group folder-field">
+                                    <div class="folder-field-heading">
+                                        <label for="visionRenameInputFolder">输入图片文件夹</label>
+                                        <span class="folder-desc">独立文件夹整理；默认原地应用命名，方向库读取知识库当前数据。</span>
+                                    </div>
+                                    <div class="folder-path-row">
+                                        <div class="folder-input-combo">
+                                            <input type="text" id="visionRenameInputFolder" placeholder="选择需要智能视觉命名的图片文件夹">
+                                            <button type="button" class="folder-history-button" id="visionRenameInputFolderHistoryButton" onclick="toggleFolderHistory('visionRenameInputFolder')"><span class="history-caret">▼</span>历史</button>
+                                            <div class="folder-history-menu" id="visionRenameInputFolderHistoryMenu"></div>
+                                        </div>
+                                        <button class="btn btn-secondary btn-folder-browse" onclick="browseFolder('visionRenameInputFolder')">浏览</button>
+                                    </div>
+                                    <div class="field-meta vision-folder-count" id="visionRenameImageCount">输入文件夹后自动统计图片数量。</div>
+                                </div>
+                                <div class="rename-rule-grid">
+                                    <div class="form-group">
+                                        <label for="visionRenameMinConfidence">置信度参考线</label>
+                                        <input type="number" id="visionRenameMinConfidence" min="0" max="1" step="0.01" value="0.8">
+                                    </div>
+                                    <div class="form-group vision-taxonomy-scope">
+                                        <label>方向范围</label>
+                                        <div class="readonly-field">知识库当前可用方向</div>
+                                        <input type="hidden" id="visionRenameStatuses" value="seed,accepted">
+                                    </div>
+                                </div>
+                                <div class="field-meta" id="visionRenameTaxonomyInfo">方向库：使用知识库当前可用方向 seed/accepted，不含归档/禁用方向。</div>
+                                <div class="input-actions rename-actions">
+                                    <button class="btn btn-secondary" id="visionRenamePreviewBtn" type="button">视觉分析预览</button>
+                                    <button class="btn btn-secondary" id="visionRenameResumeBtn" type="button" disabled>继续上次预览</button>
+                                    <button class="btn btn-secondary" id="visionRenameStopBtn" type="button" disabled>停止预览</button>
+                                    <button class="btn btn-primary" id="visionRenameApplyBtn" type="button" disabled>原地应用命名</button>
+                                    <button class="btn btn-secondary" id="visionRenameReportBtn" type="button" disabled>打开报告</button>
+                                </div>
+                                <div class="info-box" id="visionRenameInfo">选择文件夹后先生成预览，再应用交付命名。</div>
+                            </div>
+                            <div class="rename-resize-preview">
+                                <div class="rename-stats" id="visionRenameStats">尚未生成预览</div>
+                                <div class="rename-preview-list" id="visionRenamePreviewList"></div>
+                            </div>
+                        </div>
+                    </details>
+
+                    <div class="card card-wide">
+                        <div class="delivery-task-header">
+                            <div class="card-title">任务列表</div>
+                            <div class="delivery-task-actions">
+                                <button type="button" class="btn btn-secondary" id="deliveryRetryFailedBtn" disabled>补跑全部失败</button>
+                            </div>
+                        </div>
+                        <div class="info-box" id="deliveryInfo">填写输入输出后先扫描源图；固定提示词只保存 Legil 候选图，完整交付流程会继续完成后处理。</div>
                         <div class="delivery-task-table-wrap">
                             <table class="delivery-task-table">
                                 <thead>
@@ -800,7 +829,7 @@
                                 </thead>
                                 <tbody id="deliveryTaskList">
                                     <tr>
-                                        <td colspan="8">填写输入输出与命名规则后，点击扫描 OK 图生成真实任务。</td>
+                                        <td colspan="8">填写输入输出与命名规则后，点击扫描源图生成真实任务。</td>
                                     </tr>
                                 </tbody>
                             </table>
@@ -811,235 +840,37 @@
         </section>
 
         <section class="page-view" id="creativePage">
-            <div class="creative-s3-workbench">
-                <div class="card card-wide creative-auto-card creative-s3-hero">
-                    <div class="card-title">
-                        <span class="icon icon-blue icon-run" aria-hidden="true"></span>
-                        自动创意工作台
+            <div class="creative-s3-workbench creative-production-workbench product-workbench">
+                <div class="creative-production-heading product-page-heading">
+                    <div>
+                        <h2>创意拓展产图</h2>
+                        <p>从方向队列生成提示词，质检通过后批量提交到生图平台并保存结果。</p>
                     </div>
-
-                    <div class="creative-s3-flow">
-                        <div class="creative-s3-step is-active">
-                            <strong>1 数据源</strong>
-                            <span id="creativeS3DataSourceText">等待读取知识库</span>
-                        </div>
-                        <div class="creative-s3-step">
-                            <strong>2 选择目标</strong>
-                            <span id="creativeS3TargetText">自动推荐方向</span>
-                        </div>
-                        <div class="creative-s3-step">
-                            <strong>3 配置执行</strong>
-                            <span id="creativeS3ModeText">小批量验证</span>
-                        </div>
-                        <div class="creative-s3-step">
-                            <strong>4 生成进度</strong>
-                            <span id="creativeS3ProgressText">等待启动</span>
-                        </div>
-                        <div class="creative-s3-step">
-                            <strong>5 结果审核</strong>
-                            <span id="creativeS3ReviewText">完成后进入资产审核</span>
-                        </div>
+                    <div class="mass-mini-status creative-mini-status" id="creativeMiniStatus" data-state="idle">
+                        <span class="mass-mini-dot" aria-hidden="true"></span>
+                        <span>任务状态</span>
+                        <strong id="creativeMiniStage">待启动</strong>
+                        <span id="creativeMiniSource">未导入方向</span>
+                        <span id="creativeMiniProgress">0 / 0</span>
                     </div>
+                </div>
 
-                    <div class="creative-auto-layout creative-s3-main-layout">
-                        <div class="creative-auto-main">
-                            <div class="creative-auto-summary-grid">
-                                <div class="stat-item">
-                                    <div class="stat-value" id="creativeAutoKnowledge">--</div>
-                                    <div class="stat-label">方向库</div>
-                                </div>
-                                <div class="stat-item">
-                                    <div class="stat-value" id="creativeAutoRemaining">--</div>
-                                    <div class="stat-label">图片额度</div>
-                                </div>
-                                <div class="stat-item">
-                                    <div class="stat-value" id="creativeAutoNextScore">--</div>
-                                    <div class="stat-label">推荐评分</div>
-                                </div>
-                                <div class="stat-item">
-                                    <div class="stat-value" id="creativeAutoAssetCount">--</div>
-                                    <div class="stat-label">本轮资产</div>
-                                </div>
-                            </div>
-
-                            <div class="creative-s3-section">
-                                <div class="creative-s3-section-heading">
-                                    <strong>数据源状态</strong>
-                                    <button class="creative-mini-btn" type="button" onclick="loadCreativeAutoStatus()">刷新状态</button>
-                                </div>
-                                <div class="creative-auto-checks" id="creativeAutoChecks"></div>
-                            </div>
-
-                            <div class="creative-s3-section creative-brief-panel" id="creativeAutoBriefPanel" hidden>
-                                <div class="creative-s3-section-heading">
-                                    <strong>素材分析输入</strong>
-                                    <button class="creative-mini-btn" type="button" onclick="clearCreativeAutoMaterialBrief()">清空</button>
-                                </div>
-                                <div class="creative-brief-body" id="creativeAutoBriefBody"></div>
-                            </div>
-
-                            <div class="creative-s3-section creative-target-queue-panel" id="creativeAutoTargetQueuePanel">
-                                <div class="creative-s3-section-heading">
-                                    <strong>待拓展方向队列</strong>
-                                    <span id="creativeAutoTargetQueueMeta">默认使用自动推荐；从素材分析或方向库加入后在这里统一调整。</span>
-                                </div>
-                                <div class="creative-target-queue-settings">
-                                    <label>
-                                        <span>每个原始方向拓展新方向数</span>
-                                        <input type="number" id="creativeAutoNewDirectionsPerSource" min="1" max="10" step="1" value="3">
-                                    </label>
-                                    <label>
-                                        <span>每个新方向 prompt 数</span>
-                                        <input type="number" id="creativeAutoPromptsPerNewDirection" min="1" max="10" step="1" value="4">
-                                    </label>
-                                </div>
-                                <div class="creative-target-queue-list" id="creativeAutoTargetQueueList">暂无待拓展方向。</div>
-                            </div>
-
-                            <div class="creative-s3-section">
-                                <div class="creative-s3-section-heading">
-                                    <strong>选择目标</strong>
-                                    <span>默认使用自动推荐，也可从方向地图勾选本次拓展目标</span>
-                                </div>
-                                <div class="creative-auto-direction" id="creativeAutoDirection">等待读取自动选题。</div>
-                                <div class="creative-s3-reason-list" id="creativeS3DirectionReasons"></div>
-                                <div class="creative-s3-target-layout">
-                                    <div class="creative-s3-target-controls">
-                                        <label class="notification-toggle creative-auto-toggle">
-                                            <input type="checkbox" id="creativeAutoManualDirection">
-                                            <span>手动指定方向</span>
-                                        </label>
-                                        <div class="form-group">
-                                            <label for="creativeAutoDirectionId">已选 directionId</label>
-                                            <input type="text" id="creativeAutoDirectionId" placeholder="留空则使用自动推荐">
-                                        </div>
-                                        <div class="creative-direction-actions">
-                                            <button class="creative-mini-btn" type="button" id="creativeAutoUseSuggestedDirectionBtn">勾选推荐方向</button>
-                                            <button class="creative-mini-btn" type="button" id="creativeAutoSelectAllDirectionBtn">全选当前筛选</button>
-                                            <button class="creative-mini-btn" type="button" id="creativeAutoClearDirectionBtn">清空选择</button>
-                                        </div>
-                                    </div>
-                                    <div class="creative-direction-picker" aria-label="手动方向地图">
-                                        <div class="creative-direction-picker-head">
-                                            <strong>方向库</strong>
-                                            <span id="creativeAutoDirectionSummary">等待加载方向</span>
-                                        </div>
-                                        <div class="form-group">
-                                            <label for="creativeAutoDirectionSearch">方向搜索</label>
-                                            <input type="text" id="creativeAutoDirectionSearch" placeholder="路径、名称、描述">
-                                        </div>
-                                        <div class="creative-target-level-options" id="creativeAutoTargetLevelOptions" aria-label="迭代层级">
-                                            <button type="button" class="active" data-creative-target-level="all">全部</button>
-                                            <button type="button" data-creative-target-level="1">一级标签</button>
-                                            <button type="button" data-creative-target-level="2">二级标签</button>
-                                            <button type="button" data-creative-target-level="3">三级标签</button>
-                                            <button type="button" data-creative-target-level="direction">细分方向</button>
-                                        </div>
-                                        <div class="creative-selected-targets" id="creativeAutoSelectedTargets">未选择，默认使用自动推荐。</div>
-                                        <div class="creative-direction-tree creative-direction-library" id="creativeAutoDirectionTree">等待加载方向。</div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="creative-auto-controls creative-s3-exec-panel">
-                            <div class="creative-s3-section-heading">
-                                <strong>配置与执行</strong>
-                                <span>先验证 prompt，再小批量，最后持续生图</span>
-                            </div>
-                            <div class="creative-prompt-mode-group" id="creativeAutoPromptModeGroup">
-                                <label class="creative-prompt-mode active">
-                                    <input type="radio" name="creativeAutoPromptMode" value="agentOnly" checked>
-                                    <strong>只生成 prompt</strong>
-                                    <span>不调用 Legil，先看 Prompt Gate</span>
-                                </label>
-                                <label class="creative-prompt-mode">
-                                    <input type="radio" name="creativeAutoPromptMode" value="smoke">
-                                    <strong>小批量</strong>
-                                    <span>1 条 prompt，生成约 4 张图</span>
-                                </label>
-                                <label class="creative-prompt-mode">
-                                    <input type="radio" name="creativeAutoPromptMode" value="full">
-                                    <strong>持续生图</strong>
-                                    <span>不限额，接受多少 prompt 就一直生</span>
-                                </label>
-                            </div>
-                            <label class="notification-toggle creative-auto-toggle creative-auto-fullscale-hidden">
-                                <input type="checkbox" id="creativeAutoFullScale">
-                                <span>持续生图</span>
-                            </label>
-                            <button class="btn btn-primary btn-large" id="creativeAutoRunBtn" onclick="startCreativeAutoRun()">运行一次自动创意</button>
-                            <button class="btn btn-secondary" id="creativeAutoRefreshBtn" onclick="loadCreativeAutoStatus()">刷新推荐</button>
-                            <button class="btn btn-secondary" id="creativeAutoResumeBtn" onclick="resumeCreativeAutoRun()" disabled>继续之前任务</button>
-                            <button class="btn btn-secondary" id="creativeAutoNewTaskBtn" onclick="startNewCreativeAutoTask()">开始新任务</button>
-                            <button class="btn btn-danger" id="creativeAutoStopBtn" onclick="stopCreativeAutoRun()" disabled>停止任务</button>
-                        </div>
-                    </div>
-
-                    <div class="progress-panel creative-progress-panel creative-auto-progress-panel" id="creativeAutoProgressPanel">
-                        <div class="progress-header">运行进度</div>
-                        <div class="progress-item">
-                            <div class="progress-label">
-                                <span id="creativeAutoProgressLabel">等待启动</span>
-                                <span id="creativeAutoProgressText">0 / 0</span>
-                            </div>
-                            <div class="progress-bar">
-                                <div class="progress-fill" id="creativeAutoProgressBar" style="width: 0%"></div>
-                            </div>
-                        </div>
-                        <div class="status-text" id="creativeAutoCurrentStatusText">等待启动...</div>
-                        <div class="stats-grid creative-stats-grid">
-                            <div class="stat-item">
-                                <div class="stat-value" id="creativeAutoAccepted">0</div>
-                                <div class="stat-label">Prompt 通过</div>
-                            </div>
-                            <div class="stat-item">
-                                <div class="stat-value" id="creativeAutoRejected">0</div>
-                                <div class="stat-label">Prompt 丢弃</div>
-                            </div>
-                            <div class="stat-item">
-                                <div class="stat-value" id="creativeAutoSaved">0</div>
-                                <div class="stat-label">保存图片</div>
-                            </div>
-                            <div class="stat-item">
-                                <div class="stat-value" id="creativeAutoFailed">0</div>
-                                <div class="stat-label">失败</div>
-                            </div>
-                        </div>
-                        <div class="creative-auto-run-detail" id="creativeAutoRunDetail"></div>
-                        <div class="creative-auto-prompt-panel" id="creativeAutoPromptPanel"></div>
-                        <div class="creative-auto-recent-assets" id="creativeAutoRecentAssets"></div>
-                    </div>
-                    <div class="creative-s3-review-panel" id="creativeS3ReviewPanel">
+                <div class="creative-production-surface mass-primary-surface product-task-surface">
+                    <div class="mass-primary-intro creative-production-intro">
                         <div>
-                            <strong id="creativeS3ReviewTitle">结果审核</strong>
-                            <span id="creativeS3ReviewHint">运行完成后，可直接进入知识库资产审核。</span>
+                            <span class="mass-eyebrow">方向队列版产图</span>
+                            <h3>创意拓展产图</h3>
+                            <p>确认输出目录和参考图目录后，直接从待拓展方向队列启动本轮生图任务。</p>
                         </div>
-                        <button class="btn btn-secondary" id="creativeS3ReviewBtn" type="button" onclick="openCreativeReviewForRun()" disabled>打开本轮审核</button>
+                        <div class="production-source-hint creative-source-chip" id="creativeSourceHint">可从素材分析或方案迭代送入方向。</div>
                     </div>
-                    <div class="info-box" id="creativeAutoInfo"></div>
-                </div>
 
-                <div class="card card-wide creative-s3-history-card">
-                    <div class="card-title">
-                        <span class="icon icon-blue icon-run" aria-hidden="true"></span>
-                        历史 run
-                    </div>
-                    <div class="creative-run-history" id="creativeRunHistory">等待加载历史记录。</div>
-                </div>
-
-                <details class="card card-wide collapsible-card compact-config-card creative-legil-card" open>
-                    <summary class="card-title">
-                        <span class="icon icon-green icon-image" aria-hidden="true"></span>
-                        创意拓展 Legil 生图参数
-                    </summary>
-
-                    <div class="creative-legil-config-grid">
-                        <div class="creative-legil-config-panel">
-                            <div class="form-group folder-field">
+                    <div class="mass-primary-grid creative-production-grid">
+                        <div class="mass-folder-panel creative-folder-panel">
+                            <div class="form-group folder-field product-folder-field">
                                 <div class="folder-field-heading">
-                                    <label for="creativeOutputFolder">输出文件夹</label>
-                                    <span class="folder-desc">自动创意生成结果保存到这里</span>
+                                    <label for="creativeOutputFolder">创意输出文件夹</label>
+                                    <span class="folder-desc">本轮生成图片保存到这里</span>
                                 </div>
                                 <div class="folder-path-row">
                                     <div class="folder-input-combo">
@@ -1051,10 +882,10 @@
                                 </div>
                             </div>
 
-                            <div class="form-group folder-field">
+                            <div class="form-group folder-field product-folder-field">
                                 <div class="folder-field-heading">
-                                    <label for="creativeReferenceFolder">Legil 参考图文件夹</label>
-                                    <span class="folder-desc">可选，自动创意量产时循环上传参考图</span>
+                                    <label for="creativeReferenceFolder">生图参考图文件夹</label>
+                                    <span class="folder-desc">可选，图生图时循环上传这里的参考图</span>
                                 </div>
                                 <div class="folder-path-row">
                                     <div class="folder-input-combo">
@@ -1066,62 +897,343 @@
                                 </div>
                             </div>
                         </div>
+                    </div>
 
-                        <div class="creative-legil-config-panel">
-                            <div class="setting-group">
-                                <label>运行模式</label>
-                                <div class="model-options creative-browser-mode-options" id="creativeBrowserModeOptions">
-                                    <button type="button" class="model-option" data-creative-browser-mode="headed" onclick="setCreativeBrowserMode('headed')">
-                                        <span class="model-option-title">有头模式</span>
-                                        <span class="model-option-desc">显示浏览器窗口</span>
-                                    </button>
-                                    <button type="button" class="model-option" data-creative-browser-mode="headless" onclick="setCreativeBrowserMode('headless')">
-                                        <span class="model-option-title">无头模式</span>
-                                        <span class="model-option-desc">后台运行不显示窗口</span>
-                                    </button>
-                                </div>
+                    <div class="mass-primary-actions product-action-row creative-production-actions">
+                        <button class="btn btn-primary" id="creativeAutoRunBtn" onclick="startCreativeAutoRun()">开始创意拓展产图</button>
+                        <button class="btn btn-primary" id="creativeAutoResumeBtn" onclick="resumeCreativeAutoRun()" hidden disabled>继续创意拓展产图</button>
+                        <button class="btn btn-secondary" id="creativeAutoNewTaskBtn" onclick="startNewCreativeAutoTask()" hidden disabled>新任务</button>
+                        <button type="button" class="btn btn-secondary" onclick="openSingleWebsite('legil')">打开生图平台</button>
+                        <button class="btn btn-secondary" id="creativeAutoRefreshBtn" onclick="loadCreativeAutoStatus()">刷新队列</button>
+                        <button class="btn btn-danger" id="creativeAutoStopBtn" onclick="stopCreativeAutoRun()" hidden disabled>停止任务</button>
+                    </div>
+                    <div class="info-box" id="creativeAutoInfo"></div>
+                </div>
+
+                <details class="mass-legil-panel creative-legil-card creative-production-params" id="creativeLegilGenerationConfigCard">
+                    <summary class="mass-legil-summary">
+                        <span>生图参数</span>
+                        <small>
+                            <strong id="creativeSummaryModel">Nano Banana 2</strong>
+                            <em id="creativeSummaryRatio">1:1</em>
+                            <em id="creativeSummaryOutput">4 张</em>
+                            <em id="creativeSummaryBrowserMode">有头</em>
+                        </small>
+                        <b class="mass-legil-toggle-label" aria-hidden="true"></b>
+                    </summary>
+
+                    <div class="mass-legil-body creative-legil-body">
+                        <div class="mass-legil-heading">
+                            <span>生成设置</span>
+                            <button type="button" class="mass-text-button" onclick="saveCreativeConfig()">保存参数</button>
+                        </div>
+
+                        <div class="setting-group">
+                            <label>运行模式</label>
+                            <div class="model-options creative-browser-mode-options" id="creativeBrowserModeOptions">
+                                <button type="button" class="model-option" data-creative-browser-mode="headed" onclick="setCreativeBrowserMode('headed')">
+                                    <span class="model-option-title">有头模式</span>
+                                    <span class="model-option-desc">显示浏览器窗口</span>
+                                </button>
+                                <button type="button" class="model-option" data-creative-browser-mode="headless" onclick="setCreativeBrowserMode('headless')">
+                                    <span class="model-option-title">无头模式</span>
+                                    <span class="model-option-desc">后台运行不显示窗口</span>
+                                </button>
                             </div>
+                        </div>
 
-                            <div class="setting-group">
-                                <label>图生图模型</label>
-                                <div class="model-options" id="creativeLegilImageModelOptions"></div>
-                            </div>
+                        <div class="setting-group">
+                            <label>图生图模型</label>
+                            <div class="model-options" id="creativeLegilImageModelOptions"></div>
+                        </div>
 
+                        <div class="setting-group">
+                            <label>提示词风格</label>
+                            <div class="setting-options" id="creativePromptStyleOptions"></div>
+                        </div>
+
+                        <div class="mass-legil-compact-grid">
                             <div class="setting-group">
                                 <label>宽高比</label>
                                 <div class="setting-options" id="creativeLegilAspectRatioOptions"></div>
                             </div>
-
                             <div class="setting-group">
                                 <label>分辨率</label>
                                 <div class="setting-options" id="creativeLegilResolutionOptions"></div>
                             </div>
-
                             <div class="setting-group">
                                 <label>输出数量</label>
                                 <div class="setting-options" id="creativeLegilOutputQuantityOptions"></div>
                             </div>
                         </div>
-                    </div>
 
-                    <div class="input-actions">
-                        <button class="btn btn-primary" onclick="saveCreativeConfig()">保存 Legil 量产参数</button>
-                        <button class="btn btn-secondary" onclick="loadCreativeConfig()">刷新参数</button>
                     </div>
-                    <div class="info-box" id="creativeLegilGenerationConfigInfo"></div>
-                    <div class="info-box" id="creativeBatchInfo">自动方向与提示词池生成后，将按这里的 Legil 参数执行量产。</div>
                 </details>
 
+                <div class="creative-s3-section creative-target-queue-panel creative-production-queue" id="creativeAutoTargetQueuePanel">
+                    <div class="creative-s3-section-heading creative-queue-heading">
+                        <div>
+                            <strong>待拓展方向队列</strong>
+                            <span id="creativeAutoTargetQueueMeta">默认使用自动推荐；从素材分析或方向库加入后在这里统一调整。</span>
+                        </div>
+                    </div>
+                    <div class="creative-target-queue-settings">
+                        <label>
+                            <span>每个原始方向拓展新方向数</span>
+                            <input type="number" id="creativeAutoNewDirectionsPerSource" min="1" max="10" step="1" value="4">
+                        </label>
+                        <label>
+                            <span>每个新方向 prompt 数</span>
+                            <input type="number" id="creativeAutoPromptsPerNewDirection" min="1" max="10" step="1" value="2">
+                        </label>
+                        <label>
+                            <span>拓展随机度</span>
+                            <select id="creativeAutoDiversityMode">
+                                <option value="balanced" selected>平衡</option>
+                                <option value="stable">稳定</option>
+                                <option value="explore">探索</option>
+                            </select>
+                        </label>
+                        <label>
+                            <span>历史避重范围</span>
+                            <select id="creativeAutoHistoryScope">
+                                <option value="recent30" selected>近 30 条</option>
+                                <option value="recent10">近 10 条</option>
+                                <option value="all">全部历史</option>
+                            </select>
+                        </label>
+                        <label>
+                            <span>候选倍率</span>
+                            <input type="number" id="creativeAutoCandidateMultiplier" min="1" max="5" step="1" value="2">
+                        </label>
+                    </div>
+                    <div class="creative-target-queue-list" id="creativeAutoTargetQueueList">暂无待拓展方向。</div>
+                </div>
+
+                <div class="progress-panel creative-progress-panel creative-auto-progress-panel creative-runtime-panel active" id="creativeAutoProgressPanel">
+                    <div class="progress-header creative-progress-header">
+                        <span>运行进度</span>
+                        <span class="creative-progress-estimate" id="creativeAutoEstimateText">预计完成时间：计算中</span>
+                    </div>
+                    <div class="progress-item">
+                        <div class="progress-label">
+                            <span id="creativeAutoProgressLabel">等待启动</span>
+                            <span id="creativeAutoProgressText">0 / 0</span>
+                        </div>
+                        <div class="progress-bar">
+                            <div class="progress-fill" id="creativeAutoProgressBar" style="width: 0%"></div>
+                        </div>
+                    </div>
+                    <div class="status-text" id="creativeAutoCurrentStatusText">等待启动...</div>
+                    <div class="stats-grid creative-stats-grid">
+                        <div class="stat-item">
+                            <div class="stat-value" id="creativeAutoAccepted">0</div>
+                            <div class="stat-label">Prompt 通过</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="creativeAutoRejected">0</div>
+                            <div class="stat-label">Prompt 丢弃</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="creativeAutoSaved">0</div>
+                            <div class="stat-label">保存图片</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="creativeAutoFailed">0</div>
+                            <div class="stat-label">失败</div>
+                        </div>
+                    </div>
+                    <div class="creative-auto-run-detail" id="creativeAutoRunDetail"></div>
+                    <div class="creative-auto-prompt-panel" id="creativeAutoPromptPanel"></div>
+                    <div class="creative-auto-recent-assets" id="creativeAutoRecentAssets"></div>
+                </div>
+
+                <div class="creative-s3-review-panel" id="creativeS3ReviewPanel">
+                    <div>
+                        <strong id="creativeS3ReviewTitle">结果审核</strong>
+                        <span id="creativeS3ReviewHint">运行完成后，可直接进入知识库资产审核。</span>
+                    </div>
+                    <button class="btn btn-secondary" id="creativeS3ReviewBtn" type="button" onclick="openCreativeReviewForRun()" disabled>打开本轮审核</button>
+                </div>
+
+                <details class="card card-wide collapsible-card creative-brief-details product-collapsible">
+                    <summary class="card-title">
+                        <span class="icon icon-blue icon-run" aria-hidden="true"></span>
+                        来源详情
+                    </summary>
+                    <div class="creative-s3-section creative-brief-panel" id="creativeAutoBriefPanel" hidden>
+                        <div class="creative-s3-section-heading">
+                            <strong>上游输入</strong>
+                            <button class="creative-mini-btn" type="button" onclick="clearCreativeAutoMaterialBrief()">清空</button>
+                        </div>
+                        <div class="creative-brief-body" id="creativeAutoBriefBody"></div>
+                    </div>
+                </details>
+
+                <details class="card card-wide collapsible-card creative-direction-details product-collapsible">
+                    <summary class="card-title">
+                        <span class="icon icon-green icon-grid" aria-hidden="true"></span>
+                        方向库选择
+                    </summary>
+                    <div class="creative-s3-section">
+                        <div class="creative-s3-section-heading">
+                            <strong>选择目标</strong>
+                            <span>默认使用上游队列；也可从方向地图勾选本次拓展目标。</span>
+                        </div>
+                        <div class="creative-auto-direction" id="creativeAutoDirection">等待读取自动选题。</div>
+                        <div class="creative-s3-reason-list" id="creativeS3DirectionReasons"></div>
+                        <div class="creative-s3-target-layout">
+                            <div class="creative-s3-target-controls">
+                                <div class="creative-direction-control-top">
+                                    <label class="notification-toggle creative-auto-toggle">
+                                        <input type="checkbox" id="creativeAutoManualDirection">
+                                        <span>手动指定方向</span>
+                                    </label>
+                                    <div class="creative-direction-actions">
+                                        <button class="creative-mini-btn" type="button" id="creativeAutoUseSuggestedDirectionBtn">勾选推荐方向</button>
+                                        <button class="creative-mini-btn" type="button" id="creativeAutoSelectAllDirectionBtn">全选当前筛选</button>
+                                        <button class="creative-mini-btn" type="button" id="creativeAutoClearDirectionBtn">清空选择</button>
+                                    </div>
+                                </div>
+                                <div class="form-group creative-selected-direction-field">
+                                    <label for="creativeAutoDirectionId">已选方向</label>
+                                    <input type="text" id="creativeAutoDirectionId" placeholder="未选择时使用自动推荐" readonly>
+                                </div>
+                            </div>
+                            <div class="creative-direction-picker" aria-label="手动方向地图">
+                                <div class="creative-direction-picker-head">
+                                    <strong>方向库</strong>
+                                    <span id="creativeAutoDirectionSummary">等待加载方向</span>
+                                </div>
+                                <div class="form-group">
+                                    <label for="creativeAutoDirectionSearch">方向搜索</label>
+                                    <input type="text" id="creativeAutoDirectionSearch" placeholder="路径、名称、描述">
+                                </div>
+                                <div class="creative-target-level-options" id="creativeAutoTargetLevelOptions" aria-label="迭代层级">
+                                    <button type="button" class="active" data-creative-target-level="all">全部</button>
+                                    <button type="button" data-creative-target-level="1">一级标签</button>
+                                    <button type="button" data-creative-target-level="2">二级标签</button>
+                                    <button type="button" data-creative-target-level="3">三级标签</button>
+                                    <button type="button" data-creative-target-level="direction">细分方向</button>
+                                </div>
+                                <div class="creative-selected-targets" id="creativeAutoSelectedTargets">未选择，默认使用自动推荐。</div>
+                                <div class="creative-direction-tree creative-direction-library" id="creativeAutoDirectionTree">等待加载方向。</div>
+                            </div>
+                        </div>
+                    </div>
+                </details>
+
+                <details class="card card-wide collapsible-card creative-s3-history-card product-collapsible">
+                    <summary class="card-title">
+                        <span class="icon icon-blue icon-run" aria-hidden="true"></span>
+                        历史任务
+                    </summary>
+                    <div class="creative-run-history" id="creativeRunHistory">等待加载历史记录。</div>
+                </details>
+
+                <div class="creative-mobile-sticky-actions product-mobile-sticky-actions">
+                    <button class="btn btn-primary" type="button" id="creativeStickyPrimaryBtn" onclick="handleCreativeStickyPrimaryAction()">开始产图</button>
+                    <button type="button" class="btn btn-secondary" onclick="openSingleWebsite('legil')">打开平台</button>
+                </div>
+            </div>
+        </section>
+
+        <section class="page-view" id="autonomyPolicyPage" hidden>
+            <div class="autonomy-policy-workbench product-workbench system-page-workbench">
+                <div class="card card-wide autonomy-policy-hero product-task-surface system-page-hero">
+                    <div class="system-page-hero-copy">
+                        <div class="system-page-kicker">策略总览</div>
+                        <div class="card-title">
+                            <span class="icon icon-blue icon-run" aria-hidden="true"></span>
+                            自动化策略
+                        </div>
+                        <p class="run-center-copy">集中控制系统能自动做什么、遇到异常如何停下、哪些指标必须达标后才能继续执行。</p>
+                        <div class="system-health-grid autonomy-policy-summary-grid">
+                            <div class="system-health-item">
+                                <span>当前等级</span>
+                                <strong id="autonomyPolicyLevelHint">L2</strong>
+                            </div>
+                            <div class="system-health-item">
+                                <span>可自动执行</span>
+                                <strong id="autonomyPolicyAllowedCount">--</strong>
+                            </div>
+                            <div class="system-health-item">
+                                <span>高风险保护</span>
+                                <strong id="autonomyPolicyRiskCount">--</strong>
+                            </div>
+                            <div class="system-health-item">
+                                <span>保存状态</span>
+                                <strong id="autonomyPolicyPreviewSummary">等待加载</strong>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="autonomy-policy-actions product-action-row system-primary-actions">
+                        <button type="button" class="btn btn-primary" id="autonomyPolicySaveBtn" onclick="saveAutonomyPolicy()">保存策略</button>
+                        <button type="button" class="btn btn-secondary" onclick="loadAutonomyPolicy()">重新读取</button>
+                    </div>
+                </div>
+
+                <div class="autonomy-policy-grid system-policy-grid">
+                    <section class="card autonomy-policy-panel autonomy-policy-overview-panel">
+                        <div class="autonomy-policy-panel-head">
+                            <strong>策略总览</strong>
+                            <span id="autonomyPolicyVersionBadge">已读取</span>
+                        </div>
+                        <div class="autonomy-level-control" id="autonomyPolicyLevelControl" role="group" aria-label="自动化等级"></div>
+                        <div class="autonomy-policy-preview" id="autonomyPolicyPreview"></div>
+                    </section>
+
+                    <section class="card autonomy-policy-panel autonomy-policy-permission-panel">
+                        <div class="autonomy-policy-panel-head">
+                            <strong>权限配置</strong>
+                            <span>按动作逐项开关</span>
+                        </div>
+                        <div class="autonomy-permission-list" id="autonomyPolicyPermissionList"></div>
+                    </section>
+
+                    <section class="card autonomy-policy-panel autonomy-policy-protection-panel">
+                        <div class="autonomy-policy-panel-head">
+                            <strong>异常保护</strong>
+                            <span>最近阻断与保护原因</span>
+                        </div>
+                        <div class="autonomy-policy-events" id="autonomyPolicyEvents"></div>
+                    </section>
+
+                    <section class="card autonomy-policy-panel autonomy-policy-threshold-panel">
+                        <div class="autonomy-policy-panel-head">
+                            <strong>阈值配置</strong>
+                            <span>达标后才允许自动执行</span>
+                        </div>
+                        <div class="autonomy-threshold-table-wrap">
+                            <table class="autonomy-threshold-table">
+                                <thead>
+                                    <tr>
+                                        <th>指标</th>
+                                        <th>当前值</th>
+                                        <th>建议范围</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="autonomyPolicyThresholdRows"></tbody>
+                            </table>
+                        </div>
+                    </section>
+                </div>
+
+                <div class="product-mobile-sticky-actions system-mobile-sticky-actions">
+                    <button type="button" class="btn btn-primary" onclick="saveAutonomyPolicy()">保存策略</button>
+                    <button type="button" class="btn btn-secondary" onclick="loadAutonomyPolicy()">读取</button>
+                </div>
             </div>
         </section>
 
         <section class="page-view" id="knowledgePage">
-            <div class="knowledge-grid">
-                <div class="card card-wide knowledge-overview-card">
+            <div class="knowledge-grid knowledge-product-shell product-workbench">
+                <div class="card card-wide knowledge-overview-card product-task-surface">
                     <div class="card-title">
                         <span class="icon icon-blue icon-folder" aria-hidden="true"></span>
-                        知识库总览
+                        知识库资产中心
                     </div>
+                    <p class="knowledge-page-subtitle">管理方向体系、图片资产、审核反馈和经验规则，把可用方向直接送入创意拓展。</p>
 
                     <div class="knowledge-overview-strip">
                         <div class="stat-item">
@@ -1177,16 +1289,48 @@
                         </div>
                     </div>
 
-                    <div class="input-actions">
+                    <div class="autonomy-entry-panel" id="knowledgeLoopEntryPanel">
+                        <div class="autonomy-entry-title">
+                            <strong>资产工作流</strong>
+                            <span>方向与资产可复用</span>
+                        </div>
+                        <div class="autonomy-entry-grid">
+                            <div class="autonomy-entry">
+                                <strong>方向治理</strong>
+                                <span>结构收口</span>
+                                <em id="knowledgeEntryDirectionTag">读取中</em>
+                            </div>
+                            <div class="autonomy-entry">
+                                <strong>资产审核</strong>
+                                <span>证据回流</span>
+                                <em id="knowledgeEntryAssetTag">读取中</em>
+                            </div>
+                            <div class="autonomy-entry">
+                                <strong>反馈学习</strong>
+                                <span>规则草案</span>
+                                <em id="knowledgeEntryFeedbackTag">读取中</em>
+                            </div>
+                            <div class="autonomy-entry">
+                                <strong>经验规则</strong>
+                                <span>经验沉淀</span>
+                                <em id="knowledgeEntryDnaTag">读取中</em>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="knowledge-primary-actions">
+                        <button class="btn btn-primary" id="knowledgeSendSelectedDirectionsBtn" type="button" onclick="sendKnowledgeSelectedDirectionsToCreative()" disabled>送入创意拓展</button>
                         <button class="btn btn-secondary" onclick="loadCreativeKnowledgePage()">刷新知识库</button>
                     </div>
+                    <div class="production-source-hint knowledge-creative-source-hint" id="knowledgeCreativeLinkHint">等待选择方向；可从方向库选择后送入创意拓展。</div>
+                    <div class="knowledge-selected-direction-summary" id="knowledgeSelectedDirectionSummary">尚未选择方向。</div>
                     <div class="info-box" id="knowledgeInfo"></div>
                 </div>
 
-                <details class="card card-wide collapsible-card compact-config-card knowledge-feishu-sync-card" open>
+                <details class="card card-wide collapsible-card compact-config-card knowledge-feishu-sync-card product-collapsible">
                     <summary class="card-title">
                         <span class="icon icon-green icon-link" aria-hidden="true"></span>
-                        飞书协同
+                        同步记录
                     </summary>
 
                     <div class="knowledge-feishu-status-row">
@@ -1278,36 +1422,77 @@
                     <div class="info-box" id="knowledgeFeishuSyncInfo"></div>
                 </details>
 
-                <div class="card knowledge-map-card">
-                    <div class="card-title">
+                <details class="card knowledge-map-card collapsible-card product-collapsible">
+                    <summary class="card-title">
                         <span class="icon icon-green icon-link" aria-hidden="true"></span>
-                        标签地图
-                    </div>
-                    <div class="form-group">
-                        <label for="knowledgeDirectionSearch">方向搜索</label>
-                        <input type="text" id="knowledgeDirectionSearch" placeholder="路径、名称、描述">
-                    </div>
+                        方向标签地图
+                    </summary>
                     <div class="knowledge-tag-map" id="knowledgeTagMap"></div>
-                </div>
+                </details>
 
-                <div class="card knowledge-directions-card">
+                <div class="card card-wide knowledge-directions-card">
                     <div class="card-title">
                         <span class="icon icon-purple icon-chat" aria-hidden="true"></span>
                         方向库
+                    </div>
+                    <div class="knowledge-direction-brief">
+                        <strong>方向库选择</strong>
+                        <span>按来源、状态、标签和表现筛选方向，批量选择后送入创意拓展。</span>
+                    </div>
+                    <div class="knowledge-toolbar knowledge-direction-toolbar">
+                        <div class="form-group">
+                            <label for="knowledgeDirectionSearch">方向搜索</label>
+                            <input type="text" id="knowledgeDirectionSearch" placeholder="路径、名称、描述">
+                        </div>
+                        <div class="form-group knowledge-review-filter">
+                            <label for="knowledgeDirectionSourceFilter">来源</label>
+                            <select id="knowledgeDirectionSourceFilter">
+                                <option value="">全部来源</option>
+                                <option value="seed">方向种子表</option>
+                                <option value="agent">创意拓展沉淀</option>
+                                <option value="material-analysis">素材分析沉淀</option>
+                            </select>
+                        </div>
+                        <div class="form-group knowledge-review-filter">
+                            <label for="knowledgeDirectionStatusFilter">状态</label>
+                            <select id="knowledgeDirectionStatusFilter">
+                                <option value="">全部状态</option>
+                                <option value="seed">种子</option>
+                                <option value="accepted">已采纳</option>
+                                <option value="disabled">禁跑</option>
+                                <option value="archived">已归档</option>
+                            </select>
+                        </div>
+                        <div class="form-group knowledge-review-filter">
+                            <label for="knowledgeDirectionPerformanceFilter">表现</label>
+                            <select id="knowledgeDirectionPerformanceFilter">
+                                <option value="">全部表现</option>
+                                <option value="runnable">可送入生产</option>
+                                <option value="references">有参考图</option>
+                                <option value="assets">有生成资产</option>
+                                <option value="runs">有运行记录</option>
+                                <option value="evidence">有成功案例</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="knowledge-direction-bulk-actions">
+                        <button class="creative-mini-btn" type="button" id="knowledgeSelectVisibleDirectionsBtn">选择当前筛选全部内容</button>
+                        <button class="creative-mini-btn" type="button" id="knowledgeInvertVisibleDirectionsBtn">反选当前筛选</button>
+                        <button class="creative-mini-btn" type="button" id="knowledgeClearSelectedDirectionsBtn">清空选择</button>
                     </div>
                     <div class="knowledge-list-meta" id="knowledgeDirectionMeta">等待加载</div>
                     <div class="knowledge-direction-list" id="knowledgeDirectionList"></div>
                 </div>
 
-                <div class="card card-wide knowledge-drafts-card">
-                    <div class="card-title">
+                <details class="card card-wide collapsible-card knowledge-drafts-card product-collapsible">
+                    <summary class="card-title">
                         <span class="icon icon-green icon-run" aria-hidden="true"></span>
                         本地成长方向草案
-                    </div>
+                    </summary>
                     <div class="knowledge-toolbar knowledge-draft-toolbar">
                         <div class="form-group">
                             <label for="knowledgeDraftSearch">草案搜索</label>
-                            <input type="text" id="knowledgeDraftSearch" placeholder="名称、路径、来源 run、拒绝原因">
+                            <input type="text" id="knowledgeDraftSearch" placeholder="名称、路径、来源任务、拒绝原因">
                             <div class="knowledge-list-meta knowledge-inline-meta" id="knowledgeDraftMeta">等待加载</div>
                         </div>
                         <div class="form-group knowledge-review-filter">
@@ -1323,17 +1508,66 @@
                         <button class="btn btn-secondary" type="button" onclick="loadCreativeKnowledgeDrafts()">刷新草案</button>
                     </div>
                     <div class="knowledge-draft-list" id="knowledgeDraftList"></div>
-                </div>
+                </details>
 
-                <div class="card card-wide knowledge-assets-card">
-                    <div class="card-title">
-                        <span class="icon icon-pink icon-image" aria-hidden="true"></span>
-                        资产库
+                <details class="card card-wide collapsible-card knowledge-auto-curator-card product-collapsible">
+                    <summary class="card-title">
+                        <span class="icon icon-blue icon-run" aria-hidden="true"></span>
+                        自动评审
+                    </summary>
+                    <div class="knowledge-auto-summary-grid">
+                        <div class="knowledge-health-item">
+                            <span>待评审</span>
+                            <strong id="knowledgeAutoPending">--</strong>
+                        </div>
+                        <div class="knowledge-health-item">
+                            <span>已评审</span>
+                            <strong id="knowledgeAutoScored">--</strong>
+                        </div>
+                        <div class="knowledge-health-item needs-human">
+                            <span>低置信</span>
+                            <strong id="knowledgeAutoLow">--</strong>
+                        </div>
+                        <div class="knowledge-health-item">
+                            <span>自动评审一致率</span>
+                            <strong id="knowledgeAutoConsistency">--</strong>
+                        </div>
                     </div>
+                    <div class="knowledge-auto-golden-grid">
+                        <div><span>好图</span><strong id="knowledgeGoldenGood">--</strong></div>
+                        <div><span>坏图</span><strong id="knowledgeGoldenBad">--</strong></div>
+                        <div><span>跑题</span><strong id="knowledgeGoldenOff">--</strong></div>
+                        <div><span>文字问题</span><strong id="knowledgeGoldenText">--</strong></div>
+                    </div>
+                    <div class="input-actions knowledge-auto-actions">
+                        <button class="btn btn-secondary" type="button" onclick="scoreKnowledgeUnreviewedAssets()">评审未审资产</button>
+                        <button class="btn btn-secondary" type="button" onclick="scoreKnowledgeVisibleAssets()">评审当前列表</button>
+                        <button class="btn btn-secondary" type="button" onclick="importKnowledgeGoldenReviewed()">导入人工样本</button>
+                        <button class="btn btn-primary" type="button" onclick="evaluateKnowledgeGoldenSet()">评估人工样本</button>
+                        <button class="btn btn-secondary" type="button" onclick="loadKnowledgeAutoCurator()">刷新评审</button>
+                    </div>
+                    <div class="knowledge-auto-layout">
+                        <section>
+                            <div class="knowledge-memory-section-title">低置信抽样队列</div>
+                            <div class="knowledge-auto-sample-list" id="knowledgeAutoLowQueue"></div>
+                        </section>
+                        <section>
+                            <div class="knowledge-memory-section-title">样本详情</div>
+                            <div class="knowledge-auto-detail-list" id="knowledgeAutoSampleDetails"></div>
+                        </section>
+                    </div>
+                    <div class="info-box" id="knowledgeAutoCuratorInfo"></div>
+                </details>
+
+                <details class="card card-wide collapsible-card knowledge-assets-card product-collapsible">
+                    <summary class="card-title">
+                        <span class="icon icon-pink icon-image" aria-hidden="true"></span>
+                        资产审核
+                    </summary>
                     <div class="knowledge-toolbar">
                         <div class="form-group">
                             <label for="knowledgeAssetSearch">资产搜索</label>
-                            <input type="text" id="knowledgeAssetSearch" placeholder="runId、方向、prompt、文件名">
+                            <input type="text" id="knowledgeAssetSearch" placeholder="任务 ID、方向、提示词、文件名">
                             <div class="knowledge-list-meta knowledge-inline-meta" id="knowledgeAssetMeta">等待加载</div>
                         </div>
                         <div class="form-group knowledge-review-filter">
@@ -1350,49 +1584,61 @@
                         <button class="btn btn-secondary" onclick="loadCreativeKnowledgeAssets()">刷新资产</button>
                     </div>
                     <div class="knowledge-asset-grid" id="knowledgeAssetList"></div>
-                </div>
+                </details>
 
-                <div class="card card-wide knowledge-memory-card">
-                    <div class="card-title">
+                <details class="card card-wide collapsible-card knowledge-memory-card product-collapsible">
+                    <summary class="card-title">
                         <span class="icon icon-green icon-chat" aria-hidden="true"></span>
-                        反馈学习
-                    </div>
+                        经验规则
+                    </summary>
                     <div class="knowledge-toolbar">
                         <div class="knowledge-list-meta" id="knowledgeMemoryMeta">等待加载</div>
-                        <button class="btn btn-primary" type="button" id="knowledgeMemoryLearnBtn" onclick="runCreativeFeedbackLearning()">消化最近反馈</button>
+                        <button class="btn btn-primary" type="button" id="knowledgeMemoryLearnBtn" onclick="runCreativeFeedbackLearning()">沉淀反馈经验</button>
                         <button class="btn btn-secondary" type="button" onclick="loadCreativeKnowledgeMemory()">刷新记忆</button>
                     </div>
                     <div class="knowledge-memory-report" id="knowledgeMemoryReport"></div>
                     <div class="knowledge-memory-list" id="knowledgeMemoryDraftList"></div>
                     <div class="knowledge-memory-list" id="knowledgeMemoryActiveList"></div>
-                </div>
+                </details>
 
-                <div class="card card-wide knowledge-runs-card">
-                    <div class="card-title">
+                <details class="card card-wide collapsible-card knowledge-runs-card product-collapsible">
+                    <summary class="card-title">
                         <span class="icon icon-blue icon-run" aria-hidden="true"></span>
                         运行记录
-                    </div>
+                    </summary>
                     <div class="knowledge-toolbar">
                         <div class="form-group">
                             <label for="knowledgeRunSearch">运行搜索</label>
-                            <input type="text" id="knowledgeRunSearch" placeholder="runId、方向、状态">
+                            <input type="text" id="knowledgeRunSearch" placeholder="任务 ID、方向、状态">
                         </div>
                         <button class="btn btn-secondary" onclick="loadCreativeKnowledgeRuns()">刷新记录</button>
                     </div>
                     <div class="knowledge-run-list" id="knowledgeRunList"></div>
+                </details>
+
+                <div class="product-mobile-sticky-actions knowledge-mobile-sticky-actions">
+                    <button class="btn btn-primary" type="button" onclick="sendKnowledgeSelectedDirectionsToCreative()" id="knowledgeStickySendBtn" disabled>送入创意拓展</button>
+                    <button class="btn btn-secondary" type="button" onclick="loadCreativeKnowledgePage()">刷新</button>
                 </div>
             </div>
         </section>
 
         <section class="page-view" id="materialAnalysisPage">
-            <div class="material-analysis-shell">
-                <div class="card card-wide material-analysis-hero">
+            <div class="material-analysis-shell product-workbench is-unimported">
+                <div class="card card-wide material-analysis-hero product-task-surface">
                     <div class="material-analysis-hero-copy">
                         <div class="card-title">
                             <span class="icon icon-blue icon-run" aria-hidden="true"></span>
                             素材分析
                         </div>
-                        <p>每周导入投放素材表，按花费生成 Top100，沉淀到本地数据目录，先把数据底座跑稳。</p>
+                        <p>从投放素材反馈开始，先判断哪些素材、方向和视觉机会值得继续整理，再把有效机会送入方案迭代或创意拓展。</p>
+                        <div class="production-chain-strip" aria-label="生产链路">
+                            <span class="production-chain-step is-current">素材反馈</span>
+                            <span class="production-chain-step">方案整理</span>
+                            <span class="production-chain-step">创意拓展</span>
+                            <span class="production-chain-step">批量产图</span>
+                        </div>
+                        <div class="production-source-hint" id="materialAnalysisSourceHint">等待导入素材数据，导入后会生成可继续生产的创意机会。</div>
                     </div>
                     <div class="material-analysis-hero-stats" id="materialAnalysisHeroStats">
                         <div><strong>Top100</strong><span>按花费排序</span></div>
@@ -1402,7 +1648,7 @@
                 </div>
 
                 <div class="material-analysis-grid">
-                    <div class="card">
+                    <div class="card material-analysis-import-dropzone" id="materialAnalysisImportDropzone">
                         <div class="card-title">
                             <span class="icon icon-green icon-folder" aria-hidden="true"></span>
                             导入本周数据
@@ -1418,6 +1664,7 @@
                         <div class="form-group">
                             <label for="materialAnalysisFileInput">素材数据表</label>
                             <input type="file" id="materialAnalysisFileInput" accept=".csv,.xlsx,.xls">
+                            <div class="material-analysis-drop-hint" id="materialAnalysisDropHint">也可以把 CSV / Excel 表格拖到本卡片任意位置。</div>
                             <div class="field-meta">支持当前素材基础数据 CSV，后续同格式周表可复用。</div>
                         </div>
                         <div class="input-actions">
@@ -1427,7 +1674,32 @@
                         <div class="info-box" id="materialAnalysisImportInfo">等待导入素材数据表。</div>
                     </div>
 
-                    <div class="card">
+                    <div class="card material-analysis-unimported-section">
+                        <div class="card-title">
+                            <span class="icon icon-blue icon-run" aria-hidden="true"></span>
+                            未导入素材反馈
+                        </div>
+                        <div class="production-stage-grid material-analysis-empty-flow">
+                            <div class="production-stage-card is-current">
+                                <strong>1 导入素材表</strong>
+                                <span>上传本周投放素材数据</span>
+                            </div>
+                            <div class="production-stage-card">
+                                <strong>2 生成 Top100</strong>
+                                <span>按花费和健康度筛选样本</span>
+                            </div>
+                            <div class="production-stage-card">
+                                <strong>3 识别机会</strong>
+                                <span>提炼方向、视觉和风险</span>
+                            </div>
+                            <div class="production-stage-card">
+                                <strong>4 送入生产</strong>
+                                <span>进入方案迭代或创意拓展</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card material-analysis-imported-section">
                         <div class="card-title">
                             <span class="icon icon-pink icon-chart" aria-hidden="true"></span>
                             导入概览
@@ -1459,7 +1731,7 @@
                     <div class="material-analysis-import-list" id="materialAnalysisImportList">正在读取历史导入...</div>
                 </div>
 
-                <div class="card card-wide">
+                <div class="card card-wide material-analysis-imported-section">
                     <div class="card-title">
                         <span class="icon icon-pink icon-chart" aria-hidden="true"></span>
                         健康度判断
@@ -1485,7 +1757,7 @@
                     </div>
                 </div>
 
-                <div class="card card-wide">
+                <div class="card card-wide material-analysis-imported-section">
                     <div class="material-analysis-table-head">
                         <div class="card-title">
                             <span class="icon icon-green icon-chat" aria-hidden="true"></span>
@@ -1521,7 +1793,7 @@
                     </div>
                 </div>
 
-                <div class="card card-wide">
+                <div class="card card-wide material-analysis-imported-section">
                     <div class="material-analysis-table-head">
                         <div class="card-title">
                             <span class="icon icon-blue icon-image" aria-hidden="true"></span>
@@ -1572,11 +1844,11 @@
                     </div>
                 </div>
 
-                <div class="card card-wide">
+                <div class="card card-wide material-analysis-imported-section">
                     <div class="material-analysis-table-head">
                         <div class="card-title">
                             <span class="icon icon-green icon-grid" aria-hidden="true"></span>
-                            TOP100 素材逐张拓展
+                            Top 素材创意拓展
                         </div>
                         <div class="input-actions">
                             <button class="btn btn-secondary" type="button" id="materialAnalysisCreativeTargetsLoadBtn" onclick="loadMaterialAnalysisCreativeTargets()">加载 TOP100 素材</button>
@@ -1602,7 +1874,7 @@
                     </div>
                 </div>
 
-                <div class="card card-wide">
+                <div class="card card-wide material-analysis-imported-section">
                     <div class="material-analysis-table-head">
                         <div class="card-title">
                             <span class="icon icon-blue icon-grid" aria-hidden="true"></span>
@@ -1634,7 +1906,7 @@
                     </div>
                 </div>
 
-                <div class="card card-wide">
+                <div class="card card-wide material-analysis-imported-section">
                     <div class="material-analysis-table-head">
                         <div class="card-title">
                             <span class="icon icon-green icon-grid" aria-hidden="true"></span>
@@ -1643,7 +1915,7 @@
                         <div class="material-analysis-table-meta" id="materialAnalysisTopMeta">尚未选择导入记录。</div>
                     </div>
                     <div class="material-analysis-table-wrap">
-                        <table class="material-analysis-table">
+                        <table class="material-analysis-table material-analysis-top-table">
                             <thead>
                                 <tr>
                                     <th>排名</th>
@@ -1671,14 +1943,13 @@
         </section>
 
         <section class="page-view" id="taskWorkbookPage">
-            <div class="task-workbook-shell">
-                <div class="card card-wide task-workbook-hero">
+            <div class="task-workbook-shell product-workbench is-unimported">
+                <div class="card card-wide task-workbook-hero product-task-surface">
                     <div class="task-workbook-hero-copy">
                         <div class="card-title">
                             <span class="icon icon-green icon-grid" aria-hidden="true"></span>
-                            自动化任务表 / 任务方向池
+                            任务表 / 方案迭代
                         </div>
-                        <p>导入人工策划任务表，将每一行整理成可筛选、可折叠、可选择的创意拓展目标。任务表参考图只用于视觉理解和预览，不默认上传给 Legil。</p>
                     </div>
                     <div class="task-workbook-metrics">
                         <div><strong id="taskWorkbookMetricDirections">0</strong><span>任务方向</span></div>
@@ -1688,8 +1959,28 @@
                     </div>
                 </div>
 
+                <div class="production-stage-grid task-workbook-stage-grid">
+                    <div class="production-stage-card is-current">
+                        <strong>1 任务表导入</strong>
+                        <span id="taskWorkbookImportStageText">等待导入 .xlsx 方案表</span>
+                    </div>
+                    <div class="production-stage-card">
+                        <strong>2 字段识别</strong>
+                        <span id="taskWorkbookFieldDetectStatus">未识别</span>
+                        <em id="taskWorkbookFieldDetectMeta">导入后识别标签、迭代描述和参考图字段</em>
+                    </div>
+                    <div class="production-stage-card">
+                        <strong>3 方向池</strong>
+                        <span id="taskWorkbookDirectionPoolStageText">导入后生成可筛选方向池</span>
+                    </div>
+                    <div class="production-stage-card">
+                        <strong>4 送入创意拓展</strong>
+                        <span id="taskWorkbookCreativeStageText">勾选方向后进入创意拓展</span>
+                    </div>
+                </div>
+
                 <div class="task-workbook-grid">
-                    <div class="card task-workbook-import-card">
+                    <div class="card task-workbook-import-card" id="taskWorkbookImportDropzone">
                         <div class="card-title">
                             <span class="icon icon-blue icon-folder" aria-hidden="true"></span>
                             导入任务表
@@ -1698,6 +1989,11 @@
                             <label for="taskWorkbookFileInput">自动化任务表</label>
                             <input type="file" id="taskWorkbookFileInput" accept=".xlsx,.xls">
                             <div class="field-meta">默认读取“自动化任务表”，忽略“全量标签”，可读取“一二级标签定义”作为展示上下文。</div>
+                        </div>
+                        <div class="form-group">
+                            <label for="taskWorkbookLocalPathInput">本地任务表路径</label>
+                            <input type="text" id="taskWorkbookLocalPathInput" placeholder="C:\Users\dd\Desktop\项目\方案表 或完整 .xlsx 路径">
+                            <div class="field-meta">不选择文件时，可让后端直接读取本机 .xlsx / .xls 文件；填文件夹会自动选择最新任务表。</div>
                         </div>
                         <div class="input-actions">
                             <button type="button" class="btn btn-primary" id="taskWorkbookImportBtn" onclick="importTaskWorkbookFile()">导入并生成方向池</button>
@@ -1715,7 +2011,7 @@
                     </div>
                 </div>
 
-                <div class="card card-wide task-workbook-vision-card">
+                <div class="card card-wide task-workbook-vision-card task-workbook-imported-section">
                     <div class="material-analysis-table-head">
                         <div class="card-title">
                             <span class="icon icon-blue icon-image" aria-hidden="true"></span>
@@ -1745,11 +2041,11 @@
                     </div>
                 </div>
 
-                <div class="card card-wide task-workbook-pool-card">
+                <div class="card card-wide task-workbook-pool-card task-workbook-imported-section">
                     <div class="task-workbook-pool-head">
                         <div class="card-title">
                             <span class="icon icon-green icon-grid" aria-hidden="true"></span>
-                            任务方向池
+                            方案迭代
                         </div>
                         <div class="input-actions">
                             <button type="button" class="btn btn-primary" id="taskWorkbookSendCreativeBtn" onclick="sendSelectedTaskWorkbookDirectionsToCreative()">选中方向送入创意拓展</button>
@@ -1786,15 +2082,44 @@
         </section>
 
         <section class="page-view" id="configPage">
-            <div class="config-workbench">
-                <div class="card card-wide config-intro-card">
-                    <div class="card-title">
-                        <span class="icon icon-blue icon-link" aria-hidden="true"></span>
-                        全局配置
+            <div class="config-workbench product-workbench system-page-workbench">
+                <div class="card card-wide config-intro-card product-task-surface system-page-hero system-config-hero">
+                    <div class="system-page-hero-copy">
+                        <div class="system-page-kicker">健康状态</div>
+                        <div class="card-title">
+                            <span class="icon icon-blue icon-link" aria-hidden="true"></span>
+                            系统配置
+                        </div>
+                        <p class="config-intro-copy">集中管理模型连接、通知和监控。产图任务参数请在对应任务页确认。</p>
+                        <div class="system-health-grid config-health-grid">
+                            <div class="system-health-item">
+                                <span>模型配置</span>
+                                <strong id="configModelHealth">读取中</strong>
+                            </div>
+                            <div class="system-health-item">
+                                <span>密钥状态</span>
+                                <strong id="configTopSecretHealth">读取中</strong>
+                            </div>
+                            <div class="system-health-item">
+                                <span>通知</span>
+                                <strong id="configNotifyHealth">待确认</strong>
+                            </div>
+                            <div class="system-health-item">
+                                <span>监控</span>
+                                <strong id="configMonitorHealth">读取中</strong>
+                            </div>
+                        </div>
                     </div>
-                    <p class="config-intro-copy">这里集中管理提示词模型、通知和运行监控。Legil 量产参数保留在批量产图页，方便启动前直接调整。</p>
+                    <div class="config-primary-actions product-action-row system-primary-actions">
+                        <button type="button" class="btn btn-primary" id="systemConfigSaveBtn" onclick="saveSystemConfigPage()">保存配置</button>
+                        <button type="button" class="btn btn-secondary" onclick="refreshSystemConfigPage()">刷新状态</button>
+                    </div>
                 </div>
-                <div class="config-grid" id="configPanelMount"></div>
+                <div class="config-grid system-config-grid" id="configPanelMount"></div>
+                <div class="product-mobile-sticky-actions system-mobile-sticky-actions">
+                    <button type="button" class="btn btn-primary" onclick="saveSystemConfigPage()">保存配置</button>
+                    <button type="button" class="btn btn-secondary" onclick="refreshSystemConfigPage()">刷新</button>
+                </div>
             </div>
         </section>
 
@@ -2087,19 +2412,22 @@
         </section>
 
         <!-- Log Section -->
-        <div class="log-section">
+        <div class="log-section product-log-drawer" id="logSection">
             <div class="log-header">
                 <span class="log-title"><span class="section-icon icon-log" aria-hidden="true"></span><span>实时日志</span></span>
-                <span class="log-indicator">实时连接中</span>
+                <div class="log-header-actions">
+                    <span class="log-indicator">实时连接中</span>
+                    <button type="button" class="log-toggle" id="logToggleBtn" aria-expanded="true" aria-controls="logArea" onclick="toggleLogPanel()">收起日志</button>
+                </div>
             </div>
-            <div class="log-area" id="logArea"></div>
+            <div class="log-area" id="logArea" aria-hidden="false"></div>
         </div>
     </div>
 
     <!-- Completion Modal -->
     <div class="modal-overlay" id="completionModal">
         <div class="modal">
-            <div class="modal-icon">🎉</div>
+            <div class="modal-icon">完成</div>
             <h3>工作流完成！</h3>
             <p id="completionMessage">所有参考图已处理完毕，图片已保存到指定文件夹。</p>
             <div class="modal-actions">
@@ -2117,7 +2445,7 @@
 
     <div class="modal-overlay" id="creativeAgentModal">
         <div class="modal creative-agent-modal">
-            <h3>创意拓展Agent</h3>
+            <h3>创意拓展助手</h3>
             <p>上传表格、图片或文件夹，补充文字指令后生成新的创意拓展表。</p>
 
             <div class="form-group">
@@ -2183,7 +2511,7 @@
             </div>
 
             <div class="modal-actions" style="margin-top: 16px;">
-                <button class="btn btn-primary" id="creativeAgentRunBtn" onclick="runCreativeAgent()">运行Agent</button>
+                <button class="btn btn-primary" id="creativeAgentRunBtn" onclick="runCreativeAgent()">运行助手</button>
                 <button class="btn btn-secondary" id="creativeAgentCancelBtn" onclick="cancelCreativeAgentRun()" hidden disabled>取消运行</button>
                 <button class="btn btn-secondary" onclick="closeCreativeAgentDialog()">关闭</button>
             </div>
@@ -2197,21 +2525,28 @@
     </div>
 
         <script src="/js/app-state.js"></script>
-    <script src="/js/ui-core.js"></script>
-    <script src="/js/config-panels.js"></script>
+    <script src="/js/api-client.js"></script>
+    <script src="/js/status-poller.js"></script>
+    <script src="/js/ui-core.js?v=20260624-persist-config3"></script>
+    <script src="/js/config-panels.js?v=20260624-persist-config3"></script>
     <script src="/js/creative-agent.js"></script>
     <script src="/js/creative-prompts.js"></script>
     <script src="/js/platform-config.js"></script>
     <script src="/js/browser-actions.js"></script>
     <script src="/js/resize-workflow.js"></script>
     <script src="/js/creative-workflow.js"></script>
-    <script src="/js/creative-auto.js"></script>
+    <script src="/js/creative-auto.js?v=20260617-restart-state"></script>
     <script src="/js/creative-knowledge.js"></script>
     <script src="/js/material-analysis.js"></script>
     <script src="/js/task-workbook.js?v=20260602-stage2c"></script>
-    <script src="/js/run-center.js?v=20260602-stage1e"></script>
-    <script src="/js/delivery-page.js"></script>
+    <script src="/js/autonomy-policy.js?v=20260610-p1"></script>
+    <script src="/js/autonomy-diagnostics.js?v=20260617-cn-status"></script>
+    <script src="/js/run-center.js?v=20260617-restart-state"></script>
+    <script src="/js/delivery-page.js?v=20260624-persist-config3"></script>
     <script src="/js/rename-images.js"></script>
+    <script src="/js/vision-taxonomy-rename.js?v=20260604-vtr4"></script>
+    <script src="/js/table-prompt-batch.js"></script>
+    <script src="/js/mass-page.js"></script>
     <script src="/js/workflow.js"></script>
     <script src="/js/prompt-management.js"></script>
 </body>

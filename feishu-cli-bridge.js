@@ -211,6 +211,12 @@ class FeishuCliBridge {
         this.sdkWsStartPromise = null;
         this.sdkReadyOnce = false;
         this.sdkFallbackStarted = false;
+        this.messageReady = false;
+        this.cardActionReady = false;
+        this.pollTimer = null;
+        this.polling = false;
+        this.pollSeenMessageIds = new Set();
+        this.pollSeededChatIds = new Set();
     }
 
     getStatus() {
@@ -227,7 +233,9 @@ class FeishuCliBridge {
             lastStderr: this.lastStderr,
             reconnectAttempts: this.reconnectAttempts,
             consumerMode: this.consumerMode,
-            cardActionReady: this.consumerMode === 'sdk' && this.ready,
+            messageReady: this.messageReady,
+            cardActionReady: this.cardActionReady,
+            polling: this.polling,
             config: getSafeFeishuCliConfig(config),
             validation
         };
@@ -276,9 +284,12 @@ class FeishuCliBridge {
         this.lastStderr = '';
         this.sdkReadyOnce = false;
         this.sdkFallbackStarted = false;
+        this.messageReady = false;
+        this.cardActionReady = false;
         this.startedAt = new Date().toISOString();
-        if (!this.startSdkConsumer(config)) {
-            this.spawnConsumer(config);
+        const sdkStarted = this.startSdkConsumer(config);
+        if (!sdkStarted) {
+            this.startPollingConsumer(config);
         }
 
         return {
@@ -286,6 +297,117 @@ class FeishuCliBridge {
             message: `飞书 CLI 桥接正在启动，profile=${config.profile}`,
             status: this.getStatus()
         };
+    }
+
+    startPollingConsumer(config) {
+        const chatIds = Array.from(new Set([
+            ...config.allowedChatIds,
+            config.notifyChatId
+        ].map(item => String(item || '').trim()).filter(Boolean)));
+
+        this.consumerMode = 'polling';
+        this.running = true;
+        this.polling = false;
+        this.messageReady = false;
+        this.pollSeenMessageIds = new Set();
+        this.pollSeededChatIds = new Set();
+        this.ready = this.messageReady || this.cardActionReady;
+
+        if (!chatIds.length) {
+            this.lastError = 'Feishu polling requires at least one allowed chat id';
+            logger.warn(this.lastError);
+            return;
+        }
+
+        const poll = async () => {
+            if (this.polling || this.manualStopping) {
+                return;
+            }
+
+            this.polling = true;
+            try {
+                for (const chatId of chatIds) {
+                    await this.pollChatMessages(config, chatId);
+                }
+                this.lastError = '';
+                this.messageReady = true;
+                this.ready = this.messageReady || this.cardActionReady;
+            } catch (error) {
+                this.lastError = error && error.message ? error.message : String(error || 'Unknown polling error');
+                logger.warn('Feishu polling failed: ' + this.lastError);
+            } finally {
+                this.polling = false;
+            }
+        };
+
+        logger.system(`启动飞书消息轮询桥接：profile=${config.profile} chats=${chatIds.length}`);
+        poll();
+        this.pollTimer = setInterval(poll, 5000);
+    }
+
+    async pollChatMessages(config, chatId) {
+        const args = [
+            '--profile', config.profile,
+            'im', '+chat-messages-list',
+            '--as', 'bot',
+            '--chat-id', chatId,
+            '--page-size', '10',
+            '--format', 'json'
+        ];
+        const { stdout } = await execLarkCliAsync(config, args, {
+            timeout: config.sendTimeoutMs,
+            maxBuffer: 1024 * 1024
+        });
+        const payload = JSON.parse(stdout || '{}');
+        const messages = payload && payload.data && Array.isArray(payload.data.messages)
+            ? payload.data.messages
+            : [];
+
+        const ordered = [...messages].reverse();
+        if (!this.pollSeededChatIds.has(chatId)) {
+            for (const message of ordered) {
+                const messageId = String(message.message_id || '').trim();
+                if (messageId) {
+                    this.pollSeenMessageIds.add(messageId);
+                }
+            }
+            this.pollSeededChatIds.add(chatId);
+            return;
+        }
+
+        for (const message of ordered) {
+            const messageId = String(message.message_id || '').trim();
+            if (!messageId || this.pollSeenMessageIds.has(messageId)) {
+                continue;
+            }
+
+            this.pollSeenMessageIds.add(messageId);
+            if (this.pollSeenMessageIds.size > 500) {
+                this.pollSeenMessageIds = new Set(Array.from(this.pollSeenMessageIds).slice(-250));
+            }
+
+            const sender = message.sender || {};
+            const senderType = String(sender.sender_type || '').trim();
+            const msgType = String(message.msg_type || '').trim();
+            if (senderType !== 'user' || msgType !== 'text') {
+                continue;
+            }
+
+            const event = {
+                type: 'im.message.receive_v1',
+                event_id: messageId,
+                timestamp: String(Date.now()),
+                id: messageId,
+                message_id: messageId,
+                create_time: String(message.create_time || ''),
+                chat_id: String(message.chat_id || chatId),
+                chat_type: 'p2p',
+                message_type: msgType,
+                sender_id: String(sender.id || ''),
+                content: String(message.content || '')
+            };
+            await this.handleEventLine(JSON.stringify(event));
+        }
     }
 
     spawnConsumer(config) {
@@ -297,14 +419,15 @@ class FeishuCliBridge {
 
         const invocation = resolveLarkCliInvocation(config.cliPath);
         logger.system(`启动飞书 CLI 桥接：${invocation.display} ${args.join(' ')}`);
-        this.consumerMode = 'lark-cli';
+        this.consumerMode = this.sdkWsClient ? 'hybrid' : 'lark-cli';
         this.child = spawn(invocation.command, [...invocation.argsPrefix, ...args], {
             stdio: ['pipe', 'pipe', 'pipe'],
             windowsHide: true,
             env: process.env
         });
         this.running = true;
-        this.ready = false;
+        this.messageReady = false;
+        this.ready = this.messageReady || this.cardActionReady;
 
         const stdoutReader = readline.createInterface({
             input: this.child.stdout
@@ -323,7 +446,9 @@ class FeishuCliBridge {
             }
             this.lastStderr = text.slice(-2000);
             if (text.includes(`[event] ready event_key=${config.eventKey}`)) {
-                this.ready = true;
+                this.messageReady = true;
+                this.ready = this.messageReady || this.cardActionReady;
+                this.consumerMode = this.sdkWsClient ? 'hybrid' : 'lark-cli';
                 logger.system(`飞书 CLI 桥接已就绪：${config.eventKey}`);
                 return;
             }
@@ -337,8 +462,9 @@ class FeishuCliBridge {
 
         this.child.on('exit', (code, signal) => {
             const wasManualStopping = this.manualStopping;
-            this.running = false;
-            this.ready = false;
+            this.messageReady = false;
+            this.running = Boolean(this.sdkWsClient);
+            this.ready = this.messageReady || this.cardActionReady;
             this.child = null;
             logger.warn(`飞书 CLI 桥接已退出，code=${code === null ? 'null' : code} signal=${signal || 'none'}`);
 
@@ -371,16 +497,20 @@ class FeishuCliBridge {
             }
         });
 
-        this.consumerMode = 'sdk';
+        this.consumerMode = this.child ? 'hybrid' : 'sdk';
         this.running = true;
-        this.ready = false;
+        this.cardActionReady = false;
+        this.ready = this.messageReady || this.cardActionReady;
         this.sdkWsClient = new Lark.WSClient({
             appId: credentials.appId,
             appSecret: credentials.appSecret,
             domain,
             loggerLevel: Lark.LoggerLevel.warn,
             onReady: () => {
-                this.ready = true;
+                this.messageReady = true;
+                this.cardActionReady = true;
+                this.ready = this.messageReady || this.cardActionReady;
+                this.consumerMode = this.child ? 'hybrid' : 'sdk';
                 this.sdkReadyOnce = true;
                 this.reconnectAttempts = 0;
                 logger.system('飞书 SDK 长连接桥接已就绪：消息指令 + 卡片按钮');
@@ -388,19 +518,25 @@ class FeishuCliBridge {
             onError: error => {
                 const message = error && error.message ? error.message : String(error || '未知错误');
                 this.lastError = message;
-                this.ready = false;
+                this.messageReady = false;
+                this.cardActionReady = false;
+                this.ready = this.messageReady || this.cardActionReady;
                 logger.error('飞书 SDK 长连接错误: ' + message);
-                if (!this.sdkReadyOnce) {
+                if (!this.sdkReadyOnce && !this.child) {
                     this.fallbackToLarkCli(config, message);
                 }
             },
             onReconnecting: () => {
-                this.ready = false;
+                this.messageReady = false;
+                this.cardActionReady = false;
+                this.ready = this.messageReady || this.cardActionReady;
                 this.reconnectAttempts += 1;
                 logger.warn('飞书 SDK 长连接正在重连...');
             },
             onReconnected: () => {
-                this.ready = true;
+                this.messageReady = true;
+                this.cardActionReady = true;
+                this.ready = this.messageReady || this.cardActionReady;
                 logger.system('飞书 SDK 长连接已恢复');
             }
         });
@@ -409,10 +545,14 @@ class FeishuCliBridge {
             .catch(error => {
                 const message = error && error.message ? error.message : String(error || '未知错误');
                 this.lastError = message;
-                this.running = false;
-                this.ready = false;
+                this.messageReady = false;
+                this.cardActionReady = false;
+                this.running = Boolean(this.child);
+                this.ready = this.messageReady || this.cardActionReady;
                 logger.error('飞书 SDK 长连接启动失败: ' + message);
-                this.fallbackToLarkCli(config, message);
+                if (!this.child) {
+                    this.fallbackToLarkCli(config, message);
+                }
             });
 
         logger.system(`启动飞书 SDK 长连接桥接：profile=${config.profile}`);
@@ -440,7 +580,9 @@ class FeishuCliBridge {
     }
 
     async handleSdkMessageEvent(data) {
-        await this.handleEventLine(JSON.stringify(data || {}));
+        await this.handleEventLine(JSON.stringify({
+            event: data || {}
+        }));
     }
 
     async handleCardActionEvent(rawEvent) {
@@ -475,40 +617,53 @@ class FeishuCliBridge {
         const guard = accessGuard({ chatId, senderId }, config);
         if (!guard.allowed) {
             if (!guard.silent && guard.message) {
-                await this.sendMessage(guard.message, chatId ? { chatId } : {}).catch(() => {});
+                setImmediate(() => {
+                    this.sendMessage(guard.message, chatId ? { chatId } : {}).catch(error => {
+                        logger.warn('发送飞书按钮权限提示失败: ' + error.message);
+                    });
+                });
             }
             return;
         }
 
         if (!config.cardActionToken || token !== config.cardActionToken) {
-            await this.sendMessage('飞书卡片按钮 token 无效，请重新发送控制面板卡片。', chatId ? { chatId } : {}).catch(() => {});
+            setImmediate(() => {
+                this.sendMessage('飞书卡片按钮 token 无效，请重新发送控制面板卡片。', chatId ? { chatId } : {}).catch(error => {
+                    logger.warn('发送飞书按钮 token 提示失败: ' + error.message);
+                });
+            });
             return;
         }
 
         const actionLabel = CARD_ACTIONS[action] ? CARD_ACTIONS[action].label : action || '未知动作';
-
-        try {
-            const controlService = new FeishuControlService({
-                apiBaseUrl: config.controlApiBaseUrl,
-                timeoutMs: config.sendTimeoutMs
+        setImmediate(() => {
+            this.executeCardActionAsync({ action, actionLabel, chatId, config }).catch(error => {
+                const message = error && error.message ? error.message : String(error || '未知错误');
+                this.lastError = message;
+                logger.error('处理飞书卡片按钮失败: ' + message);
+                this.sendMessage(`飞书卡片按钮执行失败：${message}`, chatId ? { chatId } : {}).catch(() => {});
             });
-            const result = await controlService.executeControlAction(action);
-            const success = result && result.success !== false;
-            const message = result && result.message ? result.message : (success ? '已执行' : '执行失败');
+        });
+    }
 
-            await this.sendControlCard({
-                chatId,
-                title: `按钮执行：${actionLabel}`,
-                summary: message,
-                template: success ? 'green' : 'red',
-                footer: `来自飞书卡片按钮：${actionLabel}`
-            });
-        } catch (error) {
-            const message = error && error.message ? error.message : String(error || '未知错误');
-            this.lastError = message;
-            logger.error('处理飞书卡片按钮失败: ' + message);
-            await this.sendMessage(`飞书卡片按钮执行失败：${message}`, chatId ? { chatId } : {}).catch(() => {});
-        }
+    async executeCardActionAsync({ action, actionLabel, chatId, config }) {
+        const controlService = new FeishuControlService({
+            apiBaseUrl: config.controlApiBaseUrl,
+            timeoutMs: config.sendTimeoutMs
+        });
+        const result = await controlService.executeControlAction(action);
+        const success = result && result.success !== false;
+        const message = result && result.message ? result.message : (success ? '已执行' : '执行失败');
+        const cardOptions = result && result.cardOptions && typeof result.cardOptions === 'object' ? result.cardOptions : {};
+
+        await this.sendControlCard({
+            chatId,
+            title: `按钮执行：${actionLabel}`,
+            summary: message,
+            template: success ? 'green' : 'red',
+            footer: `来自飞书卡片按钮：${actionLabel}`,
+            ...cardOptions
+        });
     }
 
     scheduleReconnect(config) {
@@ -524,7 +679,7 @@ class FeishuCliBridge {
         logger.warn(`飞书 CLI 桥接将在 ${Math.round(delay / 1000)} 秒后尝试重连`);
         this.reconnectTimer = setTimeout(() => {
             this.reconnectTimer = null;
-            if (!this.manualStopping && !this.running) {
+            if (!this.manualStopping && !this.child) {
                 this.spawnConsumer(config);
             }
         }, delay);
@@ -549,8 +704,28 @@ class FeishuCliBridge {
         const config = this.currentConfig || this.configReader();
         const result = await this.router.handleEvent(event, config);
         if (!result || result.ignored || (!result.replyText && !result.replyCard)) {
+            const normalizedEvent = result && result.event ? result.event : {};
+            const reason = result && result.reason ? result.reason : (result && result.ignored ? 'ignored' : 'empty_reply');
+            logger.info([
+                '飞书消息事件未回复',
+                `reason=${reason}`,
+                `chat=${normalizedEvent.chatId || 'unknown'}`,
+                `chatType=${normalizedEvent.chatType || 'unknown'}`,
+                `sender=${normalizedEvent.senderId || 'unknown'}`,
+                `message=${normalizedEvent.messageId || 'unknown'}`,
+                `text=${String(normalizedEvent.text || '').slice(0, 80)}`
+            ].join(' '));
             return;
         }
+
+        logger.info([
+            '飞书消息事件已匹配',
+            `chat=${result.event && result.event.chatId || 'unknown'}`,
+            `chatType=${result.event && result.event.chatType || 'unknown'}`,
+            `sender=${result.event && result.event.senderId || 'unknown'}`,
+            `message=${result.event && result.event.messageId || 'unknown'}`,
+            `reply=${result.replyCard ? 'card' : 'text'}`
+        ].join(' '));
 
         if (result.replyCard) {
             await this.replyWithControlCard(result.event || event, result.replyCard, config);
@@ -567,6 +742,11 @@ class FeishuCliBridge {
             this.reconnectTimer = null;
         }
         this.reconnectAttempts = 0;
+        if (this.pollTimer) {
+            clearInterval(this.pollTimer);
+            this.pollTimer = null;
+        }
+        this.polling = false;
 
         if (this.sdkWsClient) {
             try {
@@ -576,17 +756,24 @@ class FeishuCliBridge {
             }
             this.sdkWsClient = null;
             this.sdkWsStartPromise = null;
-            this.running = false;
-            this.ready = false;
-            return {
+            this.cardActionReady = false;
+            this.ready = this.messageReady || this.cardActionReady;
+            if (!this.child) {
+                this.running = false;
+                this.messageReady = false;
+                this.ready = false;
+                return {
                 success: true,
                 message: '飞书 SDK 长连接桥接已停止',
                 status: this.getStatus()
-            };
+                };
+            }
         }
 
         if (!this.child) {
             this.running = false;
+            this.messageReady = false;
+            this.cardActionReady = false;
             this.ready = false;
             return {
                 success: true,
@@ -621,6 +808,8 @@ class FeishuCliBridge {
         });
 
         this.child = null;
+        this.messageReady = false;
+        this.cardActionReady = false;
         this.running = false;
         this.ready = false;
         return {

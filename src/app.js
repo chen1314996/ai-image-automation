@@ -9,6 +9,19 @@ const path = require('path');
 function createApp(options = {}) {
     const rootDir = options.rootDir || path.join(__dirname, '..');
     const app = express();
+    const slowRequestMs = Number(process.env.SLOW_REQUEST_MS) || 1000;
+
+    app.use((req, res, next) => {
+        const startedAt = process.hrtime.bigint();
+        res.on('finish', () => {
+            const durationMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
+            if (durationMs >= slowRequestMs) {
+                const size = res.getHeader('content-length') || '-';
+                console.warn(`[slow-request] ${req.method} ${req.originalUrl || req.url} ${res.statusCode} ${durationMs.toFixed(0)}ms ${size}b`);
+            }
+        });
+        next();
+    });
 
     app.use(express.json({ limit: '160mb' }));
     app.use(express.static(path.join(rootDir, 'public')));

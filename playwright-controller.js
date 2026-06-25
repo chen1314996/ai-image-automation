@@ -17,6 +17,7 @@ const logger = require('./logger');
 // 引入 path 模块用于处理路径
 const path = require('path');
 const fs = require('fs');
+const { execFileSync } = require('child_process');
 
 // 用户数据目录路径 - 用于保存登录状态、cookie 等
 // 目录位于项目文件夹下，方便管理
@@ -86,7 +87,7 @@ class BrowserController {
                     '--disable-blink-features=AutomationControlled',  // 禁用自动化检测
                     '--disable-web-security',
                     '--disable-features=IsolateOrigins,site-per-process',
-                    '--remote-debugging-port=9223'   // 开启远程调试端口，支持外部连接
+                    '--remote-debugging-port=0'   // 使用动态调试端口，避免旧浏览器占用固定端口导致启动失败
                 ]
             };
 
@@ -102,7 +103,7 @@ class BrowserController {
             try {
                 this.context = await chromium.launchPersistentContext(USER_DATA_DIR, contextOptions);
             } catch (launchError) {
-                if (/lock|singleton|profile|user data directory|正在使用|in use/i.test(launchError.message)) {
+                if (/lock|singleton|profile|user data directory|正在使用|in use|exitCode=21|process did exit/i.test(launchError.message)) {
                     console.log('   检测到浏览器用户目录锁定，正在清理残留锁文件后重试...');
                     this.clearStaleProfileLocks();
                     this.context = await chromium.launchPersistentContext(USER_DATA_DIR, contextOptions);
@@ -171,7 +172,9 @@ class BrowserController {
     }
 
     clearStaleProfileLocks() {
-        const lockFiles = ['SingletonLock', 'SingletonCookie', 'SingletonSocket'];
+        this.terminateStaleProfileProcesses();
+
+        const lockFiles = ['SingletonLock', 'SingletonCookie', 'SingletonSocket', 'lockfile'];
         for (const fileName of lockFiles) {
             const targetPath = path.join(USER_DATA_DIR, fileName);
             try {
@@ -182,6 +185,38 @@ class BrowserController {
             } catch (error) {
                 console.log(`   清理锁文件 ${fileName} 失败: ${error.message}`);
             }
+        }
+    }
+
+    terminateStaleProfileProcesses() {
+        if (process.platform !== 'win32') {
+            return;
+        }
+
+        try {
+            const escapedUserDataDir = USER_DATA_DIR.replace(/'/g, "''");
+            const command = [
+                `$profilePath = '${escapedUserDataDir}'`,
+                "$processes = Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'chrome.exe' -and $_.CommandLine -like '*ms-playwright*' -and $_.CommandLine -like ('*' + $profilePath + '*') }",
+                "$processes | ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop; Write-Output $_.ProcessId } catch {} }"
+            ].join('; ');
+            const output = execFileSync('powershell.exe', [
+                '-NoProfile',
+                '-ExecutionPolicy',
+                'Bypass',
+                '-Command',
+                command
+            ], {
+                encoding: 'utf8',
+                timeout: 10000,
+                windowsHide: true
+            }).trim();
+            if (output) {
+                const processIds = output.split(/\s+/).filter(Boolean).join(', ');
+                console.log(`   已清理残留 Playwright Chromium 进程: ${processIds}`);
+            }
+        } catch (error) {
+            console.log(`   清理残留浏览器进程失败: ${error.message}`);
         }
     }
 

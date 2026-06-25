@@ -1,6 +1,6 @@
 # 冰封末世广告创意拓展Agent
 
-这是一个可接入项目的 Agent 包，而不是单个 prompt。它把你的主 Agent 规则、当前项目设定、6 个已打包 skill、接入适配器和调用示例放在同一个目录里，方便后续迁移到现有项目。
+这是一个可接入项目的 Agent 包，而不是单个 prompt。它把你的主 Agent 规则、当前项目设定、7 个已打包 skill、接入适配器和调用示例放在同一个目录里，方便后续迁移到现有项目。
 
 当前版本重点适配第一版 MVP：
 
@@ -34,6 +34,10 @@ creative-expansion-agent/
     batch-creative-expansion-accelerator/
       SKILL.md
       agents/openai.yaml
+    legil-creative-prompt-generator/
+      SKILL.md
+      agents/openai.yaml
+      references/
     legil-run-once-prompt-contract/
       SKILL.md
   integration/
@@ -53,7 +57,7 @@ creative-expansion-agent/
 3. `instructions.md`
    给模型读的主提示词，负责角色、工作流、质量标准和输出格式。
 4. `skills/*/SKILL.md`
-   可复用的局部能力。当前包含 5 个原始创意分析/拓展 skill，以及 1 个为本项目新增的 Legil run-once prompt 合约 skill。
+   可复用的局部能力。当前包含 5 个原始创意分析/拓展 skill、1 个 Legil run-once prompt 合约 skill，以及 1 个只生成 `promptItems` JSON 的 prompt-only skill。
 5. `integration/*`
    给已有项目调用的适配层。项目不需要理解所有 prompt，只要调用这个适配器生成最终请求即可。
 
@@ -76,6 +80,7 @@ C:\Users\dd\.codex\skills\new-direction-expansion-table\SKILL.md
 C:\Users\dd\.codex\skills\strict-table-direction-iteration\SKILL.md
 C:\Users\dd\.codex\skills\batch-creative-expansion-accelerator\SKILL.md
 C:\Users\dd\.codex\skills\legil-run-once-prompt-contract\SKILL.md
+C:\Users\dd\.codex\skills\legil-creative-prompt-generator\SKILL.md
 ```
 
 如果你的项目自己负责读取 skill，则不需要复制，直接读取本包内的 `skills/` 即可。

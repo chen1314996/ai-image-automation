@@ -16,6 +16,15 @@ const KNOWN_PRIMARY_TAGS = new Set([
     '趣味',
     '包装形式',
     '节日',
+    'TOP迭代',
+    '代言人',
+    '题材',
+    '玩法',
+    '角色',
+    '角色展示',
+    '趣味',
+    '包装形式',
+    '节日',
     'TOP迭代'
 ]);
 
@@ -138,6 +147,13 @@ function parseGofcnimName(fileName) {
     const primaryIndex = parts.findIndex((part, index) => index > 0 && KNOWN_PRIMARY_TAGS.has(part));
     if (primaryIndex > 0) {
         return buildResult(parts.slice(primaryIndex), 'gofcnim');
+    }
+
+    const legacyBusinessParts = parts.length > 3 ? parts.slice(3) : [];
+    if (legacyBusinessParts.some(part => CJK_RE.test(part))) {
+        return buildResult(legacyBusinessParts, 'gofcnim', {
+            legacyPrefix: parts.slice(0, 3).join('_')
+        });
     }
 
     return null;

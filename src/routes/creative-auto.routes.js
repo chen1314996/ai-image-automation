@@ -4,6 +4,49 @@
 module.exports = function registerCreativeAutoRoutes(app, context) {
     const service = context.creativeAutoService;
 
+    function getLightDiagnostics() {
+        const summary = context.runStateService && typeof context.runStateService.getSummary === 'function'
+            ? context.runStateService.getSummary()
+            : { status: 'idle', legilQueue: {}, activeRun: null };
+        const activeRun = summary.activeRun || {};
+        const counts = activeRun.counts || {};
+        const legilQueue = summary.legilQueue || {};
+
+        return {
+            success: true,
+            lightweight: true,
+            serviceStatus: {
+                status: summary.status || 'idle',
+                phase: summary.phase || 'idle',
+                preflightOk: true,
+                legilRunning: legilQueue.status === 'running'
+            },
+            policySummary: {
+                stageLabel: '辅助自动'
+            },
+            knowledgeCounts: {
+                directions: 0,
+                assets: 0,
+                feedback: 0,
+                activeMemoryRules: 0,
+                unreviewedAssets: 0
+            },
+            targetQueue: activeRun.targetQueueProgress || activeRun.targetQueue || null,
+            warnings: [],
+            lastRun: activeRun.runId ? {
+                runId: activeRun.runId,
+                status: activeRun.status,
+                phase: activeRun.phase,
+                promptAccepted: counts.acceptedPrompts || 0,
+                updatedAt: activeRun.updatedAt || ''
+            } : null,
+            legilResume: {
+                hasResume: false
+            },
+            runState: summary
+        };
+    }
+
     app.get('/api/creative-auto/status', (req, res) => {
         try {
             res.json(service.getStatus({
@@ -14,6 +57,23 @@ module.exports = function registerCreativeAutoRoutes(app, context) {
             res.status(500).json({
                 success: false,
                 message: '获取自动创意状态失败: ' + error.message
+            });
+        }
+    });
+
+    app.get('/api/creative-auto/diagnostics', (req, res) => {
+        try {
+            const wantsFull = /^(1|true|yes|full)$/i.test(String(req.query.full || '').trim());
+            res.json(wantsFull
+                ? service.getDiagnostics({
+                    ...req.query,
+                    appConfig: context.appConfig
+                })
+                : getLightDiagnostics());
+        } catch (error) {
+            res.status(500).json({
+                success: false,
+                message: '获取自动创意诊断失败: ' + error.message
             });
         }
     });
@@ -90,6 +150,20 @@ module.exports = function registerCreativeAutoRoutes(app, context) {
             res.status(500).json({
                 success: false,
                 message: '恢复自动创意任务失败: ' + error.message
+            });
+        }
+    });
+
+    app.post('/api/creative-auto/runs/:runId/retry-failed-prompts', (req, res) => {
+        try {
+            const result = service.retryFailedPrompts(req.params.runId, req.body || {}, {
+                appConfig: context.appConfig
+            });
+            res.status(result.success ? 202 : 400).json(result);
+        } catch (error) {
+            res.status(500).json({
+                success: false,
+                message: '重试失败 Prompt 失败: ' + error.message
             });
         }
     });

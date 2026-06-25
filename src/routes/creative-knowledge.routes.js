@@ -1,6 +1,73 @@
 const { createCreativeKnowledgeService } = require('../services/creative-knowledge');
 const { createFeishuSyncService } = require('../services/creative-knowledge/feishu-sync');
 const { createFeishuDirectionSyncService } = require('../services/creative-knowledge/feishu-direction-sync');
+const express = require('express');
+const path = require('path');
+
+function readRequestBuffer(req, maxBytes = 25 * 1024 * 1024) {
+    return new Promise((resolve, reject) => {
+        const chunks = [];
+        let total = 0;
+        req.on('data', chunk => {
+            total += chunk.length;
+            if (total > maxBytes) {
+                reject(new Error('上传文件超过大小限制'));
+                req.destroy();
+                return;
+            }
+            chunks.push(chunk);
+        });
+        req.on('end', () => resolve(Buffer.concat(chunks)));
+        req.on('error', reject);
+    });
+}
+
+function parseMultipartReferenceUpload(buffer, contentType = '') {
+    const boundaryMatch = String(contentType).match(/boundary=(?:"([^"]+)"|([^;]+))/i);
+    if (!boundaryMatch) {
+        throw new Error('缺少 multipart boundary');
+    }
+    const boundary = boundaryMatch[1] || boundaryMatch[2];
+    const raw = buffer.toString('binary');
+    const fields = {};
+    let file = null;
+    raw.split(`--${boundary}`).forEach(part => {
+        const trimmed = part.replace(/^\r\n/, '').replace(/\r\n$/, '');
+        if (!trimmed || trimmed === '--') return;
+        const separator = trimmed.indexOf('\r\n\r\n');
+        if (separator < 0) return;
+        const headerText = trimmed.slice(0, separator);
+        let content = trimmed.slice(separator + 4);
+        if (content.endsWith('\r\n')) content = content.slice(0, -2);
+        const nameMatch = headerText.match(/name="([^"]+)"/i);
+        if (!nameMatch) return;
+        const name = nameMatch[1];
+        const fileNameMatch = headerText.match(/filename="([^"]*)"/i);
+        if (fileNameMatch) {
+            file = {
+                fieldName: name,
+                originalName: fileNameMatch[1],
+                buffer: Buffer.from(content, 'binary'),
+                size: Buffer.byteLength(content, 'binary')
+            };
+            return;
+        }
+        fields[name] = Buffer.from(content, 'binary').toString('utf8');
+    });
+    return { fields, file };
+}
+
+async function readReferenceUploadPayload(req) {
+    const contentType = req.headers['content-type'] || '';
+    if (/multipart\/form-data/i.test(contentType)) {
+        const buffer = await readRequestBuffer(req);
+        return parseMultipartReferenceUpload(buffer, contentType);
+    }
+    return {
+        fields: req.body || {},
+        file: null
+    };
+}
 
 /**
  * 创意知识库导入、状态和方向查询接口。
@@ -9,6 +76,12 @@ module.exports = function registerCreativeKnowledgeRoutes(app, context) {
     const service = createCreativeKnowledgeService(context);
     const feishuSyncService = createFeishuSyncService(context);
     const feishuDirectionSyncService = createFeishuDirectionSyncService(context);
+    const referenceStaticDir = path.join(context.rootDir || context.ROOT_DIR || process.cwd(), 'data', 'creative-knowledge', 'reference-images', 'workbook');
+
+    app.use('/api/creative-knowledge/reference-static', express.static(referenceStaticDir, {
+        maxAge: '1d',
+        immutable: true
+    }));
 
     app.get('/api/creative-knowledge/status', (req, res) => {
         try {
@@ -242,6 +315,131 @@ module.exports = function registerCreativeKnowledgeRoutes(app, context) {
         }
     });
 
+    app.get('/api/creative-knowledge/directions/:directionId/references', (req, res) => {
+        try {
+            const result = service.listDirectionReferences(req.params.directionId, req.query || {});
+            if (!result.success) {
+                return res.status(404).json(result);
+            }
+            res.json(result);
+        } catch (error) {
+            res.status(500).json({
+                success: false,
+                message: '读取方向参考图池失败: ' + error.message
+            });
+        }
+    });
+
+    app.post('/api/creative-knowledge/directions/:directionId/references', async (req, res) => {
+        try {
+            const upload = await readReferenceUploadPayload(req);
+            const result = service.uploadDirectionReference(req.params.directionId, upload.fields || {}, upload.file, req.query || {});
+            if (!result.success) {
+                return res.status(400).json(result);
+            }
+            res.json(result);
+        } catch (error) {
+            res.status(400).json({
+                success: false,
+                message: '上传方向参考图失败: ' + error.message
+            });
+        }
+    });
+
+    app.post('/api/creative-knowledge/references/:referenceId/replace', async (req, res) => {
+        try {
+            const upload = await readReferenceUploadPayload(req);
+            const result = service.replaceReference(req.params.referenceId, upload.fields || {}, upload.file, req.query || {});
+            if (!result.success) {
+                return res.status(400).json(result);
+            }
+            res.json(result);
+        } catch (error) {
+            res.status(400).json({
+                success: false,
+                message: '替换参考图失败: ' + error.message
+            });
+        }
+    });
+
+    app.post('/api/creative-knowledge/references/:referenceId/archive', (req, res) => {
+        try {
+            const result = service.archiveReference(req.params.referenceId, req.body || {}, req.query || {});
+            if (!result.success) {
+                return res.status(404).json(result);
+            }
+            res.json(result);
+        } catch (error) {
+            res.status(400).json({
+                success: false,
+                message: '归档参考图失败: ' + error.message
+            });
+        }
+    });
+
+    app.post('/api/creative-knowledge/references/:referenceId/reject', (req, res) => {
+        try {
+            const result = service.rejectReference(req.params.referenceId, req.body || {}, req.query || {});
+            if (!result.success) {
+                return res.status(404).json(result);
+            }
+            res.json(result);
+        } catch (error) {
+            res.status(400).json({
+                success: false,
+                message: '标记参考图不适合失败: ' + error.message
+            });
+        }
+    });
+
+    app.delete('/api/creative-knowledge/references/:referenceId', (req, res) => {
+        try {
+            const result = service.deleteReference(req.params.referenceId, req.body || {}, req.query || {});
+            if (!result.success && result.needsConfirmation) {
+                return res.status(409).json(result);
+            }
+            if (!result.success) {
+                return res.status(404).json(result);
+            }
+            res.json(result);
+        } catch (error) {
+            res.status(400).json({
+                success: false,
+                message: '永久删除参考图失败: ' + error.message
+            });
+        }
+    });
+
+    app.post('/api/creative-knowledge/directions/:directionId/references/reorder', (req, res) => {
+        try {
+            const result = service.reorderDirectionReferences(req.params.directionId, req.body || {}, req.query || {});
+            if (!result.success) {
+                return res.status(400).json(result);
+            }
+            res.json(result);
+        } catch (error) {
+            res.status(400).json({
+                success: false,
+                message: '重排参考图 slot 失败: ' + error.message
+            });
+        }
+    });
+
+    app.post('/api/creative-knowledge/references/:referenceId/analyze-dna', (req, res) => {
+        try {
+            const result = service.analyzeReferenceDna(req.params.referenceId, req.body || {}, req.query || {});
+            if (!result.success) {
+                return res.status(404).json(result);
+            }
+            res.json(result);
+        } catch (error) {
+            res.status(400).json({
+                success: false,
+                message: '分析参考图 DNA 失败: ' + error.message
+            });
+        }
+    });
+
     app.post('/api/creative-knowledge/directions/:directionId/merge', (req, res) => {
         try {
             const result = service.mergeDirection(req.params.directionId, req.body || {}, req.query || {});
@@ -410,7 +608,7 @@ module.exports = function registerCreativeKnowledgeRoutes(app, context) {
         }
     });
 
-    app.get('/api/creative-knowledge/references/:referenceId/file', (req, res) => {
+    function sendReferenceImageFile(req, res) {
         try {
             const file = service.getReferenceFile(req.params.referenceId, req.query || {});
             if (!file) {
@@ -428,7 +626,10 @@ module.exports = function registerCreativeKnowledgeRoutes(app, context) {
                 message: '读取参考图失败: ' + error.message
             });
         }
-    });
+    }
+
+    app.get('/api/creative-knowledge/ref-files/:referenceId', sendReferenceImageFile);
+    app.get('/api/creative-knowledge/references/:referenceId/file', sendReferenceImageFile);
 
     app.post('/api/creative-knowledge/feedback', (req, res) => {
         try {

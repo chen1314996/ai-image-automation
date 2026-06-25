@@ -6,9 +6,11 @@
             legilUrl: 'https://lumos.diandian.info/legil/image-ai/image-to-image',
             jimengUrl: 'https://jimeng.jianying.com/ai-tool/generate?workspace=12721326029068&type=image',
             legilReferenceFolder: 'D:\\工作\\自动化工作流1\\批量产图\\参考图',
+            tablePromptReferenceFolder: 'D:\\工作\\自动化工作流1\\批量产图\\参考图',
+            tablePromptOutputFolder: 'D:\\工作\\自动化工作流1\\批量产图\\输出',
             workflowBrowserMode: 'headless',
-            resizeInputFolder: 'D:\\工作\\自动化工作流1\\三尺寸交付\\OK图输入',
-            resizeOutputFolder: 'D:\\工作\\自动化工作流1\\三尺寸交付\\输出',
+            resizeInputFolder: 'D:\\工作\\自动化工作流1\\改尺寸交付\\源图输入',
+            resizeOutputFolder: 'D:\\工作\\自动化工作流1\\改尺寸交付\\输出',
             resizeProvider: 'legil',
             resizeBrowserMode: 'headless',
             creativeOutputFolder: 'D:\\工作\\自动化工作流1\\创意拓展\\输出',
@@ -30,16 +32,16 @@
             logoBatchFileName: '1-国内LOGO模板-800x800.png',
             packageBatchInputFolder: 'D:\\工作\\自动化工作流1\\重命名\\加LOGO',
             packageBatchOutputFolder: 'D:\\工作\\自动化工作流1\\重命名\\一键打包',
-            resizePromptTemplate: '请进行 AI 三尺寸适配，保持主体与卖点清晰，按目标画幅重新构图。',
-            deliveryInputFolder: 'D:\\工作\\自动化工作流1\\三尺寸交付\\OK图输入',
-            deliveryOutputFolder: 'D:\\工作\\自动化工作流1\\三尺寸交付\\输出',
+            resizePromptTemplate: '请进行 AI 尺寸适配，保持主体与卖点清晰，按目标画幅重新构图。',
+            deliveryInputFolder: 'D:\\工作\\自动化工作流1\\改尺寸交付\\源图输入',
+            deliveryOutputFolder: 'D:\\工作\\自动化工作流1\\改尺寸交付\\输出',
             deliveryProcessMode: 'full-delivery',
-            deliveryCandidateCount: 4,
+            deliveryCandidateCount: 1,
             deliveryTargetSizes: ['800x800', '1280x720', '1080x1920'],
             deliveryCandidateCountsBySize: {
-                '800x800': 4,
-                '1280x720': 4,
-                '1080x1920': 4
+                '800x800': 1,
+                '1280x720': 1,
+                '1080x1920': 1
             },
             deliveryLogoFolder: 'D:\\工作\\GOF\\LOGO模版',
             deliveryNamingPrefix: 'GOFCNIM',
@@ -75,12 +77,13 @@
                 resolution: '2K',
                 outputQuantity: 1
             },
+            legilModelParameterProfiles: {},
             resizeLegilGeneration: {
                 imageModel: 'nano-banana-2',
                 aspectRatio: '1:1',
                 aspectRatios: ['1:1', '16:9', '9:16'],
                 resolution: '1K',
-                outputQuantity: 4
+                outputQuantity: 1
             },
             resizeJimengGeneration: {
                 imageModel: 'image-5-lite',
@@ -97,12 +100,18 @@
                 resolution: '2K',
                 outputQuantity: 4
             },
+            creativePromptStyle: 'cinematic_photo',
+            creativePromptStyleOptions: [
+                { value: 'cinematic_photo', label: '电影感真实摄影质感' },
+                { value: 'commercial_3d', label: '3D卡通商业广告海报' },
+                { value: 'style_free', label: '不限风格' }
+            ],
             notifications: {
                 feishuEnabled: true,
                 taskCompletionEnabled: true,
                 serverStartupEnabled: true,
                 staleProgressEnabled: true,
-                staleThresholdMinutes: 15,
+                staleThresholdMinutes: 30,
                 notificationCooldownMinutes: 10,
                 legilScreenshotEnabled: true,
                 autoRecoveryEnabled: true,
@@ -112,12 +121,88 @@
             }
         };
 
+        const DEFAULT_LEGIL_PARAMETER_PROFILE = {
+            defaultAspectRatio: '1:1',
+            defaultResolution: '2K',
+            defaultOutputQuantity: 1,
+            aspectRatios: ['1:1', '1:4', '1:8', '2:3', '3:4', '4:5', '9:16', '21:9', '16:9', '5:4', '4:3', '3:2', '8:1', '4:1'],
+            resolutions: ['512px', '1K', '2K', '4K'],
+            outputQuantities: [1, 2, 3, 4],
+            outputQuantityControl: 'button'
+        };
+
+        const GPT_IMAGE_LEGIL_PARAMETER_PROFILE = {
+            defaultAspectRatio: '1:1',
+            defaultResolution: '2K',
+            defaultOutputQuantity: 1,
+            aspectRatios: ['1:1', '2:3', '3:4', '4:5', '9:16', '16:9', '5:4', '4:3', '3:2', '智能比例'],
+            resolutions: ['1K', '2K'],
+            outputQuantities: [1, 2, 3, 4],
+            outputQuantityControl: 'slider'
+        };
+
+        function getLegilModelParameterProfile(modelValue, profiles = config.legilModelParameterProfiles) {
+            const model = String(modelValue || '').trim();
+            const profile = profiles && profiles[model]
+                ? profiles[model]
+                : (['gpt-image-2', 'gpt-image-1'].includes(model)
+                    ? GPT_IMAGE_LEGIL_PARAMETER_PROFILE
+                    : DEFAULT_LEGIL_PARAMETER_PROFILE);
+            return {
+                defaultAspectRatio: profile.defaultAspectRatio || DEFAULT_LEGIL_PARAMETER_PROFILE.defaultAspectRatio,
+                defaultResolution: profile.defaultResolution || DEFAULT_LEGIL_PARAMETER_PROFILE.defaultResolution,
+                defaultOutputQuantity: Number(profile.defaultOutputQuantity) || DEFAULT_LEGIL_PARAMETER_PROFILE.defaultOutputQuantity,
+                aspectRatios: Array.isArray(profile.aspectRatios) && profile.aspectRatios.length
+                    ? profile.aspectRatios.slice()
+                    : DEFAULT_LEGIL_PARAMETER_PROFILE.aspectRatios.slice(),
+                resolutions: Array.isArray(profile.resolutions) && profile.resolutions.length
+                    ? profile.resolutions.slice()
+                    : DEFAULT_LEGIL_PARAMETER_PROFILE.resolutions.slice(),
+                outputQuantities: Array.isArray(profile.outputQuantities) && profile.outputQuantities.length
+                    ? profile.outputQuantities.slice()
+                    : DEFAULT_LEGIL_PARAMETER_PROFILE.outputQuantities.slice(),
+                outputQuantityControl: profile.outputQuantityControl || DEFAULT_LEGIL_PARAMETER_PROFILE.outputQuantityControl
+            };
+        }
+
+        function normalizeLegilSettingsForModel(settings = {}, profiles = config.legilModelParameterProfiles) {
+            const source = settings && typeof settings === 'object' ? settings : {};
+            const imageModel = String(source.imageModel || 'nano-banana-2');
+            const profile = getLegilModelParameterProfile(imageModel, profiles);
+            const aspectRatio = profile.aspectRatios.includes(String(source.aspectRatio))
+                ? String(source.aspectRatio)
+                : profile.defaultAspectRatio;
+            const resolution = profile.resolutions.includes(String(source.resolution))
+                ? String(source.resolution)
+                : profile.defaultResolution;
+            const outputQuantityValue = Number(source.outputQuantity);
+            const outputQuantity = profile.outputQuantities.includes(outputQuantityValue)
+                ? outputQuantityValue
+                : profile.defaultOutputQuantity;
+            const rawAspectRatios = Array.isArray(source.aspectRatios) && source.aspectRatios.length
+                ? source.aspectRatios
+                : [aspectRatio];
+            const aspectRatios = Array.from(new Set(rawAspectRatios.map(item => String(item || '').trim())))
+                .filter(item => profile.aspectRatios.includes(item));
+
+            return {
+                ...source,
+                imageModel,
+                aspectRatio: aspectRatios[0] || aspectRatio,
+                aspectRatios: aspectRatios.length ? aspectRatios : [aspectRatio],
+                resolution,
+                outputQuantity
+            };
+        }
+
         const folderDefaults = {
             referenceFolder: 'D:\\工作\\自动化工作流1\\批量产图\\输入',
             legilReferenceFolder: 'D:\\工作\\自动化工作流1\\批量产图\\参考图',
             saveFolder: 'D:\\工作\\自动化工作流1\\批量产图\\输出',
-            resizeInputFolder: 'D:\\工作\\自动化工作流1\\三尺寸交付\\OK图输入',
-            resizeOutputFolder: 'D:\\工作\\自动化工作流1\\三尺寸交付\\输出',
+            tablePromptReferenceFolder: 'D:\\工作\\自动化工作流1\\批量产图\\参考图',
+            tablePromptOutputFolder: 'D:\\工作\\自动化工作流1\\批量产图\\输出',
+            resizeInputFolder: 'D:\\工作\\自动化工作流1\\改尺寸交付\\源图输入',
+            resizeOutputFolder: 'D:\\工作\\自动化工作流1\\改尺寸交付\\输出',
             creativeOutputFolder: 'D:\\工作\\自动化工作流1\\创意拓展\\输出',
             creativeReferenceFolder: 'D:\\工作\\自动化工作流1\\创意拓展\\参考图',
             renameInputFolder: 'D:\\工作\\自动化工作流1\\创意拓展\\输出',
@@ -128,8 +213,8 @@
             logoBatchOutputFolder: 'D:\\工作\\自动化工作流1\\重命名\\加LOGO',
             packageBatchInputFolder: 'D:\\工作\\自动化工作流1\\重命名\\加LOGO',
             packageBatchOutputFolder: 'D:\\工作\\自动化工作流1\\重命名\\一键打包',
-            deliveryInputFolder: 'D:\\工作\\自动化工作流1\\三尺寸交付\\OK图输入',
-            deliveryOutputFolder: 'D:\\工作\\自动化工作流1\\三尺寸交付\\输出'
+            deliveryInputFolder: 'D:\\工作\\自动化工作流1\\改尺寸交付\\源图输入',
+            deliveryOutputFolder: 'D:\\工作\\自动化工作流1\\改尺寸交付\\输出'
         };
         const folderHistoryKey = 'ai-image-automation-folder-history-v1';
         const folderHistoryLimit = 8;
@@ -168,6 +253,9 @@
             loadCreativeAgentStatus();
             if (typeof initRunCenter === 'function') {
                 initRunCenter();
+            }
+            if (typeof initTablePromptBatch === 'function') {
+                initTablePromptBatch();
             }
             refreshWorkflowResumeControls();
             const promptTextarea = document.getElementById('doubaoPromptTemplate');

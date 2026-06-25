@@ -1,4 +1,12 @@
 const { normalizeCellText } = require('./creative-table-parser');
+const {
+    countConcreteVisualProps,
+    hasForcedStyleForStyleFree,
+    hasGenerationParameterText,
+    hasGenericVisualAction,
+    hasStructuredPromptLabels,
+    normalizeCreativePromptStyle
+} = require('./src/services/creative-auto/prompt-style');
 
 const STRUCTURED_PROMPT_SUFFIX = '冰雪氛围，画面直观、主题明确，高质量3D卡通渲染，商业级游戏宣传海报风格，电影镜头感。';
 const DEFAULT_PROMPT_FORBIDDEN_TERMS = [
@@ -203,18 +211,33 @@ function buildCreativeAgentQualityReport(promptItems = []) {
             report.sanitizedCount += 1;
         }
 
-        if (sanitizedPrompt.length < 120) {
+        const creativePromptStyle = normalizeCreativePromptStyle(item && item.creativePromptStyle);
+
+        if (sanitizedPrompt.length < 60) {
+            addIssue(report, 'error', 'short_prompt', `提示词过短：${sanitizedPrompt.length} 字`, item, index);
+        } else if (sanitizedPrompt.length < 80) {
             addIssue(report, 'warning', 'short_prompt', `提示词偏短：${sanitizedPrompt.length} 字`, item, index);
         }
-        if (sanitizedPrompt.length > 1200) {
+        if (sanitizedPrompt.length > 240) {
             addIssue(report, 'warning', 'long_prompt', `提示词偏长：${sanitizedPrompt.length} 字`, item, index);
         }
-        if (!sanitizedPrompt.includes('主题') || !sanitizedPrompt.includes('画风')) {
-            addIssue(report, 'warning', 'missing_structure', '提示词缺少“主题/画风”等结构化字段', item, index);
+        if (hasStructuredPromptLabels(sanitizedPrompt)) {
+            addIssue(report, 'error', 'structured_prompt_labels', '提示词仍包含“主题/画风/画面内容”等字段式标签', item, index);
         }
-        const missingSections = findMissingPromptSections(sanitizedPrompt);
-        if (missingSections.length) {
-            addIssue(report, 'warning', 'missing_required_sections', `提示词缺少结构字段：${missingSections.join('、')}`, item, index);
+        if (hasGenerationParameterText(sanitizedPrompt)) {
+            addIssue(report, 'error', 'generation_parameter_in_prompt', '提示词不能包含宽高比、输出张数、分辨率等生图参数', item, index);
+        }
+        if (creativePromptStyle === 'style_free' && hasForcedStyleForStyleFree(sanitizedPrompt)) {
+            addIssue(report, 'error', 'style_free_forced_style', '不限风格时不能强加电影感、真实摄影、3D、卡通、商业海报等风格词', item, index);
+        }
+        if (hasGenericVisualAction(sanitizedPrompt) || countConcreteVisualProps(sanitizedPrompt) < 3) {
+            addIssue(report, 'warning', 'generic_action_or_sparse_props', '提示词建议把“整理物资/寻找补给”等泛动作改成具体物资动作，并补足 2-3 个可见道具', item, index);
+        }
+        if (!/参考图|原图|角色造型|服装特征/.test(sanitizedPrompt)) {
+            addIssue(report, 'warning', 'weak_reference_binding', '提示词建议明确绑定参考图角色和造型服装特征', item, index);
+        }
+        if (!/不要文字，不要水印|不要水印/.test(sanitizedPrompt)) {
+            addIssue(report, 'warning', 'missing_no_text_watermark', '提示词建议默认追加“不要文字，不要水印”', item, index);
         }
         if ((sanitizedPrompt.match(new RegExp(STRUCTURED_PROMPT_SUFFIX, 'g')) || []).length > 1) {
             addIssue(report, 'warning', 'duplicate_suffix', '固定风格尾句重复出现', item, index);

@@ -26,12 +26,29 @@ module.exports = function registerRunStateRoutes(app, context) {
 
     app.get('/api/run-state/status', (req, res) => {
         try {
-            const status = context.runStateService.getStatus();
+            const wantsFull = /^(1|true|yes|full)$/i.test(String(req.query.full || '').trim());
+            const status = !wantsFull && typeof context.runStateService.getSummary === 'function'
+                ? context.runStateService.getSummary()
+                : context.runStateService.getStatus();
             res.json(status);
         } catch (error) {
             res.status(500).json({
                 success: false,
                 message: '获取统一运行状态失败: ' + error.message
+            });
+        }
+    });
+
+    app.get('/api/run-state/summary', (req, res) => {
+        try {
+            const status = typeof context.runStateService.getSummary === 'function'
+                ? context.runStateService.getSummary()
+                : context.runStateService.getStatus();
+            res.json(status);
+        } catch (error) {
+            res.status(500).json({
+                success: false,
+                message: '获取统一运行状态摘要失败: ' + error.message
             });
         }
     });

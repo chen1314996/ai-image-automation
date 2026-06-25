@@ -14,11 +14,15 @@ const {
     standardizeImageToTarget,
     buildStandardizedOutputPath
 } = require('../src/services/delivery-postprocess/standardize');
+const {
+    finalizeDeliveryRun
+} = require('../src/services/delivery-postprocess/finalize');
 
 const ROOT = path.join(__dirname, '..');
 const TEST_ROOT = path.join(ROOT, 'runtime', 's10-delivery-candidates-test');
 const INPUT_DIR = path.join(TEST_ROOT, 'ok-input');
 const OUTPUT_DIR = path.join(TEST_ROOT, 'delivery-output');
+const LOGO_DIR = path.join(TEST_ROOT, 'logo-templates');
 
 function assert(condition, message) {
     if (!condition) {
@@ -33,6 +37,18 @@ function writeTinyPng(filePath) {
     ctx.fillRect(0, 0, 16, 16);
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(4, 4, 8, 8);
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, canvas.toBuffer('image/png'));
+}
+
+function writeLogoTemplate(filePath, width, height) {
+    const canvas = createCanvas(width, height);
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, width, height);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.01)';
+    ctx.fillRect(0, 0, width, height);
+    ctx.fillStyle = '#ff1744';
+    ctx.fillRect(Math.max(0, width - 40), Math.max(0, height - 40), 32, 32);
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, canvas.toBuffer('image/png'));
 }
@@ -140,6 +156,39 @@ async function main() {
     assert(standardized.width === 800 && standardized.height === 800, 'standardized JPG should be exact 800x800');
     assert(standardized.sizeBytes <= 390 * 1024, 'standardized JPG should be under 390KB');
     assert(path.extname(standardized.outputPath).toLowerCase() === '.jpg', 'standardized output should be JPG');
+
+    const partialRun = store.readRun(run.runId);
+    const partialJob = partialRun.jobs[0];
+    partialJob.targets['800x800'].standardizedCandidates = [{
+        candidateId: 'cand_test_001',
+        candidateIndex: 1,
+        candidateCount: 1,
+        outputPath: standardized.outputPath,
+        dimensions: '800x800'
+    }];
+    partialJob.targets['800x800'].standardizedPath = standardized.outputPath;
+    partialJob.targets['800x800'].status = 'standardized';
+    store.saveRun(partialRun);
+
+    writeLogoTemplate(path.join(LOGO_DIR, 'logo_800x800.png'), 800, 800);
+    writeLogoTemplate(path.join(LOGO_DIR, 'logo_1280x720.png'), 1280, 720);
+    writeLogoTemplate(path.join(LOGO_DIR, 'logo_1080x1920.png'), 1080, 1920);
+
+    const finalized = await finalizeDeliveryRun(partialRun, {
+        logoTemplateFolder: LOGO_DIR,
+        allowPartial: true,
+        maxOutputBytes: 390 * 1024,
+        minQuality: 60
+    });
+    assert(finalized.partial, 'partial finalize should report partial result');
+    assert(finalized.finalizedCount === 1, 'partial finalize should still output the standardized target');
+    assert(finalized.failedCount === 2, 'partial finalize should skip the two missing target sizes');
+    assert(finalized.run.status === 'partial_finalized', 'partial run should be marked partial_finalized');
+    assert(fs.existsSync(finalized.finalized[0].outputPath), 'partial final package image should exist');
+    assert(
+        path.basename(finalized.finalized[0].outputPath) === `${job.baseName}_800x800.jpg`,
+        'partial final output should keep final delivery naming'
+    );
 
     console.log('S10 delivery candidates test passed');
     console.log(JSON.stringify({

@@ -30,6 +30,37 @@ module.exports = function createImageSaveFlowMethods(deps) {
         LEGIL_ERROR_SCREENSHOT_DIR
     } = deps;
 
+    function inferOutputExtensionFromUrl(rawUrl = '') {
+        const raw = String(rawUrl || '').trim();
+        if (!raw) {
+            return '';
+        }
+
+        const candidates = [raw, extractLegilImageUrl(raw)].filter(Boolean);
+        for (const candidate of candidates) {
+            try {
+                const parsed = new URL(candidate, LEGIL_IMAGE_TO_IMAGE_URL);
+                const ext = path.extname(decodeURIComponent(parsed.pathname || '')).toLowerCase();
+                if (['.jpg', '.jpeg', '.png', '.webp'].includes(ext)) {
+                    return ext === '.jpeg' ? '.jpg' : ext;
+                }
+            } catch (e) {}
+        }
+
+        return '';
+    }
+
+    function replaceFileExtension(filePath, extension) {
+        const ext = String(extension || '').trim();
+        if (!ext) {
+            return filePath;
+        }
+        return path.join(
+            path.dirname(filePath),
+            `${path.basename(filePath, path.extname(filePath))}${ext}`
+        );
+    }
+
     return {
     async saveGeneratedImages(page, promptIndex, options = {}) {
         try {
@@ -54,6 +85,9 @@ module.exports = function createImageSaveFlowMethods(deps) {
 
             if (imageInfos.length < expectedOutputCount) {
                 logger.warn(`只检测到 ${imageInfos.length}/${expectedOutputCount} 张新输出图，将保存已检测到的图片`);
+                if (options.strictOutputCount === true) {
+                    throw new Error(`Legil 输出数量不一致：期望 ${expectedOutputCount} 张，实际检测到 ${imageInfos.length} 张`);
+                }
             }
 
             const savePaths = [];
@@ -73,23 +107,33 @@ module.exports = function createImageSaveFlowMethods(deps) {
                     ...options,
                     variantIndex: i + 1
                 });
-                const savePath = path.join(this.saveFolder, fileName);
+                const savePath = replaceFileExtension(
+                    path.join(this.saveFolder, fileName),
+                    inferOutputExtensionFromUrl(outputUrl)
+                );
 
                 logger.info(`正在打开并保存第 ${i + 1}/${imageInfos.length} 张输出图: ${outputUrl.substring(0, 80)}...`);
 
                 try {
                     const savedSize = await this.saveOutputImageByOpening(page, info, savePath, beforeKeys, options);
-                    logger.info(`✅ 图片保存成功: ${fileName} (${(savedSize / 1024).toFixed(2)} KB)`);
+                    logger.info(`✅ 图片保存成功: ${path.basename(savePath)} (${(savedSize / 1024).toFixed(2)} KB)`);
                     savePaths.push(savePath);
                 } catch (saveError) {
                     logger.error(`第 ${i + 1}/${imageInfos.length} 张输出图保存失败: ${saveError.message}`);
                 }
             }
 
+            if (options.strictOutputCount === true && savePaths.length < expectedOutputCount) {
+                throw new Error(`Legil 输出数量不一致：期望保存 ${expectedOutputCount} 张，实际保存 ${savePaths.length} 张`);
+            }
+
             return savePaths;
         } catch (error) {
             logger.error(`保存图片失败: ${error.message}`);
             await page.keyboard.press('Escape').catch(() => {});
+            if (options.strictOutputCount === true) {
+                throw error;
+            }
             return [];
         }
     }
@@ -363,7 +407,7 @@ module.exports = function createImageSaveFlowMethods(deps) {
             if (!savedSize) {
                 await thumbnailElement.scrollIntoViewIfNeeded({ timeout: 2000 }).catch(() => {});
                 await thumbnailElement.screenshot({ path: savePath, timeout: 8000 });
-                savedSize = this.validateSavedImageFile(savePath);
+                savedSize = this.validateSavedImageFile(savePath, options);
             }
 
             // 验证文件

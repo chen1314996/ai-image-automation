@@ -10043,22 +10043,22 @@ select:focus {
                     </label>
                     <label class="notification-toggle">
                         <input type="checkbox" id="notifyTaskCompletionEnabled">
-                        <span>启用任务完成通知</span>
+                        <span>启用队列完成通知</span>
                     </label>
                     <label class="notification-toggle">
                         <input type="checkbox" id="notifyServerStartupEnabled">
-                        <span>启用服务器启动通知</span>
+                        <span>启用启动异常通知</span>
                     </label>
                     <label class="notification-toggle">
                         <input type="checkbox" id="notifyStaleProgressEnabled">
-                        <span>启用长时间无进展通知</span>
+                        <span>启用卡住提醒</span>
                     </label>
                 </div>
 
                 <div class="notification-number-grid">
                     <div class="form-group">
-                        <label for="notifyStaleThresholdMinutes">无进展阈值（分钟）</label>
-                        <input type="number" id="notifyStaleThresholdMinutes" min="1" max="1440" step="1" value="15">
+                        <label for="notifyStaleThresholdMinutes">卡住阈值（分钟）</label>
+                        <input type="number" id="notifyStaleThresholdMinutes" min="1" max="1440" step="1" value="30">
                     </div>
                     <div class="form-group">
                         <label for="notifyCooldownMinutes">通知冷却时间（分钟）</label>
@@ -10356,7 +10356,7 @@ select:focus {
                                 </div>
                                 <div>
                                     <label for="deliveryPrompt1080">1080x1920 专用模板</label>
-                                    <textarea id="deliveryPrompt1080" rows="3">适配竖版广告图。主体和关键动作应位于中上区域，保留竖屏浏览的视觉冲击，避免重要元素贴边。</textarea>
+                                    <textarea id="deliveryPrompt1080" rows="3">适配竖版广告图。主体和关键动作应位于中间区域，保留竖屏浏览的视觉冲击，避免重要元素贴边。</textarea>
                                 </div>
                             </div>
                         </div>
@@ -11845,7 +11845,7 @@ select:focus {
                 taskCompletionEnabled: true,
                 serverStartupEnabled: true,
                 staleProgressEnabled: true,
-                staleThresholdMinutes: 15,
+                staleThresholdMinutes: 30,
                 notificationCooldownMinutes: 10,
                 legilScreenshotEnabled: true,
                 autoRecoveryEnabled: true,
@@ -12938,7 +12938,7 @@ select:focus {
                 taskCompletionEnabled: readChecked('notifyTaskCompletionEnabled', true),
                 serverStartupEnabled: readChecked('notifyServerStartupEnabled', true),
                 staleProgressEnabled: readChecked('notifyStaleProgressEnabled', true),
-                staleThresholdMinutes: readNumber('notifyStaleThresholdMinutes', 15, 1, 1440),
+                staleThresholdMinutes: readNumber('notifyStaleThresholdMinutes', 30, 1, 1440),
                 notificationCooldownMinutes: readNumber('notifyCooldownMinutes', 10, 0, 1440),
                 legilScreenshotEnabled: readChecked('notifyLegilScreenshotEnabled', true),
                 autoRecoveryEnabled: readChecked('notifyAutoRecoveryEnabled', true),
@@ -12970,7 +12970,7 @@ select:focus {
             const stale = document.getElementById('notifyStaleThresholdMinutes');
             const cooldown = document.getElementById('notifyCooldownMinutes');
             const failures = document.getElementById('notifyFailureThreshold');
-            if (stale) stale.value = config.notifications.staleThresholdMinutes || 15;
+            if (stale) stale.value = config.notifications.staleThresholdMinutes || 30;
             if (cooldown) cooldown.value = config.notifications.notificationCooldownMinutes ?? 10;
             if (failures) failures.value = config.notifications.consecutiveFailureThreshold || 3;
         }
@@ -13005,7 +13005,7 @@ select:focus {
                 renderNotificationConfig(data.config);
                 if (infoBox && !silent) {
                     infoBox.className = 'info-box success';
-                    infoBox.textContent = `✅ 通知配置已保存：无进展 ${data.config.staleThresholdMinutes} 分钟，冷却 ${data.config.notificationCooldownMinutes} 分钟`;
+                    infoBox.textContent = `✅ 通知配置已保存：队列完成后提醒，无进展 ${data.config.staleThresholdMinutes} 分钟提醒，冷却 ${data.config.notificationCooldownMinutes} 分钟`;
                 }
                 await refreshWatchdogStatus();
                 if (!silent) showToast('通知配置已保存');

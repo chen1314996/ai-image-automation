@@ -5,6 +5,10 @@ const {
     buildCreativeAgentQualityReport,
     sanitizePromptText
 } = require('../../../creative-agent-quality');
+const {
+    normalizeCreativePromptStyle,
+    sanitizeLegilPromptText
+} = require('./prompt-style');
 
 const DEFAULT_FORBIDDEN_TERMS = [
     '真实品牌',
@@ -333,7 +337,10 @@ function collectCreativeUsageFromObject(value, usage, meta = {}) {
         if (!value[key]) {
             return;
         }
-        const promptText = value[key];
+        const promptText = sanitizeLegilPromptText(
+            value[key],
+            normalizeCreativePromptStyle(value.creativePromptStyle || meta.creativePromptStyle)
+        );
         const promptKey = normalizePromptKey(promptText);
         if (promptKey) {
             usage.promptKeys.add(promptKey);
@@ -380,6 +387,7 @@ function collectCreativeUsageFromObject(value, usage, meta = {}) {
 }
 
 function collectHistoricalCreativeUsage(store, currentRunId = '', options = {}) {
+    const creativePromptStyle = normalizeCreativePromptStyle(options.creativePromptStyle);
     const usage = {
         promptKeys: new Set(),
         directionKeys: new Set(),
@@ -394,7 +402,8 @@ function collectHistoricalCreativeUsage(store, currentRunId = '', options = {}) 
     safeArray(assetsData.assets).forEach(asset => {
         collectCreativeUsageFromObject(asset, usage, {
             source: 'asset',
-            runId: asset && asset.runId
+            runId: asset && asset.runId,
+            creativePromptStyle
         });
     });
 
@@ -408,7 +417,10 @@ function collectHistoricalCreativeUsage(store, currentRunId = '', options = {}) 
                 const runSource = {
                     runId: run && run.runId,
                     sourceDirectionId: sourceDirection.id,
-                    sourceDirectionPath: sourceDirection.path
+                    sourceDirectionPath: sourceDirection.path,
+                    creativePromptStyle: normalizeCreativePromptStyle(
+                        (run && run.config && run.config.creativePromptStyle) || creativePromptStyle
+                    )
                 };
                 safeArray(run && run.prompts).forEach(item => collectCreativeUsageFromObject({
                     sourceDirectionId: sourceDirection.id,
@@ -509,10 +521,14 @@ function indexQualityErrors(qualityReport) {
     return map;
 }
 
-function normalizePromptItems(prompts, selected) {
+function normalizePromptItems(prompts, selected, config = {}) {
     const direction = selected && selected.direction ? selected.direction : {};
     return safeArray(prompts).map((item, index) => {
-        const prompt = sanitizePromptText(item && (item.finalPrompt || item.prompt));
+        const creativePromptStyle = normalizeCreativePromptStyle(
+            (item && item.creativePromptStyle) || config.creativePromptStyle
+        );
+        const rawPrompt = sanitizePromptText(item && (item.finalPrompt || item.prompt));
+        const prompt = rawPrompt ? sanitizeLegilPromptText(rawPrompt, creativePromptStyle) : '';
         const primaryTag = (item && item.primaryTag) || direction.primaryTag || direction.primary || '';
         const secondaryTag = (item && item.secondaryTag) || direction.secondaryTag || direction.secondary || '';
         const tertiaryTag = (item && item.tertiaryTag) || direction.tertiaryTag || direction.tertiary || '';
@@ -521,6 +537,7 @@ function normalizePromptItems(prompts, selected) {
             index: Number(item && item.index) || index + 1,
             prompt,
             finalPrompt: prompt,
+            creativePromptStyle,
             selected: !item || item.selected !== false,
             primaryTag,
             secondaryTag,
@@ -538,7 +555,7 @@ function normalizePromptItems(prompts, selected) {
 }
 
 function applyPromptGate({ prompts, selected, quota, store, runId, payload = {}, config = {}, memoryRules = [] }) {
-    const normalizedPrompts = normalizePromptItems(prompts, selected);
+    const normalizedPrompts = normalizePromptItems(prompts, selected, config);
     const rawPromptCount = safeArray(prompts).length;
     const outputQuantity = Math.max(1, Number(quota && quota.outputQuantity) || 4);
     const unlimitedPrompts = Boolean(quota && quota.unlimitedPrompts);
@@ -557,7 +574,9 @@ function applyPromptGate({ prompts, selected, quota, store, runId, payload = {},
     );
     const qualityReportRaw = buildCreativeAgentQualityReport(normalizedPrompts);
     const qualityErrorsByIndex = indexQualityErrors(qualityReportRaw);
-    const historyUsage = collectHistoricalCreativeUsage(store, runId);
+    const historyUsage = collectHistoricalCreativeUsage(store, runId, {
+        creativePromptStyle: config.creativePromptStyle
+    });
     const historyPromptKeys = historyUsage.promptKeys;
     const currentPromptKeys = new Map();
     const currentTitleKeys = new Map();

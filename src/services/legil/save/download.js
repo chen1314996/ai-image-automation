@@ -27,8 +27,101 @@ module.exports = function createImageDownloadMethods(deps) {
         LEGIL_OUTPUT_QUANTITIES,
         IMAGE_EXTENSIONS,
         LEGIL_IMAGE_TO_IMAGE_URL,
-        LEGIL_ERROR_SCREENSHOT_DIR
+        LEGIL_ERROR_SCREENSHOT_DIR,
+        readImageDimensions
     } = deps;
+
+    function parseExpectedDimensions(options = {}) {
+        const raw = String(
+            options.expectedDimensions ||
+            options.targetSize ||
+            options.promptTitleName ||
+            ''
+        ).trim();
+        const match = raw.match(/^(\d{2,5})x(\d{2,5})$/i);
+        if (!match) {
+            return null;
+        }
+        const width = Number(match[1]);
+        const height = Number(match[2]);
+        if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+            return null;
+        }
+        return { width, height, text: `${width}x${height}` };
+    }
+
+    function assertSavedImageResolution(savePath, options = {}) {
+        const expected = parseExpectedDimensions(options);
+        if (!expected || typeof readImageDimensions !== 'function') {
+            return null;
+        }
+
+        const dimensions = readImageDimensions(savePath);
+        if (!dimensions || !dimensions.width || !dimensions.height) {
+            throw new Error('保存的图片无法读取像素尺寸');
+        }
+
+        const minScale = Number.isFinite(Number(options.minOutputDimensionScale))
+            ? Math.max(0.1, Math.min(1, Number(options.minOutputDimensionScale)))
+            : 0.9;
+        const minWidth = Math.max(512, Math.floor(expected.width * minScale));
+        const minHeight = Math.max(512, Math.floor(expected.height * minScale));
+
+        if (dimensions.width < minWidth || dimensions.height < minHeight) {
+            throw new Error(`保存的图片分辨率过低：${dimensions.width}x${dimensions.height}，目标 ${expected.text}，疑似保存到了缩略图`);
+        }
+
+        return dimensions;
+    }
+
+    function detectImageFileKind(buffer) {
+        if (!buffer || buffer.length < 12) {
+            return '';
+        }
+
+        if (
+            buffer[0] === 0x89 &&
+            buffer[1] === 0x50 &&
+            buffer[2] === 0x4e &&
+            buffer[3] === 0x47 &&
+            buffer[4] === 0x0d &&
+            buffer[5] === 0x0a &&
+            buffer[6] === 0x1a &&
+            buffer[7] === 0x0a
+        ) {
+            return 'png';
+        }
+
+        if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
+            return 'jpeg';
+        }
+
+        if (
+            buffer.slice(0, 4).toString('ascii') === 'RIFF' &&
+            buffer.slice(8, 12).toString('ascii') === 'WEBP'
+        ) {
+            return 'webp';
+        }
+
+        return '';
+    }
+
+    function assertImageExtensionMatchesContent(savePath) {
+        const ext = path.extname(savePath).toLowerCase();
+        const expectedKind = ext === '.jpg' || ext === '.jpeg'
+            ? 'jpeg'
+            : (ext === '.png' ? 'png' : (ext === '.webp' ? 'webp' : ''));
+
+        if (!expectedKind) {
+            return;
+        }
+
+        const buffer = fs.readFileSync(savePath);
+        const actualKind = detectImageFileKind(buffer);
+        if (actualKind && actualKind !== expectedKind) {
+            throw new Error(`保存图片格式不匹配：文件扩展名为 ${ext}，实际内容为 ${actualKind.toUpperCase()}`);
+        }
+    }
 
     return {
     resolveDownloadUrl(rawUrl, pageUrl) {
@@ -139,7 +232,7 @@ module.exports = function createImageDownloadMethods(deps) {
         }
 
         fs.writeFileSync(savePath, buffer);
-        return this.validateSavedImageFile(savePath);
+        return this.validateSavedImageFile(savePath, options);
     },
 
     async downloadImageByBrowserNavigation(page, imageUrl, savePath, options = {}) {
@@ -172,7 +265,7 @@ module.exports = function createImageDownloadMethods(deps) {
             }
 
             fs.writeFileSync(savePath, buffer);
-            return this.validateSavedImageFile(savePath);
+            return this.validateSavedImageFile(savePath, options);
         } finally {
             await imagePage.close().catch(() => {});
         }
@@ -204,7 +297,7 @@ module.exports = function createImageDownloadMethods(deps) {
         throw lastError || new Error('大图直链下载失败');
     },
 
-    validateSavedImageFile(savePath) {
+    validateSavedImageFile(savePath, options = {}) {
         if (!fs.existsSync(savePath)) {
             throw new Error('文件未写入');
         }
@@ -215,6 +308,24 @@ module.exports = function createImageDownloadMethods(deps) {
                 fs.unlinkSync(savePath);
             } catch (e) {}
             throw new Error('保存的文件无效');
+        }
+
+        try {
+            assertImageExtensionMatchesContent(savePath);
+        } catch (error) {
+            try {
+                fs.unlinkSync(savePath);
+            } catch (e) {}
+            throw error;
+        }
+
+        try {
+            assertSavedImageResolution(savePath, options);
+        } catch (error) {
+            try {
+                fs.unlinkSync(savePath);
+            } catch (e) {}
+            throw error;
         }
 
         return stats.size;
@@ -256,7 +367,7 @@ module.exports = function createImageDownloadMethods(deps) {
         }
 
         fs.writeFileSync(savePath, buffer);
-        return this.validateSavedImageFile(savePath);
+        return this.validateSavedImageFile(savePath, options);
     },
     };
 };

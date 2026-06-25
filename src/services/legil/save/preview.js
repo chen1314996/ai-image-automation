@@ -61,7 +61,7 @@ module.exports = function createPreviewSaveMethods(deps) {
             });
         }
 
-        return this.validateSavedImageFile(savePath);
+        return this.validateSavedImageFile(savePath, options);
     },
 
     async screenshotElementToFile(page, element, savePath, options = {}) {
@@ -94,7 +94,7 @@ module.exports = function createPreviewSaveMethods(deps) {
             });
         }
 
-        return this.validateSavedImageFile(savePath);
+        return this.validateSavedImageFile(savePath, options);
     },
 
     async clickImageElement(page, element, options = {}) {

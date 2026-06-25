@@ -32,10 +32,10 @@
 
             if (workflowResumeInfo) {
                 actions.classList.add('active');
-                resumeBtn.textContent = `↩️ 继续：第 ${workflowResumeInfo.imageIndex}/${workflowResumeInfo.totalImages} 张，提示词 ${workflowResumeInfo.promptIndex}/${workflowResumeInfo.totalPrompts}`;
+                resumeBtn.textContent = `继续：第 ${workflowResumeInfo.imageIndex}/${workflowResumeInfo.totalImages} 张，提示词 ${workflowResumeInfo.promptIndex}/${workflowResumeInfo.totalPrompts}`;
             } else {
                 actions.classList.remove('active');
-                resumeBtn.textContent = '↩️ 继续之前任务';
+                resumeBtn.textContent = '继续之前任务';
             }
         }
 
@@ -82,13 +82,16 @@
             const resumeBtn = document.getElementById('resumeWorkflowBtn');
             if (resumeBtn) {
                 resumeBtn.disabled = true;
-                resumeBtn.textContent = '⏳ 正在继续...';
+                resumeBtn.textContent = '正在继续...';
             }
 
             document.getElementById('oneClickStartBtn').disabled = true;
-            document.getElementById('oneClickStartBtn').textContent = '⏳ 运行中...';
+            document.getElementById('oneClickStartBtn').textContent = '运行中...';
             document.getElementById('progressPanel').classList.add('active');
-            addLog('↩️ 正在继续上次停止的工作流...', 'system');
+            if (typeof setMassWorkflowRunningState === 'function') {
+                setMassWorkflowRunningState(true);
+            }
+            addLog('正在继续上次停止的工作流...', 'system');
 
             try {
                 if (useCurrentPromptGeneration) {
@@ -151,10 +154,13 @@
             if (legilRefFolder) addFolderHistory('legilReferenceFolder', legilRefFolder);
 
             document.getElementById('oneClickStartBtn').disabled = true;
-            document.getElementById('oneClickStartBtn').textContent = '⏳ 运行中...';
+            document.getElementById('oneClickStartBtn').textContent = '运行中...';
             document.getElementById('progressPanel').classList.add('active');
+            if (typeof setMassWorkflowRunningState === 'function') {
+                setMassWorkflowRunningState(true);
+            }
 
-            addLog('🚀 启动工作流...', 'system');
+            addLog('启动工作流...', 'system');
 
             try {
                 addLog('正在保存提示词模型配置...', 'system');
@@ -224,6 +230,9 @@
 
                 const s = data.status;
                 const ds = s.currentStatus || {};
+                if (typeof updateMassWorkflowStatus === 'function') {
+                    updateMassWorkflowStatus(s, ds);
+                }
 
                 // Update progress
                 const currentImg = ds.currentImageIndex || s.currentIndex + 1 || 0;
@@ -306,7 +315,10 @@
 
         function resetUI() {
             document.getElementById('oneClickStartBtn').disabled = false;
-            document.getElementById('oneClickStartBtn').textContent = '▶️ 开始自动化流程';
+            document.getElementById('oneClickStartBtn').textContent = '开始自动产图';
+            if (typeof setMassWorkflowRunningState === 'function') {
+                setMassWorkflowRunningState(false);
+            }
         }
 
         // ==================== Prompts Management ====================

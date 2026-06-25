@@ -60,15 +60,15 @@ Legil 自动生图
 自动选方向
 ```
 
-这个模式的优先目标是让后端程序稳定解析 prompt 并发送 Legil。
+这个模式的优先目标是让后端程序稳定解析隐藏式方向规划、自动筛选 prompt 并发送 Legil。
 
-默认只输出一个核心表：
+默认只输出一个核心 JSON：
 
 ```text
-新方向拓展表
+directionPlans + candidateDirections
 ```
 
-不要输出长篇策划说明。可以在表格前用不超过 6 行写“选题依据 / TOP 素材信号 / 避重策略”，但必须把主要精力放在 `新方向拓展表`。
+不要输出长篇策划说明、Markdown 表格、Excel 表格或 CSV。`directionPlans` 是给后台自动评分、去重、淘汰和补位用的隐藏式方向规划层，不需要人工预览或勾选。
 
 ### 2. 人工完整策划模式
 
@@ -92,7 +92,7 @@ Legil 自动生图
 2. `batch-iteration-strategy-table`
    把已有方向转成可批量扩展的策略轴，明确哪些能扩、哪些容易重复。
 3. `new-direction-expansion-table`
-   按任务数量生成新方向和中文出图 prompt；run-once 默认 3 个新方向、每个方向 4 条 prompt。
+   按任务数量生成候选延展方向和中文出图 prompt；run-once 默认 8 个候选延展、后台自动筛选 4 个入选延展、每个延展 2 条 prompt。
 4. `legil-run-once-prompt-contract`
    检查输出是否适配 Legil 当前参数和程序解析要求。
 
@@ -285,30 +285,73 @@ Legil 自动生图
 
 ## Default Output Contract
 
-### Run-once 模式默认表
+### Run-once 模式默认 JSON
 
-表名：`新方向拓展表`
-
-列名固定：
+顶层字段固定：
 
 ```text
-参考方向
-新方向名称
-方向描述
-来源于哪条详细迭代策略
-提示词1
-提示词2
-提示词3
-提示词4
-提示词5
+directionPlans
+candidateDirections
 ```
 
-每一行代表一个新方向。run-once 默认 3 行新方向，每行 4 条 prompt；如果任务上下文提供了其他数量，按任务数量执行。
+`directionPlans` 是隐藏式方向规划层。每个原始方向默认先产出 8 个候选延展，后台自动筛选 4 个入选延展，每个入选延展 2 条 prompt；如果任务上下文提供了其他数量，按任务数量执行。
 
-表格之后追加 JSON 代码块，顶层字段固定为 `candidateDirections`。这是给程序解析、入库、Prompt Gate 和 Legil 队列用的结构化合约；不要省略。
+每个 `directionPlans` item 必须包含：
+
+```text
+sourceDirectionPath
+currentJudgment
+exclusionSummary
+extensions
+```
+
+每个 `extensions` item 必须包含：
+
+```text
+extensionKey
+extensionType
+name
+description
+visualHook
+dedupeReason
+riskNote
+productionAdvice
+promptPair
+```
+
+`candidateDirections` 是兼容旧解析器的扁平字段，只放最终推荐延展方向即可；不要省略。
 
 ```json
 {
+  "directionPlans": [
+    {
+      "sourceDirectionPath": "题材/探索发现/物品展示/急救药品",
+      "currentJudgment": "急救药品方向成立在救命价值、资源稀缺和暴风雪危机。",
+      "exclusionSummary": "避开静态药箱展示，优先生成护送、抢救、争夺、倒计时选择等动态机制。",
+      "extensions": [
+        {
+          "extensionKey": "延展1",
+          "extensionType": "已有方向延展",
+          "name": "雪夜急救箱护送",
+          "description": "幸存者小队在暴风雪夜护送急救箱穿过废弃街区。",
+          "visualHook": "急救箱暖光、风雪道路、远处避难所灯光形成清晰目标。",
+          "dedupeReason": "区别于旧的药箱发现/展示，新增护送救援动作机制。",
+          "riskNote": "避免文字过小，药箱和人物关系要清楚。",
+          "productionAdvice": "使用中景小队行动和冷暖对比，突出救命价值。",
+          "promptPair": [
+            {
+              "title": "延展1-AI提示词1",
+              "prompt": "主题：雪夜急救箱护送..."
+            },
+            {
+              "title": "延展1-AI提示词2",
+              "prompt": "主题：雪夜急救箱护送的差异化变体..."
+            }
+          ]
+        }
+      ]
+    }
+  ],
   "candidateDirections": [
     {
       "type": "new",
@@ -339,7 +382,7 @@ Legil 自动生图
 }
 ```
 
-Markdown 表格服务人工审核；JSON 服务程序解析。两者内容必须一致，不能表格写 A、JSON 写 B。
+自动化任务只依赖 JSON 服务程序解析；如果人工完整策划模式额外输出 Markdown 表格，表格与 JSON 内容必须一致，不能表格写 A、JSON 写 B。
 
 ### 完整策划模式四部分
 
@@ -393,8 +436,9 @@ Markdown 表格服务人工审核；JSON 服务程序解析。两者内容必须
 输出前自检：
 
 - 是否遵守 `PROJECT_SETTINGS.md`。
-- 是否能被程序解析出 `新方向拓展表`。
-- 是否同时提供 `candidateDirections` JSON，且每个候选方向有八维标签和 1-5 条 prompt。
+- 是否能被程序解析出 `directionPlans`。
+- 是否同时提供 `candidateDirections` JSON 兼容字段，且每个候选方向有八维标签和 1-5 条 prompt。
+- 是否每个 extension 都有 visualHook、dedupeReason、riskNote、productionAdvice 和 2 条 promptPair。
 - 是否每个新方向都相对原方向有明显变化。
 - 是否每条 prompt 都能直接用于 Legil。
 - 是否默认适配 `Nano Banana 2 / 1:1 / 2K / 4张`。

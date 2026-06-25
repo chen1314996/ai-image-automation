@@ -121,6 +121,32 @@ function buildFinalImagePath(run, job, targetSize, candidateIndex = 1, candidate
     return path.join(buildFinalPackageRoot(run), safeFolderName, `${safeBaseName}_${targetSize}${buildOrdinalSuffix(candidateIndex, candidateCount)}.jpg`);
 }
 
+function getExistingFinalizedOutput(outputPath, targetSize, logoTemplate) {
+    if (!outputPath || !fs.existsSync(outputPath)) {
+        return null;
+    }
+    const target = DELIVERY_TARGET_DIMENSIONS[targetSize];
+    if (!target) {
+        return null;
+    }
+    const dimensions = readImageDimensions(outputPath);
+    if (!dimensions || dimensions.width !== target.width || dimensions.height !== target.height) {
+        return null;
+    }
+    const stat = fs.statSync(outputPath);
+    return {
+        outputPath,
+        logoPath: logoTemplate && logoTemplate.filePath || '',
+        logoFileName: logoTemplate && logoTemplate.fileName || '',
+        logoDimensions: logoTemplate && logoTemplate.dimensions && logoTemplate.dimensions.text || '',
+        targetSize,
+        quality: null,
+        sizeBytes: stat.size,
+        sizeKb: Math.round(stat.size / 1024),
+        reusedExisting: true
+    };
+}
+
 async function applyLogoTemplateToImage(sourcePath, outputPath, targetSize, logoTemplate, options = {}) {
     if (!sourcePath || !fs.existsSync(sourcePath)) {
         throw new Error(`标准化图片不存在：${sourcePath || ''}`);
@@ -174,10 +200,14 @@ async function applyLogoTemplateToImage(sourcePath, outputPath, targetSize, logo
     };
 }
 
-function updateRunNaming(run, namingRule) {
+function updateRunNaming(run, namingRule, options = {}) {
     const rule = normalizeNamingRule(namingRule || run.namingRule || {});
+    const onlyJobId = String(options.jobId || '').trim();
     run.namingRule = rule;
     (Array.isArray(run.jobs) ? run.jobs : []).forEach((job, index) => {
+        if (onlyJobId && job.jobId !== onlyJobId) {
+            return;
+        }
         const baseName = buildBaseName(rule, index, job.sourceImage);
         const parsedBusinessName = extractSourceBusinessName(job.sourceImage && job.sourceImage.fileName);
         job.baseName = baseName;
@@ -200,15 +230,25 @@ async function finalizeDeliveryRun(run, options = {}) {
         : Object.keys(DELIVERY_TARGET_DIMENSIONS);
     const logoTemplateFolder = normalizeFolderPath(options.logoTemplateFolder || run.logoTemplateFolder);
     const logoTemplates = resolveLogoTemplatesBySize(logoTemplateFolder, targetSizes);
-
-    if (options.namingRule) {
-        updateRunNaming(run, options.namingRule);
-    }
-    run.logoTemplateFolder = logoTemplateFolder;
+    const allowPartial = options.allowPartial === true || options.allowPartialPostprocess === true;
 
     const finalized = [];
     const failed = [];
-    const jobs = Array.isArray(run.jobs) ? run.jobs : [];
+    const allJobs = Array.isArray(run.jobs) ? run.jobs : [];
+    const onlyJobId = String(options.jobId || '').trim();
+    const jobs = onlyJobId
+        ? allJobs.filter(job => job && job.jobId === onlyJobId)
+        : allJobs;
+    if (onlyJobId && jobs.length === 0) {
+        throw new Error(`delivery job not found: ${onlyJobId}`);
+    }
+    if (options.namingRule) {
+        updateRunNaming(run, options.namingRule, { jobId: onlyJobId });
+    }
+    run.logoTemplateFolder = logoTemplateFolder;
+    const forceFinalize = options.force === true || options.forceFinalize === true;
+    const onProgress = typeof options.onProgress === 'function' ? options.onProgress : null;
+    let reusedExistingCount = 0;
 
     for (const job of jobs) {
         for (const targetSize of targetSizes) {
@@ -228,6 +268,11 @@ async function finalizeDeliveryRun(run, options = {}) {
 
             if (!standardizedItems.length) {
                 failed.push({ jobId: job.jobId, baseName: job.baseName, targetSize, reason: '请先执行标准化' });
+                if (allowPartial) {
+                    target.status = 'failed';
+                    target.error = target.error || '最终交付跳过：请先执行标准化';
+                    target.updatedAt = new Date().toISOString();
+                }
                 continue;
             }
 
@@ -239,13 +284,19 @@ async function finalizeDeliveryRun(run, options = {}) {
                 const candidateIndex = Number(item.candidateIndex) || index + 1;
                 const outputPath = buildFinalImagePath(run, job, targetSize, candidateIndex, candidateCount);
                 try {
-                    const result = await applyLogoTemplateToImage(
-                        item.outputPath,
-                        outputPath,
-                        targetSize,
-                        logoTemplates[targetSize],
-                        options
-                    );
+                    const existingResult = forceFinalize
+                        ? null
+                        : getExistingFinalizedOutput(outputPath, targetSize, logoTemplates[targetSize]);
+                    const result = existingResult || await applyLogoTemplateToImage(
+                            item.outputPath,
+                            outputPath,
+                            targetSize,
+                            logoTemplates[targetSize],
+                            options
+                        );
+                    if (existingResult) {
+                        reusedExistingCount += 1;
+                    }
                     const finalizedItem = {
                         candidateId: item.candidateId || `candidate_${candidateIndex}`,
                         candidateIndex,
@@ -292,6 +343,9 @@ async function finalizeDeliveryRun(run, options = {}) {
             target.error = targetFailures.length ? `最终交付失败：${targetFailures.map(item => item.reason).join('；')}` : '';
             target.finalized = finalCandidates[0] || null;
             target.updatedAt = new Date().toISOString();
+            if (onProgress) {
+                onProgress(run);
+            }
         }
 
         const allFinalized = targetSizes.every(size => job.targets && job.targets[size] && job.targets[size].status === 'finalized');
@@ -305,13 +359,27 @@ async function finalizeDeliveryRun(run, options = {}) {
             finalPackageFolder: allFinalized ? path.dirname(buildFinalImagePath(run, job, targetSizes[0], 1, 1)) : ''
         };
         job.updatedAt = new Date().toISOString();
+        if (onProgress) {
+            onProgress(run);
+        }
     }
 
-    run.status = failed.length ? 'failed' : 'finalized';
     run.finalPackageRoot = buildFinalPackageRoot(run);
-    run.finalizedAt = new Date().toISOString();
-    run.completedJobs = jobs.filter(job => job.status === 'finalized').length;
-    run.failedJobs = jobs.filter(job => job.status === 'failed').length;
+    const allFinalized = allJobs.length > 0 && allJobs.every(job => job.status === 'finalized');
+    if (allFinalized) {
+        run.status = 'finalized';
+        run.finalizedAt = new Date().toISOString();
+    } else if (failed.length) {
+        run.status = allowPartial && finalized.length ? 'partial_finalized' : 'failed';
+    } else if (onlyJobId) {
+        run.status = options.runStatus || run.status || 'partial_finalized';
+        run.lastFinalizedAt = new Date().toISOString();
+    } else {
+        run.status = 'finalized';
+        run.finalizedAt = new Date().toISOString();
+    }
+    run.completedJobs = allJobs.filter(job => job.status === 'finalized').length;
+    run.failedJobs = allJobs.filter(job => job.status === 'failed').length;
 
     return {
         run,
@@ -326,12 +394,15 @@ async function finalizeDeliveryRun(run, options = {}) {
         finalized,
         failed,
         finalizedCount: finalized.length,
-        failedCount: failed.length
+        failedCount: failed.length,
+        reusedExistingCount,
+        partial: failed.length > 0 && finalized.length > 0
     };
 }
 
 module.exports = {
     finalizeDeliveryRun,
     resolveLogoTemplatesBySize,
+    buildFinalImagePath,
     applyLogoTemplateToImage
 };

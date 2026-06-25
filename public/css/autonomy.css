@@ -1,0 +1,528 @@
+/* P0 autonomy baseline tokens and compact closed-loop panels. */
+:root {
+    --app-bg: #080b0f;
+    --surface-1: rgba(18, 22, 29, 0.84);
+    --surface-2: rgba(25, 31, 40, 0.78);
+    --surface-raised: rgba(33, 40, 51, 0.86);
+    --text-primary: #f1f5f2;
+    --text-secondary: #b8c4c1;
+    --text-muted: #7f8c8a;
+    --text-danger: #f1a4a4;
+    --status-running: #57c7b7;
+    --status-idle: #8b96a5;
+    --status-paused: #d7a84f;
+    --status-safe: #68a9e6;
+    --status-warning: #e29a54;
+    --status-blocked: #e47b7b;
+    --status-active: #7fcf9e;
+    --status-archived: #6f7886;
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-5: 24px;
+    --space-6: 32px;
+    --control-radius: 7px;
+}
+
+.autonomy-stage-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.autonomy-stage-badge {
+    display: inline-flex;
+    align-items: center;
+    min-height: 30px;
+    padding: 5px 10px;
+    border: 1px solid rgba(148, 163, 184, 0.28);
+    border-radius: var(--control-radius);
+    background: rgba(148, 163, 184, 0.10);
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 900;
+    letter-spacing: 0;
+    white-space: nowrap;
+}
+
+.autonomy-stage-badge::before {
+    content: '';
+    width: 7px;
+    height: 7px;
+    margin-right: 7px;
+    border-radius: 999px;
+    background: var(--status-idle);
+}
+
+.autonomy-stage-badge.is-running::before { background: var(--status-running); }
+.autonomy-stage-badge.is-paused::before { background: var(--status-paused); }
+.autonomy-stage-badge.is-failed::before { background: var(--status-blocked); }
+.autonomy-stage-badge.is-completed::before { background: var(--status-active); }
+
+.autonomy-stage-note {
+    min-width: 0;
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.autonomy-health-panel,
+.autonomy-entry-panel {
+    display: grid;
+    gap: 12px;
+    padding: 14px;
+    border: 1px solid rgba(255, 255, 255, 0.075);
+    border-radius: 8px;
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.018)),
+        rgba(9, 13, 18, 0.34);
+}
+
+.autonomy-health-title,
+.autonomy-entry-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 900;
+}
+
+.autonomy-health-title span,
+.autonomy-entry-title span {
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.autonomy-health-grid {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.autonomy-health-item {
+    display: grid;
+    gap: 5px;
+    min-height: 74px;
+    padding: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.032);
+}
+
+.autonomy-health-item span {
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1.35;
+}
+
+.autonomy-health-value {
+    min-width: 0;
+    color: var(--text-primary);
+    font-size: 17px;
+    font-weight: 900;
+    line-height: 1.25;
+    overflow-wrap: anywhere;
+}
+
+.autonomy-health-value.is-running { color: #9ee8dd; }
+.autonomy-health-value.is-paused { color: #f0cf87; }
+.autonomy-health-value.is-failed { color: #f3abab; }
+.autonomy-health-value.is-completed { color: #a7e5bd; }
+
+.autonomy-warning-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    min-height: 26px;
+    min-width: 0;
+}
+
+.autonomy-warning-chip {
+    display: inline-flex;
+    align-items: center;
+    max-width: 100%;
+    min-height: 26px;
+    padding: 4px 8px;
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    border-radius: var(--control-radius);
+    color: var(--text-secondary);
+    background: rgba(148, 163, 184, 0.08);
+    font-size: 12px;
+    font-weight: 850;
+    overflow-wrap: anywhere;
+}
+
+.autonomy-warning-chip.is-ok {
+    border-color: rgba(127, 207, 158, 0.28);
+    color: #b9efcd;
+    background: rgba(127, 207, 158, 0.08);
+}
+
+.autonomy-warning-chip.is-p0 {
+    border-color: rgba(228, 123, 123, 0.42);
+    color: #ffc4c4;
+    background: rgba(228, 123, 123, 0.12);
+}
+
+.autonomy-warning-chip.is-p1 {
+    border-color: rgba(226, 154, 84, 0.36);
+    color: #f3d29f;
+    background: rgba(226, 154, 84, 0.10);
+}
+
+.autonomy-entry-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.autonomy-entry {
+    min-width: 0;
+    min-height: 86px;
+    display: grid;
+    align-content: start;
+    gap: 6px;
+    padding: 11px;
+    border: 1px solid rgba(255, 255, 255, 0.075);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.034);
+}
+
+.autonomy-entry strong {
+    min-width: 0;
+    color: var(--text-primary);
+    font-size: 14px;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+}
+
+.autonomy-entry span {
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1.35;
+}
+
+.autonomy-entry em {
+    justify-self: start;
+    max-width: 100%;
+    min-height: 24px;
+    padding: 3px 7px;
+    border: 1px solid rgba(87, 199, 183, 0.24);
+    border-radius: 6px;
+    color: #a5efe3;
+    background: rgba(87, 199, 183, 0.08);
+    font-style: normal;
+    font-size: 12px;
+    font-weight: 900;
+    overflow-wrap: anywhere;
+}
+
+@media (max-width: 900px) {
+    .autonomy-health-grid,
+    .autonomy-entry-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 520px) {
+    .autonomy-health-grid,
+    .autonomy-entry-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .autonomy-health-title,
+    .autonomy-entry-title {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+}
+
+.autonomy-policy-workbench {
+    display: grid;
+    gap: 16px;
+}
+
+.autonomy-policy-hero {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(220px, 0.34fr);
+    gap: 16px;
+    align-items: center;
+}
+
+.autonomy-policy-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 10px;
+    justify-self: end;
+    width: min(100%, 260px);
+}
+
+.autonomy-policy-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
+    gap: 16px;
+    align-items: start;
+}
+
+.autonomy-policy-panel {
+    min-width: 0;
+    display: grid;
+    gap: 14px;
+}
+
+.autonomy-policy-panel-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.autonomy-policy-panel-head strong {
+    color: var(--text-primary);
+    font-size: 15px;
+    font-weight: 900;
+}
+
+.autonomy-policy-panel-head span {
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 850;
+    text-align: right;
+}
+
+.autonomy-level-control {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.autonomy-level-button {
+    min-width: 0;
+    min-height: 46px;
+    border: 1px solid rgba(148, 163, 184, 0.24);
+    border-radius: 7px;
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-secondary);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 900;
+    cursor: pointer;
+}
+
+.autonomy-level-button.active {
+    border-color: rgba(87, 199, 183, 0.62);
+    background: rgba(87, 199, 183, 0.14);
+    color: #c8fff5;
+    box-shadow: 0 0 0 1px rgba(87, 199, 183, 0.12);
+}
+
+.autonomy-permission-list {
+    display: grid;
+    gap: 9px;
+}
+
+.autonomy-permission-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 12px;
+    align-items: center;
+    min-height: 70px;
+    padding: 11px 12px;
+    border: 1px solid rgba(255, 255, 255, 0.075);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.034);
+}
+
+.autonomy-permission-row.is-danger {
+    border-color: rgba(228, 123, 123, 0.34);
+    background: rgba(228, 123, 123, 0.075);
+}
+
+.autonomy-permission-main {
+    min-width: 0;
+    display: grid;
+    gap: 4px;
+}
+
+.autonomy-permission-main strong {
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 900;
+    overflow-wrap: anywhere;
+}
+
+.autonomy-permission-main span {
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+}
+
+.autonomy-risk-mark {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: max-content;
+    min-height: 22px;
+    padding: 3px 7px;
+    border: 1px solid rgba(228, 123, 123, 0.40);
+    border-radius: 999px;
+    color: #ffc4c4;
+    background: rgba(228, 123, 123, 0.10);
+    font-size: 11px;
+    font-weight: 900;
+}
+
+.autonomy-switch {
+    position: relative;
+    width: 48px;
+    height: 28px;
+    flex: 0 0 auto;
+}
+
+.autonomy-switch input {
+    position: absolute;
+    opacity: 0;
+}
+
+.autonomy-switch span {
+    position: absolute;
+    inset: 0;
+    border: 1px solid rgba(148, 163, 184, 0.28);
+    border-radius: 999px;
+    background: rgba(148, 163, 184, 0.12);
+    cursor: pointer;
+    transition: background 0.16s ease, border-color 0.16s ease;
+}
+
+.autonomy-switch span::before {
+    content: '';
+    position: absolute;
+    top: 4px;
+    left: 4px;
+    width: 18px;
+    height: 18px;
+    border-radius: 999px;
+    background: rgba(226, 232, 240, 0.86);
+    transition: transform 0.16s ease, background 0.16s ease;
+}
+
+.autonomy-switch input:checked + span {
+    border-color: rgba(87, 199, 183, 0.56);
+    background: rgba(87, 199, 183, 0.24);
+}
+
+.autonomy-switch input:checked + span::before {
+    transform: translateX(20px);
+    background: #c8fff5;
+}
+
+.autonomy-threshold-table-wrap {
+    overflow: auto;
+    border: 1px solid rgba(255, 255, 255, 0.075);
+    border-radius: 8px;
+}
+
+.autonomy-threshold-table {
+    width: 100%;
+    min-width: 520px;
+    border-collapse: collapse;
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
+.autonomy-threshold-table th,
+.autonomy-threshold-table td {
+    padding: 10px 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    text-align: left;
+    vertical-align: middle;
+}
+
+.autonomy-threshold-table th {
+    color: var(--text-primary);
+    background: rgba(255, 255, 255, 0.035);
+    font-weight: 900;
+}
+
+.autonomy-threshold-table tr:last-child td {
+    border-bottom: 0;
+}
+
+.autonomy-threshold-table input {
+    width: 96px;
+    min-height: 34px;
+    padding: 7px 9px;
+    border: 1px solid rgba(148, 163, 184, 0.24);
+    border-radius: 7px;
+    background: rgba(8, 11, 15, 0.62);
+    color: var(--text-primary);
+    font: inherit;
+    font-weight: 850;
+}
+
+.autonomy-policy-preview,
+.autonomy-policy-events {
+    display: grid;
+    gap: 8px;
+}
+
+.autonomy-preview-item,
+.autonomy-event-item {
+    min-width: 0;
+    display: grid;
+    gap: 5px;
+    padding: 10px 12px;
+    border: 1px solid rgba(255, 255, 255, 0.075);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.034);
+}
+
+.autonomy-preview-item strong,
+.autonomy-event-item strong {
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 900;
+    overflow-wrap: anywhere;
+}
+
+.autonomy-preview-item span,
+.autonomy-event-item span {
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+}
+
+.autonomy-event-item.is-denied {
+    border-color: rgba(226, 154, 84, 0.30);
+    background: rgba(226, 154, 84, 0.08);
+}
+
+@media (max-width: 900px) {
+    .autonomy-policy-hero,
+    .autonomy-policy-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .autonomy-policy-actions {
+        justify-self: stretch;
+        width: 100%;
+    }
+}
+
+@media (max-width: 640px) {
+    .autonomy-level-control {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .autonomy-permission-row {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}

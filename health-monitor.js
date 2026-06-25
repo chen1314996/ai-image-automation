@@ -98,6 +98,7 @@ class HealthMonitor {
         this.lastSignature = '';
         this.lastProgressAt = Date.now();
         this.lastFeishuReady = null;
+        this.staleAlertedKey = '';
         this.startedAt = null;
     }
 
@@ -146,35 +147,27 @@ class HealthMonitor {
         if (signature !== this.lastSignature) {
             this.lastSignature = signature;
             this.lastProgressAt = now;
+            this.staleAlertedKey = '';
         } else if (isRunning && this.shouldNotifyStale()) {
             const idleMs = now - this.lastProgressAt;
-            if (idleMs >= this.staleErrorMs) {
+            const staleKey = `${taskType}:${signature}`;
+            if (idleMs >= this.staleErrorMs && this.staleAlertedKey !== staleKey) {
+                this.staleAlertedKey = staleKey;
                 this.notifier.notifySoon({
                     level: 'error',
                     title: '任务可能卡住',
                     taskType: taskTypeLabel(taskType),
                     progress: compactProgress(snapshot),
                     message: `已 ${Math.round(idleMs / 60000)} 分钟无进度变化`,
-                    suggestion: '建议发送“进度”查看详情，必要时发送“停止工作流”或“重启服务”。'
+                    suggestion: '已进入静默观察，后续不会重复提醒；可发送“进度”查看详情，必要时发送“停止全部”或“继续任务”。'
                 }, {
-                    key: `stale:error:${taskType}`,
-                    cooldownMs: this.staleErrorMs
-                });
-            } else if (idleMs >= this.staleWarningMs) {
-                this.notifier.notifySoon({
-                    level: 'warning',
-                    title: '任务长时间无进展',
-                    taskType: taskTypeLabel(taskType),
-                    progress: compactProgress(snapshot),
-                    message: `已 ${Math.round(idleMs / 60000)} 分钟无进度变化`,
-                    suggestion: '建议发送“进度”查看详情。'
-                }, {
-                    key: `stale:warning:${taskType}`,
-                    cooldownMs: this.staleWarningMs
+                    key: `stale:once:${staleKey}`,
+                    cooldownMs: 0
                 });
             }
         } else {
             this.lastProgressAt = now;
+            this.staleAlertedKey = '';
         }
 
         const feishu = snapshot.feishu || {};
@@ -183,12 +176,13 @@ class HealthMonitor {
             this.lastFeishuReady = feishuReady;
         } else if (this.lastFeishuReady !== feishuReady) {
             this.lastFeishuReady = feishuReady;
+            if (feishuReady) {
+                return snapshot;
+            }
             this.notifier.notifySoon({
-                level: feishuReady ? 'info' : 'warning',
-                title: feishuReady ? '飞书长连接已恢复' : '飞书长连接异常',
-                message: feishuReady
-                    ? '卡片按钮已可用。'
-                    : '卡片按钮可能不可用，系统会自动降级为文字指令。',
+                level: 'warning',
+                title: '飞书长连接异常',
+                message: '卡片按钮可能不可用，系统会自动降级为文字指令。',
                 extraLines: [
                     `模式：${feishu.consumerMode || 'unknown'}`,
                     `错误：${feishu.lastError || '无'}`
@@ -206,6 +200,11 @@ class HealthMonitor {
         const feishu = snapshot.feishu || {};
         const workflowResume = snapshot.workflowResume && snapshot.workflowResume.resume ? snapshot.workflowResume.resume : {};
         const creativeResume = snapshot.creativeResume && snapshot.creativeResume.resume ? snapshot.creativeResume.resume : {};
+        const hasResume = Boolean(workflowResume.hasResume || creativeResume.hasResume);
+        const feishuIssue = !(feishu.ready && feishu.cardActionReady);
+        if (!hasResume && !feishuIssue) {
+            return;
+        }
         const extraLines = [
             `飞书连接：${feishu.ready ? '正常' : '未就绪'}，按钮：${feishu.cardActionReady ? '可用' : '不可用'}`,
             `完整工作流可继续：${workflowResume.hasResume ? '是' : '否'}`,
@@ -213,10 +212,10 @@ class HealthMonitor {
         ];
 
         this.notifier.notifySoon({
-            level: 'info',
-            title: '服务器已启动',
-            message: 'AI生图自动化平台服务已启动。',
-            suggestion: workflowResume.hasResume || creativeResume.hasResume ? '发现可继续任务，可发送“继续任务”。' : '',
+            level: feishuIssue ? 'warning' : 'info',
+            title: hasResume ? '服务器已启动，有可继续任务' : '服务器已启动，飞书未就绪',
+            message: hasResume ? '发现可继续任务。' : '服务已启动，但飞书连接未完全就绪。',
+            suggestion: hasResume ? '可发送“继续任务”。' : '可发送“状态”确认连接情况。',
             extraLines
         }, {
             key: `server-start:${Date.now()}`,
@@ -232,6 +231,7 @@ class HealthMonitor {
             staleWarningMs: this.staleWarningMs,
             staleErrorMs: this.staleErrorMs,
             lastSignature: this.lastSignature,
+            staleAlertedKey: this.staleAlertedKey,
             lastProgressAt: new Date(this.lastProgressAt).toISOString(),
             lastFeishuReady: this.lastFeishuReady
         };

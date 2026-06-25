@@ -8,31 +8,61 @@ const { emptyCreativeMemory, getActiveMemoryRules } = require('../creative-knowl
 const { selectNextDirection } = require('./direction-selector');
 const {
     applyPromptGate,
+    buildForbiddenTerms,
     collectHistoricalCreativeUsage,
     summarizeHistoricalCreativeUsage
 } = require('./prompt-gate');
+const {
+    buildDirectionPlanConfig,
+    selectDirectionExtensions,
+    selectDirectionPlanExtensions
+} = require('./direction-plan-gate');
 const {
     PROMPT_SCHEMA_VERSION,
     TRANSLATION_AGENT_NAME,
     TRANSLATION_VERSION,
     buildDirectionDefinitions
 } = require('./prompt-translator');
+const {
+    buildStyleInstruction,
+    CREATIVE_PROMPT_STYLE_DEFAULT,
+    getCreativePromptStyle,
+    normalizeCreativePromptStyle
+} = require('./prompt-style');
 const { registerRunAssets } = require('./assets');
 const {
     buildCreativeOutputNamingContext
 } = require('../output-naming/creative-output-naming');
+const {
+    extractDirectionPlansFromText,
+    flattenDirectionPlansToPromptItems,
+    isWinkyTimeoutError
+} = require('../../../creative-agent-service');
 
 const DEFAULT_AUTO_CONFIG = {
     mode: 'run-once',
     maxDirectionsPerRun: 1,
-    newDirectionsPerSource: 3,
-    promptsPerNewDirection: 4,
+    newDirectionsPerSource: 4,
+    promptsPerNewDirection: 2,
+    directionPlanning: {
+        enabled: true,
+        candidateExtensionsPerSource: 8,
+        selectedExtensionsPerSource: 4,
+        promptsPerExtension: 2,
+        minScore: 70,
+        preferredScore: 85,
+        maxRepairAttempts: 2,
+        diversityMode: 'balanced',
+        historyScope: 'recent30',
+        candidateMultiplier: 2
+    },
     maxPromptsPerRun: 250,
     legilSmokeMaxPrompts: 5,
     outputQuantity: 4,
     maxImagesPerRun: 100,
     maxImagesPerDay: 1000,
     browserMode: 'headed',
+    creativePromptStyle: CREATIVE_PROMPT_STYLE_DEFAULT,
     failurePauseThreshold: 5,
     generationSettings: {
         imageModel: 'nano-banana-2',
@@ -43,8 +73,21 @@ const DEFAULT_AUTO_CONFIG = {
 };
 const UNLIMITED_PROMPT_LIMIT = Number.MAX_SAFE_INTEGER;
 const CREATIVE_TARGET_QUEUE_FILE = 'creative-target-queues.json';
+const DIRECTION_EXPANSION_HISTORY_FILE = 'direction-expansion-history.json';
+const DIRECTION_EXPANSION_HISTORY_MAX_ITEMS = 2000;
+const CREATIVE_DIVERSITY_AXIS_POOL = [
+    { key: 'subject-action', label: 'Change the subject-action relationship', options: ['rescue handoff', 'resource contest', 'hidden discovery', 'evacuation countdown', 'repair restart', 'escort through danger'] },
+    { key: 'visual-hook', label: 'Change the visible hook', options: ['foreground prop reveal', 'split-second choice', 'warm light target', 'broken ice obstacle', 'signal flare clue', 'scarce reward container'] },
+    { key: 'camera', label: 'Change camera and composition', options: ['low-angle close foreground', 'top-down map-like view', 'over-shoulder pursuit', 'wide landmark scale', 'macro prop with human stakes', 'diagonal motion path'] },
+    { key: 'emotion', label: 'Change emotional tension', options: ['urgent hope', 'moral tradeoff', 'surprise reward', 'protective teamwork', 'last chance pressure', 'comic relief under danger'] },
+    { key: 'scene-mechanism', label: 'Change scene mechanism', options: ['blocked entrance', 'collapsing shelter', 'frozen vehicle route', 'abandoned clinic', 'temporary bridge', 'storm shelter queue'] }
+];
 const DEFAULT_LEGIL_MIN_WAIT_MS = 60 * 60 * 1000;
 const DEFAULT_LEGIL_PER_PROMPT_WAIT_MS = 15 * 60 * 1000;
+const STALE_RUNNING_RECONCILE_GRACE_MS = 5 * 60 * 1000;
+const TARGET_QUEUE_PREFETCH_MAX_ATTEMPTS = 3;
+const TARGET_QUEUE_PREFETCH_RETRY_DELAY_MS = 1000;
+const TARGET_QUEUE_PREFETCH_WAIT_MS = 2000;
 const CREATIVE_DIMENSION_KEYWORDS = {
     mood: {
         label: '氛围',
@@ -274,6 +317,18 @@ function payloadForSingleCreativeTarget(payload = {}, target = {}, index = 0, to
         ...target,
         selected: true
     };
+    const prefixedDirectionIds = [singleTarget.id, singleTarget.targetId]
+        .map(value => String(value || ''))
+        .filter(value => value.startsWith('direction:'))
+        .map(value => value.replace(/^direction:/, ''));
+    const targetDirectionIds = uniqueStrings(singleTarget.directionIds)
+        .concat(uniqueStrings([
+            singleTarget.directionId,
+            singleTarget.sourceDirectionId,
+            ...prefixedDirectionIds
+        ]))
+        .filter(Boolean);
+    const directionId = targetDirectionIds[0] || '';
     const directionPath = singleTarget.sourceDirectionPath || singleTarget.sourceDirectionKey || brief.directionPath || brief.directionKey || '';
     const materialName = singleTarget.sourceMaterialName || singleTarget.materialName || '';
 
@@ -295,6 +350,24 @@ function payloadForSingleCreativeTarget(payload = {}, target = {}, index = 0, to
     };
     brief.request = `Only process creative target ${index + 1}/${total} in this queue. Expand and generate images for this one TOP material before the next target starts.`;
 
+    if (directionId) {
+        nextPayload.directionId = directionId;
+        nextPayload.directionIds = [directionId];
+    } else {
+        delete nextPayload.directionId;
+        delete nextPayload.directionIds;
+    }
+    nextPayload.targetSelection = {
+        type: singleTarget.targetType === 'top100-material' ? 'material' : (singleTarget.type || 'direction'),
+        level: singleTarget.level || '',
+        label: singleTarget.label || singleTarget.sourceDirectionName || directionPath || materialName,
+        path: directionPath || singleTarget.path || '',
+        directionIds: directionId ? [directionId] : [],
+        targetId: singleTarget.targetId || singleTarget.id || '',
+        queueId,
+        index: index + 1,
+        total
+    };
     nextPayload.creativeBrief = envelope;
     nextPayload.sequentialTargets = false;
     return nextPayload;
@@ -683,6 +756,178 @@ function collectRejectedDirectionContext(store, selectedDirection = {}, currentR
         .reverse();
 }
 
+function readDirectionExpansionHistory(store) {
+    const data = store.read(DIRECTION_EXPANSION_HISTORY_FILE, {
+        version: 1,
+        items: []
+    });
+    return {
+        version: 1,
+        updatedAt: data.updatedAt || '',
+        items: safeArray(data.items)
+    };
+}
+
+function writeDirectionExpansionHistory(store, history) {
+    const items = safeArray(history && history.items)
+        .filter(item => item && typeof item === 'object')
+        .slice(-DIRECTION_EXPANSION_HISTORY_MAX_ITEMS);
+    store.write(DIRECTION_EXPANSION_HISTORY_FILE, {
+        version: 1,
+        updatedAt: new Date().toISOString(),
+        items
+    });
+    return items;
+}
+
+function historyLimitFromScope(scope = 'recent30') {
+    if (scope === 'recent10') return 10;
+    if (scope === 'all') return DIRECTION_EXPANSION_HISTORY_MAX_ITEMS;
+    return 30;
+}
+
+function directionExpansionHistoryForSelected(store, selectedDirection = {}, scope = 'recent30') {
+    const history = readDirectionExpansionHistory(store);
+    return history.items
+        .filter(item => sampleMatchesDirectionIdentity(item, selectedDirection))
+        .slice(-historyLimitFromScope(scope))
+        .reverse();
+}
+
+function makeDirectionDedupeKey(item = {}) {
+    return hashText([
+        item.sourceDirectionId,
+        item.sourceDirectionPath,
+        item.newDirectionName || item.extensionName || item.name,
+        item.visualHook,
+        item.dedupeReason
+    ].map(value => String(value || '').trim()).filter(Boolean).join('|'));
+}
+
+function seededIndex(seed, salt, length) {
+    if (!length) return 0;
+    const hex = crypto.createHash('sha1').update(`${seed}:${salt}`).digest('hex').slice(0, 8);
+    return parseInt(hex, 16) % length;
+}
+
+function buildCreativeDiversityAxes(seed = '', mode = 'balanced') {
+    const count = mode === 'stable' ? 2 : (mode === 'explore' ? 4 : 3);
+    return CREATIVE_DIVERSITY_AXIS_POOL
+        .map((axis, index) => {
+            const option = axis.options[seededIndex(seed, `${axis.key}:${index}`, axis.options.length)];
+            return {
+                key: axis.key,
+                label: axis.label,
+                option
+            };
+        })
+        .sort((left, right) => seededIndex(seed, left.key, 1000) - seededIndex(seed, right.key, 1000))
+        .slice(0, count);
+}
+
+function normalizeDiversityMode(value) {
+    return ['stable', 'balanced', 'explore'].includes(value) ? value : 'balanced';
+}
+
+function normalizeHistoryScope(value) {
+    return ['recent10', 'recent30', 'all'].includes(value) ? value : 'recent30';
+}
+
+function buildDirectionDiversityContext({ store, selectedDirection = {}, payload = {}, config = {}, runId = '' } = {}) {
+    const planConfig = buildDirectionPlanConfig(payload, config);
+    const mode = normalizeDiversityMode(planConfig.diversityMode);
+    const historyScope = normalizeHistoryScope(planConfig.historyScope);
+    const seed = String(
+        payload.runSeed ||
+        (payload.directionPlanning && payload.directionPlanning.runSeed) ||
+        runId ||
+        `${todayKey()}-${crypto.randomBytes(3).toString('hex')}`
+    );
+    const history = directionExpansionHistoryForSelected(store, selectedDirection, historyScope);
+    return {
+        seed,
+        mode,
+        historyScope,
+        candidateMultiplier: planConfig.candidateMultiplier,
+        axes: buildCreativeDiversityAxes(`${seed}:${selectedDirection.id || selectedDirection.path || ''}`, mode),
+        history
+    };
+}
+
+function formatDirectionDiversityContext(context = null) {
+    if (!context) return '';
+    const axes = safeArray(context.axes);
+    const history = safeArray(context.history).slice(0, 16);
+    return [
+        '# Direction diversity brief',
+        `Run diversity seed: ${context.seed || ''}`,
+        `Diversity mode: ${context.mode || 'balanced'}; history scope: ${context.historyScope || 'recent30'}; candidate multiplier: ${context.candidateMultiplier || 2}.`,
+        axes.length
+            ? [
+                'Use these seeded exploration axes for this run:',
+                ...axes.map((axis, index) => `${index + 1}. ${axis.label}: ${axis.option}`)
+            ].join('\n')
+            : '',
+        history.length
+            ? [
+                'Previously selected extensions for this source direction. Avoid reusing their names, visual hooks, or subject-action mechanisms:',
+                ...history.map((item, index) => `${index + 1}. ${item.newDirectionName || item.extensionName || item.name || ''}; hook=${item.visualHook || ''}; reason=${item.dedupeReason || ''}`)
+            ].join('\n')
+            : 'No dedicated expansion-history entries found for this source direction yet.',
+        'Every selected new direction in this run must differ from the history and from the other candidates by at least two axes: subject-action, visual hook, camera/composition, emotional tension, scene mechanism, or reward/danger prop.'
+    ].filter(Boolean).join('\n');
+}
+
+function appendDirectionExpansionHistory(store, { run = {}, selected = {}, directionPlanGate = null, diversityContext = null } = {}) {
+    const selectedDirection = selected.direction || run.sourceDirection || {};
+    const selectedExtensions = safeArray(directionPlanGate && directionPlanGate.selectedExtensions);
+    if (!selectedExtensions.length) return [];
+
+    const history = readDirectionExpansionHistory(store);
+    const now = new Date().toISOString();
+    const existingKeys = new Set(safeArray(history.items).map(makeDirectionDedupeKey).filter(Boolean));
+    const additions = selectedExtensions.map(extension => {
+        const entry = {
+            runId: run.runId || '',
+            createdAt: now,
+            sourceDirectionId: extension.sourceDirectionId || selectedDirection.id || '',
+            sourceDirectionPath: extension.sourceDirectionPath || selectedDirection.path || '',
+            newDirectionName: extension.name || extension.extensionName || extension.newDirectionName || extension.direction || '',
+            extensionName: extension.name || extension.extensionName || '',
+            extensionKey: extension.extensionKey || '',
+            visualHook: extension.visualHook || '',
+            dedupeReason: extension.dedupeReason || '',
+            description: extension.description || '',
+            productionAdvice: extension.productionAdvice || '',
+            score: Number(extension.score) || 0,
+            diversitySeed: diversityContext && diversityContext.seed ? diversityContext.seed : '',
+            diversityMode: diversityContext && diversityContext.mode ? diversityContext.mode : '',
+            creativeAxes: safeArray(diversityContext && diversityContext.axes).map(axis => `${axis.key}:${axis.option}`)
+        };
+        return {
+            ...entry,
+            dedupeKey: makeDirectionDedupeKey(entry)
+        };
+    }).filter(entry => entry.dedupeKey && !existingKeys.has(entry.dedupeKey));
+
+    if (!additions.length) return [];
+    writeDirectionExpansionHistory(store, {
+        items: history.items.concat(additions)
+    });
+    return additions;
+}
+
+function collectDirectionPlanHistoryUsage(store, run = {}, selected = {}, payload = {}, config = {}) {
+    const planConfig = buildDirectionPlanConfig(payload, config);
+    const selectedDirection = selected.direction || run.sourceDirection || {};
+    const usage = collectHistoricalCreativeUsage(store, run.runId, {
+        maxDirectionSamples: 160,
+        maxPromptSamples: 120
+    });
+    usage.directionExpansionHistory = directionExpansionHistoryForSelected(store, selectedDirection, planConfig.historyScope);
+    return usage;
+}
+
 function buildDirectionSystemContext({ directions = [], selected, store, currentRunId = '' }) {
     const selectedDirection = selected && selected.direction ? selected.direction : {};
     const siblings = findSiblingDirections(directions, selectedDirection);
@@ -700,6 +945,10 @@ function buildDirectionSystemContext({ directions = [], selected, store, current
     const exclusionContext = {
         existingDirectionNames: collectExistingDirectionsForExclusion(directions, selectedDirection, siblings),
         historicalPromptHashes: collectHistoricalPromptHashes(store, selectedDirection, currentRunId),
+        historicalExpansionNames: directionExpansionHistoryForSelected(store, selectedDirection, 'recent30')
+            .map(item => item.newDirectionName || item.extensionName || item.name)
+            .filter(Boolean)
+            .slice(0, 30),
         historicalDirectionNames: uniqueStrings(historicalUsage.directionSamples
             .filter(sample => sampleMatchesDirectionIdentity(sample, selectedDirection))
             .map(sample => sample.newDirectionName)
@@ -851,18 +1100,40 @@ function createCreativeAutoService(options = {}) {
         const daily = knowledge.schedulerState.daily || {};
         const dailyImageCount = daily.date === todayKey() ? Number(daily.imageCount) || 0 : 0;
         const liveLegilTask = getLiveCreativeLegilTask();
+        const reconciledRecoverableQueue = reconcileTargetQueueMismatches(store);
         const activeRun = syncLiveLegilRun(store, liveLegilTask, context) || (activeRunId ? getRun(activeRunId, context) : null);
-        const resumableRun = activeRun ? null : attachTargetQueueProgress(store, findResumableRun(store, knowledge.schedulerState));
+        const latestRun = activeRun ? null : attachTargetQueueProgress(store, readRuns(store)[0] || null);
+        const baseResumableRun = activeRun ? null : attachTargetQueueProgress(store, findResumableRun(store, knowledge.schedulerState));
+        const baseRecoverableQueue = baseResumableRun ? targetQueueRecoverySummary(store, baseResumableRun) : null;
+        const recoverableQueue = baseRecoverableQueue || (!baseResumableRun ? reconciledRecoverableQueue : null);
+        const resumableRun = recoverableQueue && baseResumableRun
+            ? {
+                ...baseResumableRun,
+                targetQueueProgress: recoverableQueue,
+                targetQueue: {
+                    ...(baseResumableRun.targetQueue || {}),
+                    ...recoverableQueue
+                }
+            }
+            : baseResumableRun;
         const schedulerQueue = knowledge.schedulerState && knowledge.schedulerState.targetQueue
             ? knowledge.schedulerState.targetQueue
             : null;
+        const latestRunIsResumable = latestRun && (canResumeRun(latestRun) || canAdvanceTargetQueueFromRun(store, latestRun));
+        const latestRunSupersedesResumable = latestRun && !latestRunIsResumable &&
+            (!resumableRun || (latestRun.runId !== resumableRun.runId && runTimestamp(latestRun) > runTimestamp(resumableRun)));
+        const visibleResumableRun = latestRunIsResumable ? latestRun : (latestRunSupersedesResumable ? null : resumableRun);
+        const visibleLatestRun = activeRun ? null : (latestRunIsResumable ? null : (latestRunSupersedesResumable ? latestRun : (!resumableRun ? latestRun : null)));
+        const visibleRun = activeRun || visibleResumableRun || visibleLatestRun || null;
         const visibleQueue = activeRun && activeRun.targetQueueProgress
             ? activeRun.targetQueueProgress
-            : (resumableRun && resumableRun.targetQueueProgress ? resumableRun.targetQueueProgress : schedulerQueue);
+            : (visibleRun && visibleRun.targetQueueProgress
+                ? visibleRun.targetQueueProgress
+                : (recoverableQueue || (visibleResumableRun && visibleResumableRun.targetQueueProgress ? visibleResumableRun.targetQueueProgress : schedulerQueue)));
 
         return {
             success: true,
-            status: activeRun ? 'running' : (resumableRun ? 'idle' : (knowledge.schedulerState.status || 'idle')),
+            status: activeRun ? 'running' : (visibleResumableRun ? 'idle' : (knowledge.schedulerState.status || 'idle')),
             mode: DEFAULT_AUTO_CONFIG.mode,
             config: {
                 ...DEFAULT_AUTO_CONFIG,
@@ -894,9 +1165,305 @@ function createCreativeAutoService(options = {}) {
                 candidates: selected.candidates.map(toPublicSuggestion)
             },
             targetQueue: visibleQueue,
+            recoverableQueue,
             legilTask: liveLegilTask ? publicLiveLegilTask(liveLegilTask) : null,
             activeRun,
-            resumableRun
+            resumableRun: visibleResumableRun,
+            latestRun: visibleLatestRun
+        };
+    }
+
+    function compactDiagnosticsRun(run = null) {
+        if (!run || !run.runId) return null;
+        const legilResult = run.legilResult || {};
+        const legilProgress = run.legilProgress || {};
+        const assets = run.assets || {};
+        const promptQualityReport = run.promptQualityReport || {};
+        const sourceDirection = run.sourceDirection || {};
+        const queue = run.targetQueueProgress || run.targetQueue || null;
+        return {
+            runId: run.runId || '',
+            status: run.status || '',
+            phase: run.phase || '',
+            mode: run.mode || '',
+            agentOnly: run.agentOnly === true,
+            sourceDirection: {
+                id: sourceDirection.id || '',
+                path: sourceDirection.path || '',
+                name: sourceDirection.name || ''
+            },
+            promptTotalRaw: Number(run.promptTotalRaw) || 0,
+            promptTotal: Number(run.promptTotal) || 0,
+            promptAccepted: Number(promptQualityReport.acceptedPromptCount) || Number(run.promptTotal) || 0,
+            promptRejected: Number(promptQualityReport.rejectedPromptCount) || Number(run.promptTotalRejected) || 0,
+            expectedImageTotal: Number(run.expectedImageTotal) || Number(promptQualityReport.expectedImageTotal) || 0,
+            savedCount: Number(legilResult.savedCount) || Number(legilProgress.saved) || Number(assets.newAssetCount) || 0,
+            failedCount: Number(legilResult.failedCount) || Number(legilProgress.failed) || 0,
+            targetQueue: queue ? {
+                queueId: queue.queueId || '',
+                status: queue.queueStatus || queue.status || '',
+                currentIndex: Number(queue.currentIndex) || 0,
+                totalTargets: Number(queue.totalTargets) || 0,
+                remainingTargets: Number(queue.remainingTargets) || 0
+            } : null,
+            createdAt: run.createdAt || '',
+            startedAt: run.startedAt || '',
+            completedAt: run.completedAt || '',
+            updatedAt: run.updatedAt || run.completedAt || run.startedAt || run.createdAt || '',
+            message: run.message || ''
+        };
+    }
+
+    function compactDiagnosticsQueue(queue = null) {
+        if (!queue) return null;
+        const summary = queue.queueId && Array.isArray(queue.targets) ? publicTargetQueue(queue) : queue;
+        if (!summary || !summary.queueId) return null;
+        return {
+            queueId: summary.queueId,
+            status: summary.status || '',
+            totalTargets: Number(summary.totalTargets) || 0,
+            completedTargets: Number(summary.completedTargets) || 0,
+            remainingTargets: Number(summary.remainingTargets) || 0,
+            currentIndex: Number(summary.currentIndex) || 0,
+            nextIndex: Number(summary.nextIndex) || 0,
+            currentRunId: summary.currentRunId || '',
+            lastRunId: summary.lastRunId || '',
+            lastRunStatus: summary.lastRunStatus || '',
+            lastRunPhase: summary.lastRunPhase || '',
+            currentTargetId: summary.currentTargetId || '',
+            currentTargetName: summary.currentTargetName || '',
+            totalExpectedPromptCount: Number(summary.totalExpectedPromptCount) || 0,
+            nextAction: summary.nextAction || '',
+            startedAt: summary.startedAt || '',
+            updatedAt: summary.updatedAt || ''
+        };
+    }
+
+    function buildDiagnosticsReviewCounts(assets = []) {
+        const counts = {
+            unreviewed: 0,
+            reviewed: 0,
+            good: 0,
+            normal: 0,
+            bad: 0,
+            rejected: 0
+        };
+        safeArray(assets).forEach(asset => {
+            const status = String(asset.reviewStatus || (asset.review && asset.review.status) || 'unreviewed').trim().toLowerCase();
+            const normalized = ['good', 'normal', 'bad', 'rejected'].includes(status) ? status : 'unreviewed';
+            counts[normalized] = (counts[normalized] || 0) + 1;
+            if (normalized !== 'unreviewed') {
+                counts.reviewed += 1;
+            }
+        });
+        return counts;
+    }
+
+    function buildDiagnosticsKnowledgeCounts(store, knowledge = {}, runs = []) {
+        const assets = safeArray(store.read('assets.json', { assets: [] }).assets);
+        const feedback = safeArray(store.read('feedback.json', { feedback: [] }).feedback);
+        const drafts = safeArray(store.read('direction-drafts.json', { drafts: [] }).drafts);
+        const evidence = safeArray(store.read('direction-evidence.json', { evidence: [] }).evidence);
+        const materialLearnings = safeArray(store.read('material-learnings.json', { learnings: [] }).learnings);
+        const reviewCounts = buildDiagnosticsReviewCounts(assets);
+        const memory = knowledge.creativeMemory || emptyCreativeMemory();
+        const activeRules = getActiveMemoryRules(memory);
+        const queues = readTargetQueueState(store).queues;
+        const completedRuns = runs.filter(run => run && run.status === 'completed');
+
+        return {
+            directions: safeArray(knowledge.directions).length,
+            topMaterials: Number(knowledge.metadata && knowledge.metadata.counts && knowledge.metadata.counts.topMaterials) || 0,
+            topMaterialInsights: safeArray(knowledge.insights).length || Number(knowledge.metadata && knowledge.metadata.counts && knowledge.metadata.counts.topMaterialInsights) || 0,
+            referenceImages: safeArray(knowledge.referenceImages).length,
+            assets: assets.length,
+            assetsWithFiles: assets.filter(asset => asset && asset.filePath && fs.existsSync(asset.filePath)).length,
+            unreviewedAssets: reviewCounts.unreviewed,
+            reviewedAssets: reviewCounts.reviewed,
+            feedback: feedback.length,
+            directionDrafts: drafts.length,
+            directionEvidence: evidence.length,
+            materialLearnings: materialLearnings.length,
+            activeMemoryRules: activeRules.length,
+            learningReports: safeArray(memory.learningReports).length,
+            runs: runs.length,
+            completedRuns: completedRuns.length,
+            savedImages: assets.length || runs.reduce((sum, run) => {
+                const result = run.legilResult || {};
+                const progress = run.legilProgress || {};
+                const assetReport = run.assets || {};
+                return sum + (Number(result.savedCount) || Number(progress.saved) || Number(assetReport.newAssetCount) || 0);
+            }, 0),
+            queues: safeArray(queues).length,
+            pausedQueues: safeArray(queues).filter(queue => queue && queue.status === 'paused').length,
+            runningQueues: safeArray(queues).filter(queue => queue && queue.status === 'running').length
+        };
+    }
+
+    function findLatestTargetQueue(store) {
+        return safeArray(readTargetQueueState(store).queues)
+            .slice()
+            .sort((a, b) => Date.parse(b.updatedAt || b.startedAt || '') - Date.parse(a.updatedAt || a.startedAt || ''))[0] || null;
+    }
+
+    function buildDiagnosticsPolicySummary(context = {}) {
+        const creativeConfig = (context.appConfig && context.appConfig.creative) || {};
+        return {
+            stageLabel: 'L2 单轮自动',
+            autonomyLevel: 'L2',
+            loopMode: 'run-once',
+            policyMode: 'baseline-readonly',
+            riskLevel: 'normal',
+            allowedActions: {
+                analyze: true,
+                generatePrompt: true,
+                sendToLegil: true,
+                autoCurate: false,
+                autoChangePolicy: false,
+                autoRollback: false
+            },
+            protectedTools: ['批量产图', '改尺寸', '素材分析', '任务方向池', '配置'],
+            budget: {
+                dailyImages: null,
+                weeklyImages: null,
+                maxLegilOccupancyMinutes: null,
+                outputQuantity: Number(creativeConfig.generationSettings && creativeConfig.generationSettings.outputQuantity) || DEFAULT_AUTO_CONFIG.outputQuantity
+            },
+            updatedAt: new Date().toISOString()
+        };
+    }
+
+    function buildDiagnosticsWarnings({ knowledge, preflight, schedulerState, targetQueue, legilResume, knowledgeCounts }) {
+        const warnings = [];
+        safeArray(knowledge.metadata && knowledge.metadata.warnings).slice(0, 12).forEach((message, index) => {
+            warnings.push({
+                severity: 'P1',
+                code: `knowledge_warning_${index + 1}`,
+                message,
+                source: 'knowledge'
+            });
+        });
+        safeArray(preflight.checks).forEach(check => {
+            if (check.ok) return;
+            warnings.push({
+                severity: check.level === 'error' ? 'P0' : 'P1',
+                code: `preflight_${check.id || 'check'}`,
+                message: `${check.label || check.id || '预检'}未通过`,
+                source: 'preflight',
+                path: check.path || ''
+            });
+        });
+        const daily = schedulerState.daily || {};
+        if (daily.date && daily.date !== todayKey()) {
+            warnings.push({
+                severity: 'P1',
+                code: 'scheduler_daily_stale',
+                message: `scheduler-state daily 日期仍是 ${daily.date}，今日视图会按 ${todayKey()} 归零展示`,
+                source: 'scheduler-state'
+            });
+        }
+        if (targetQueue && targetQueue.status === 'paused' && Number(targetQueue.remainingTargets) > 0) {
+            warnings.push({
+                severity: 'P1',
+                code: 'target_queue_paused',
+                message: `目标队列暂停，剩余 ${targetQueue.remainingTargets} 个目标`,
+                source: 'target-queue'
+            });
+        }
+        if (legilResume && legilResume.hasResume) {
+            warnings.push({
+                severity: 'P1',
+                code: 'legil_resume_available',
+                message: `存在可继续的 Legil 创意任务，剩余 ${Number(legilResume.remainingCount) || 0} 条 prompt`,
+                source: 'legil-resume'
+            });
+        }
+        if (Number(knowledgeCounts.unreviewedAssets) > 0) {
+            warnings.push({
+                severity: Number(knowledgeCounts.unreviewedAssets) > 1000 ? 'P0' : 'P1',
+                code: 'assets_unreviewed',
+                message: `未评审资产 ${knowledgeCounts.unreviewedAssets} 条`,
+                source: 'knowledge-assets'
+            });
+        }
+        return warnings;
+    }
+
+    function getDiagnostics(context = {}) {
+        const appConfig = context.appConfig || {};
+        const knowledge = readKnowledge(context);
+        const { store } = getKnowledgeStore(context);
+        store.ensureBase();
+
+        const schedulerState = store.read('scheduler-state.json', {
+            version: 1,
+            status: 'idle',
+            consecutiveFailures: 0,
+            daily: {
+                date: todayKey(),
+                imageCount: 0,
+                imageLimit: DEFAULT_AUTO_CONFIG.maxImagesPerDay
+            },
+            updatedAt: ''
+        });
+        const runs = readRuns(store);
+        const activeRun = activeRunId ? getRun(activeRunId, context) : null;
+        const lastRun = activeRun || runs[0] || null;
+        const liveLegilTask = getLiveCreativeLegilTask();
+        const latestQueue = findLatestTargetQueue(store);
+        const targetQueue = compactDiagnosticsQueue(
+            (activeRun && (activeRun.targetQueueProgress || activeRun.targetQueue)) ||
+            schedulerState.targetQueue ||
+            latestQueue
+        );
+        const legilResume = typeof options.getCreativeResumeInfo === 'function'
+            ? options.getCreativeResumeInfo(false)
+            : { hasResume: false };
+        const preflight = buildPreflight(appConfig, knowledge);
+        const knowledgeCounts = buildDiagnosticsKnowledgeCounts(store, knowledge, runs);
+        const policySummary = buildDiagnosticsPolicySummary(context);
+        const warnings = buildDiagnosticsWarnings({
+            knowledge,
+            preflight,
+            schedulerState,
+            targetQueue,
+            legilResume,
+            knowledgeCounts
+        });
+
+        return {
+            success: true,
+            schemaVersion: 1,
+            generatedAt: new Date().toISOString(),
+            serviceStatus: {
+                status: activeRun ? 'running' : (schedulerState.status || 'idle'),
+                stageLabel: policySummary.stageLabel,
+                mode: DEFAULT_AUTO_CONFIG.mode,
+                activeRunId: activeRun && activeRun.runId ? activeRun.runId : '',
+                currentRunId: schedulerState.currentRunId || '',
+                currentAgentTaskRunId: schedulerState.currentAgentTaskRunId || '',
+                lastRunId: schedulerState.lastRunId || (lastRun && lastRun.runId) || '',
+                lastError: schedulerState.lastError || '',
+                consecutiveFailures: Number(schedulerState.consecutiveFailures) || 0,
+                legilRunning: Boolean(liveLegilTask && liveLegilTask.snapshot && liveLegilTask.snapshot.running === true),
+                preflightOk: preflight.ok === true,
+                updatedAt: schedulerState.updatedAt || ''
+            },
+            schedulerState,
+            targetQueue,
+            lastRun: compactDiagnosticsRun(lastRun),
+            legilResume: {
+                hasResume: legilResume && legilResume.hasResume === true,
+                runId: legilResume && legilResume.runId || '',
+                phase: legilResume && legilResume.phase || '',
+                remainingCount: Number(legilResume && legilResume.remainingCount) || 0,
+                completed: Number(legilResume && legilResume.completed) || 0,
+                total: Number(legilResume && legilResume.total) || 0,
+                updatedAt: legilResume && legilResume.updatedAt || ''
+            },
+            knowledgeCounts,
+            policySummary,
+            warnings
         };
     }
 
@@ -1000,7 +1567,7 @@ function createCreativeAutoService(options = {}) {
             lastSnapshot: snapshot,
             completedAt
         });
-        const finalRun = updateRun(store, run.runId, {
+        let finalRun = updateRun(store, run.runId, {
             status: completed ? 'completed' : (paused ? 'paused' : 'failed'),
             phase: completed ? 'legil_completed' : (paused ? 'legil_paused' : 'legil_failed'),
             completedAt,
@@ -1019,6 +1586,13 @@ function createCreativeAutoService(options = {}) {
                 ? `Legil 生图完成：成功 ${successCount} 组，失败 ${failedCount} 组，保存 ${savedCount} 张`
                 : `Legil 生图未完成：${progress.currentAction || progress.phase}`
         }) || run;
+        if (run.legilRetry && run.legilRetry.active && finalRun) {
+            finalRun = updateRun(store, run.runId, appendLegilRetryFinalUpdates(run, {
+                status: finalRun.status,
+                phase: finalRun.phase,
+                completedAt
+            }, progress, finalRun.legilResult || {}, completedAt)) || finalRun;
+        }
 
         let runWithAssets = finalRun;
         if (savedCount > 0 && finalRun) {
@@ -1063,6 +1637,50 @@ function createCreativeAutoService(options = {}) {
         return runWithAssets || finalRun;
     }
 
+    function getRunFinalLegilProgress(run = {}) {
+        const candidates = [
+            run.legilProgress,
+            run.legilTask && run.legilTask.progress,
+            run.legilTask && run.legilTask.lastSnapshot && run.legilTask.lastSnapshot.progress
+        ];
+        return candidates.find(progress => progress && isFinalLegilPhase(progress.phase)) || null;
+    }
+
+    function legilSnapshotMatchesRun(snapshot = null, run = {}, progress = null) {
+        if (!run || !run.runId) return false;
+        const snapshotProgress = progress || (snapshot && snapshot.progress) || {};
+        const snapshotRunId = String(snapshotProgress.creativeAutoRunId || '').trim();
+        const taskRunId = String(run.legilTask && run.legilTask.runId || '').trim();
+        if (snapshotRunId && snapshotRunId !== run.runId) return false;
+        if (!snapshotRunId && taskRunId && taskRunId !== run.runId) return false;
+        return Boolean(snapshotRunId || taskRunId || getRunFinalLegilProgress(run));
+    }
+
+    function reconcileFinalLegilRun(store, run = {}, snapshot = null) {
+        if (!run || !run.runId || run.status !== 'running' || !isLegilRunPhase(run.phase)) {
+            return run;
+        }
+
+        const snapshotProgress = snapshot && snapshot.progress ? snapshot.progress : null;
+        const progress = snapshotProgress && isFinalLegilPhase(snapshotProgress.phase)
+            ? snapshotProgress
+            : getRunFinalLegilProgress(run);
+        if (!progress || !isFinalLegilPhase(progress.phase)) {
+            return run;
+        }
+        if (snapshot && snapshot.running === true) {
+            return run;
+        }
+        if (!legilSnapshotMatchesRun(snapshot, run, progress)) {
+            return run;
+        }
+
+        if (logger && typeof logger.warn === 'function') {
+            logger.warn(`Reconciling stale creative-auto Legil final state: ${run.runId} / ${progress.phase}`);
+        }
+        return finalizeLiveLegilRun(store, run, progress, snapshot || (run.legilTask && run.legilTask.lastSnapshot) || null) || run;
+    }
+
     function readRuns(store) {
         store.ensureBase();
         const runsDir = store.filePath('runs');
@@ -1077,15 +1695,114 @@ function createCreativeAutoService(options = {}) {
             .sort((a, b) => Date.parse(b.updatedAt || b.startedAt || b.createdAt || '') - Date.parse(a.updatedAt || a.startedAt || a.createdAt || ''));
     }
 
+    function runTimestamp(run = {}) {
+        const value = Date.parse(run.updatedAt || run.completedAt || run.startedAt || run.createdAt || '');
+        return Number.isFinite(value) ? value : 0;
+    }
+
     function canResumeRun(run = {}) {
         if (!run || !run.runId) return false;
         if (run.status === 'paused') return true;
         return run.status === 'completed' && run.phase === 'agent_completed' && safeArray(run.prompts).length > 0;
     }
 
+    function canAdvanceTargetQueueFromRun(store, run = {}) {
+        if (!run || !run.runId || run.status !== 'completed' || !isLegilRunPhase(run.phase)) return false;
+        if (!run.targetQueue || !run.targetQueue.queueId) return false;
+
+        const queue = loadTargetQueue(store, run.targetQueue.queueId);
+        if (!queue || queue.currentRunId !== run.runId) return false;
+
+        const targetIndex = Math.max(0, Number(run.targetQueue.index) ? Number(run.targetQueue.index) - 1 : Number(queue.currentIndex) || 0);
+        if (queue.status === 'completed') {
+            const totalTargets = Number(queue.totalTargets) || safeArray(queue.targets).length;
+            const completedTargets = safeArray(queue.completedTargetIds).length;
+            const skippedTargets = safeArray(queue.skippedTargets).length || safeArray(queue.skippedTargetIds).length || safeArray(queue.skippedTargetIndexes).length;
+            if (totalTargets > 0 && completedTargets + skippedTargets >= totalTargets) {
+                return false;
+            }
+        }
+        return targetIndex + 1 < safeArray(queue.targets).length;
+    }
+
+    function targetQueueRecoverySummary(store, run = {}) {
+        if (!canAdvanceTargetQueueFromRun(store, run)) return null;
+
+        const queue = loadTargetQueue(store, run.targetQueue.queueId);
+        const summary = publicTargetQueue(queue);
+        if (!summary) return null;
+
+        return {
+            ...summary,
+            nextAction: 'advance_next_target',
+            recoverableRunId: run.runId,
+            lastRunStatus: run.status || '',
+            lastRunPhase: run.phase || ''
+        };
+    }
+
+    function reconcileTargetQueueMismatches(store) {
+        const state = readTargetQueueState(store);
+        let recoverableQueue = null;
+        let changed = false;
+        const queues = state.queues.map(queue => {
+            if (!queue || !queue.queueId || !queue.currentRunId || !['running', 'paused', 'completed'].includes(String(queue.status || ''))) {
+                return queue;
+            }
+
+            const runId = path.basename(String(queue.currentRunId || ''));
+            const run = store.read(path.join('runs', `${runId}.json`), null);
+            if (!canAdvanceTargetQueueFromRun(store, run)) {
+                return queue;
+            }
+
+            const nextQueue = {
+                ...queue,
+                status: queue.status === 'completed' ? 'paused' : queue.status,
+                nextAction: 'advance_next_target',
+                recoverableRunId: run.runId,
+                lastRunId: run.runId,
+                lastRunStatus: run.status || '',
+                lastRunPhase: run.phase || ''
+            };
+            changed = true;
+            recoverableQueue = {
+                ...publicTargetQueue(nextQueue),
+                nextAction: 'advance_next_target',
+                recoverableRunId: run.runId,
+                lastRunStatus: run.status || '',
+                lastRunPhase: run.phase || ''
+            };
+            return nextQueue;
+        });
+
+        if (changed) {
+            writeTargetQueueState(store, {
+                ...state,
+                queues
+            });
+            if (recoverableQueue) {
+                writeSchedulerState(store, {
+                    status: 'idle',
+                    currentRunId: null,
+                    currentAgentTaskRunId: null,
+                    currentLegilTask: null,
+                    lastRunId: recoverableQueue.recoverableRunId,
+                    targetQueue: recoverableQueue
+                });
+            }
+        }
+
+        return recoverableQueue;
+    }
+
     function reconcileStaleRunningRun(store, run = {}) {
         if (!run || run.status !== 'running') {
             return run;
+        }
+        const finalLegilRun = reconcileFinalLegilRun(store, run);
+        if (finalLegilRun && finalLegilRun.status !== 'running') {
+            return finalLegilRun;
         }
         if (activeRunId === run.runId) {
             return run;
@@ -1095,6 +1812,22 @@ function createCreativeAutoService(options = {}) {
         const resumablePhase = isAgentRunningPhase(phase) || isLegilRunPhase(phase);
         if (!resumablePhase) {
             return run;
+        }
+        const lastTouchedAt = Date.parse(run.updatedAt || run.startedAt || run.createdAt || '');
+        if (Number.isFinite(lastTouchedAt) && Date.now() - lastTouchedAt < STALE_RUNNING_RECONCILE_GRACE_MS) {
+            return run;
+        }
+        if (isAgentRunningPhase(phase) && run.agentTaskRunId && typeof options.getCreativeAgentTask === 'function') {
+            const agentTask = options.getCreativeAgentTask(run.agentTaskRunId);
+            const publicTask = agentTask && typeof options.publicCreativeAgentTask === 'function'
+                ? options.publicCreativeAgentTask(agentTask)
+                : null;
+            if (agentTask && (!publicTask || publicTask.running !== false)) {
+                return {
+                    ...run,
+                    agentTask: publicTask || run.agentTask || null
+                };
+            }
         }
 
         const reconciledRun = updateRun(store, run.runId, {
@@ -1124,12 +1857,37 @@ function createCreativeAutoService(options = {}) {
 
         for (const runId of candidateIds) {
             const run = reconcileStaleRunningRun(store, store.read(path.join('runs', `${path.basename(runId)}.json`), null));
-            if (canResumeRun(run)) {
+            if (canResumeRun(run) || canAdvanceTargetQueueFromRun(store, run)) {
                 return run;
             }
         }
 
-        return readRuns(store).map(run => reconcileStaleRunningRun(store, run)).find(canResumeRun) || null;
+        return readRuns(store)
+            .map(run => reconcileStaleRunningRun(store, run))
+            .find(run => canResumeRun(run) || canAdvanceTargetQueueFromRun(store, run)) || null;
+    }
+
+    function findBlockingRunningRun(store, schedulerState = {}) {
+        const targetQueue = schedulerState && schedulerState.targetQueue ? schedulerState.targetQueue : null;
+        const queueState = readTargetQueueState(store);
+        const runningQueueRunIds = queueState.queues
+            .filter(queue => queue && queue.status === 'running' && queue.currentRunId)
+            .map(queue => queue.currentRunId);
+        const candidateIds = uniqueStrings([
+            activeRunId,
+            schedulerState.currentRunId,
+            targetQueue && targetQueue.currentRunId,
+            ...runningQueueRunIds
+        ]);
+
+        for (const runId of candidateIds) {
+            const run = reconcileStaleRunningRun(store, store.read(path.join('runs', `${path.basename(runId)}.json`), null));
+            if (run && run.status === 'running') {
+                return attachTargetQueueProgress(store, run);
+            }
+        }
+
+        return null;
     }
 
     function writeRun(store, run) {
@@ -1219,22 +1977,85 @@ function createCreativeAutoService(options = {}) {
         const currentIndex = Math.max(0, Number(queue.currentIndex) || 0);
         const nextIndex = Math.max(0, Number(queue.nextIndex) || 0);
         const completedTargets = safeArray(queue.completedTargetIds).length;
+        const skippedTargets = safeArray(queue.skippedTargets).length || safeArray(queue.skippedTargetIds).length || safeArray(queue.skippedTargetIndexes).length;
+        const processedTargets = Math.min(totalTargets, completedTargets + skippedTargets);
+        const publicStatus = String(queue.status || 'running') === 'completed' && totalTargets > 0 && processedTargets < totalTargets
+            ? 'paused'
+            : (queue.status || 'running');
         const currentTarget = safeArray(queue.targets)[currentIndex] || null;
         return {
             queueId: queue.queueId,
-            status: queue.status || 'running',
+            status: publicStatus,
             totalTargets,
             currentIndex: Math.min(totalTargets, currentIndex + 1),
             nextIndex,
             completedTargets,
-            remainingTargets: Math.max(0, totalTargets - completedTargets),
+            remainingTargets: Math.max(0, totalTargets - processedTargets),
             currentRunId: queue.currentRunId || '',
+            lastRunId: queue.lastRunId || '',
+            lastRunStatus: queue.lastRunStatus || '',
+            lastRunPhase: queue.lastRunPhase || '',
+            nextAction: queue.nextAction || '',
+            nextPreparingRunId: queue.nextPreparingRunId || '',
+            nextPreparedRunId: queue.nextPreparedRunId || '',
+            nextPrepareIndex: Number.isFinite(Number(queue.nextPrepareIndex)) ? Number(queue.nextPrepareIndex) : null,
+            nextPreparePhase: queue.nextPreparePhase || '',
+            skippedTargets: safeArray(queue.skippedTargets),
+            rawPromptCount: Number(queue.rawPromptCount) || 0,
+            acceptedPromptCount: Number(queue.acceptedPromptCount) || 0,
+            rejectedPromptCount: Number(queue.rejectedPromptCount) || 0,
+            failedPromptCount: Number(queue.failedPromptCount) || 0,
+            savedImageCount: Number(queue.savedImageCount) || 0,
             currentTargetId: currentTarget && (currentTarget.targetId || currentTarget.targetKey || currentTarget.sourceMaterialId || ''),
             currentTargetName: currentTarget && (currentTarget.sourceMaterialName || currentTarget.materialName || currentTarget.sourceDirectionPath || ''),
             totalExpectedPromptCount: Number(queue.totalExpectedPromptCount) || buildTargetQueueSummary(queue.targets).totalExpectedPromptCount,
             startedAt: queue.startedAt || '',
             updatedAt: queue.updatedAt || ''
         };
+    }
+
+    function targetQueueRunStatsFromRun(run = {}) {
+        const result = run.legilResult || {};
+        const progress = run.legilProgress || {};
+        const report = run.promptQualityReport || {};
+        const assets = run.assets || {};
+        return {
+            rawPromptCount: Number(run.promptTotalRaw) || Number(report.rawPromptCount) || 0,
+            acceptedPromptCount: Number(report.acceptedPromptCount) || Number(run.promptTotal) || 0,
+            rejectedPromptCount: Number(report.rejectedPromptCount) || Number(run.promptTotalRejected) || 0,
+            failedPromptCount: Number(result.failedCount) || Number(progress.failed) || 0,
+            savedImageCount: Number(result.savedCount) || Number(progress.saved) || Number(assets.newAssetCount) || 0,
+            assetCount: Number(assets.newAssetCount) || 0
+        };
+    }
+
+    function mergeTargetQueueRunStats(queue = {}, run = {}) {
+        const runId = String(run.runId || '').trim();
+        if (!runId) return {};
+        const previousByRun = queue.runStatsById && typeof queue.runStatsById === 'object' ? queue.runStatsById : {};
+        const previousStats = previousByRun[runId] || {};
+        const nextStats = targetQueueRunStatsFromRun(run);
+        const fields = [
+            'rawPromptCount',
+            'acceptedPromptCount',
+            'rejectedPromptCount',
+            'failedPromptCount',
+            'savedImageCount',
+            'assetCount'
+        ];
+        const updates = {
+            runStatsById: {
+                ...previousByRun,
+                [runId]: nextStats
+            }
+        };
+        fields.forEach(field => {
+            const currentTotal = Number(queue[field]) || 0;
+            const previousValue = Number(previousStats[field]) || 0;
+            const nextValue = Number(nextStats[field]) || 0;
+            updates[field] = Math.max(0, currentTotal - previousValue + nextValue);
+        });
+        return updates;
     }
 
     function loadTargetQueue(store, queueId = '') {
@@ -1321,8 +2142,11 @@ function createCreativeAutoService(options = {}) {
         const targetIndex = Math.max(0, Number(run.targetQueue.index) ? Number(run.targetQueue.index) - 1 : Number(queue.currentIndex) || 0);
         const target = safeArray(queue.targets)[targetIndex] || {};
         const targetId = target.targetId || target.targetKey || target.sourceMaterialId || `target-${targetIndex + 1}`;
+        const nextStatus = status === 'completed' && queue.status !== 'completed'
+            ? 'running'
+            : (status || run.status || queue.status);
         const updates = {
-            status: status || run.status || queue.status,
+            status: nextStatus,
             currentIndex: targetIndex,
             currentRunId: run.runId || queue.currentRunId,
             lastRunId: run.runId || queue.lastRunId || '',
@@ -1333,11 +2157,68 @@ function createCreativeAutoService(options = {}) {
             updates.nextIndex = targetIndex + 1;
             updates.completedTargetIds = uniqueStrings(safeArray(queue.completedTargetIds).concat([targetId]));
             updates.completedRunIds = uniqueStrings(safeArray(queue.completedRunIds).concat([run.runId]));
+            Object.assign(updates, mergeTargetQueueRunStats(queue, run));
         }
         if (status === 'failed') {
             updates.failedRunIds = uniqueStrings(safeArray(queue.failedRunIds).concat([run.runId]));
         }
         return updateTargetQueue(store, queue.queueId, updates);
+    }
+
+    function targetQueueIndexFromRun(run = {}, queue = {}) {
+        return Math.max(0, Number(run.targetQueue && run.targetQueue.index)
+            ? Number(run.targetQueue.index) - 1
+            : Number(queue.currentIndex) || 0);
+    }
+
+    function targetQueueTargetId(target = {}, index = 0) {
+        return target.targetId || target.targetKey || target.sourceMaterialId || target.id || `target-${index + 1}`;
+    }
+
+    function skippedTargetIndexes(queue = {}) {
+        const indexes = safeArray(queue.skippedTargetIndexes)
+            .map(value => Number(value))
+            .filter(Number.isFinite);
+        safeArray(queue.skippedTargets).forEach(item => {
+            const index = Number(item && item.index);
+            if (Number.isFinite(index)) {
+                indexes.push(index);
+            }
+        });
+        return new Set(indexes);
+    }
+
+    function nextRunnableTargetIndex(queue = {}, startIndex = 0) {
+        const targets = safeArray(queue.targets);
+        const skipped = skippedTargetIndexes(queue);
+        for (let index = Math.max(0, Number(startIndex) || 0); index < targets.length; index += 1) {
+            if (!skipped.has(index)) {
+                return index;
+            }
+        }
+        return -1;
+    }
+
+    function queuePrefetchAttempt(queue = {}, index = 0) {
+        const attempts = queue.prefetchAttemptsByIndex || {};
+        return Math.max(0, Number(attempts[index]) || 0);
+    }
+
+    function clearQueuePrefetchFields(queue = {}, updates = {}) {
+        return {
+            ...queue,
+            nextPreparingRunId: '',
+            nextPreparedRunId: '',
+            nextPrepareIndex: null,
+            nextPreparePhase: '',
+            nextPrepareError: '',
+            nextPrepareAttempt: 0,
+            ...updates
+        };
+    }
+
+    function targetQueueContext(queue = {}) {
+        return queue && queue.context && typeof queue.context === 'object' ? queue.context : {};
     }
 
     function buildAggregateSelectedDirection(directions = [], payload = {}) {
@@ -1474,13 +2355,22 @@ function createCreativeAutoService(options = {}) {
             ? safeArray(direction.memberDirectionIds)
             : [direction.id];
         return safeArray(knowledge.referenceImages)
-            .filter(image => safeArray(image.matchedDirectionIds).some(id => directionIds.includes(id)) || directionIds.includes(image.directionId))
-            .slice(0, 10)
+            .filter(image => {
+                const status = String(image.status || (image.deleted ? 'deleted' : 'active')).trim().toLowerCase();
+                if (status !== 'active' || image.deleted) return false;
+                return safeArray(image.matchedDirectionIds).some(id => directionIds.includes(id)) || directionIds.includes(image.directionId);
+            })
+            .sort((a, b) => (Number(a.slot || a.sourceSlot) || 99) - (Number(b.slot || b.sourceSlot) || 99))
+            .slice(0, 3)
             .map(image => ({
                 id: image.id,
                 fileName: image.fileName,
                 relativePath: image.relativePath,
-                filePath: image.filePath
+                filePath: image.filePath,
+                slot: Number(image.slot || image.sourceSlot) || 0,
+                roleTag: image.roleTag || '',
+                useFor: image.useFor || '',
+                visualNotes: image.visualNotes || ''
             }));
     }
 
@@ -1505,15 +2395,15 @@ function createCreativeAutoService(options = {}) {
         if (!history || (!history.directionNames.length && !history.promptSnippets.length)) {
             return [
                 '# Historical uniqueness guard',
-                `Fresh generation nonce: ${freshnessNonce}. Do not return cached output; generate new directions and prompts for this run.`,
-                'No prior new directions or generated prompts were found for this source direction. Still create fresh directions and avoid generic template repetition.'
+                `Fresh generation nonce: ${freshnessNonce}. Do not return cached output; generate fresh direction candidates for this run.`,
+                'No prior new directions or generated prompts were found for this source direction. Still create fresh direction candidates and avoid generic template repetition.'
             ].join('\n');
         }
 
         return [
             '# Historical uniqueness guard',
-            `Fresh generation nonce: ${freshnessNonce}. Do not return cached output; generate new directions and prompts for this run.`,
-            'The following items have already been expanded or generated for this source direction. This run must create brand-new newDirectionName values and brand-new prompts.',
+            `Fresh generation nonce: ${freshnessNonce}. Do not return cached output; generate fresh direction candidates for this run.`,
+            'The following items have already been expanded or generated for this source direction. This run must create brand-new newDirectionName values and brand-new visual mechanisms.',
             'Do not reuse these names, do not make near-paraphrases, and do not keep the same subject-action-scene mechanism with only small wording changes.',
             `Historical prompt keys: ${history.promptHistoryCount}; historical direction keys: ${history.directionHistoryCount}.`,
             history.directionNames.length
@@ -1556,6 +2446,7 @@ function createCreativeAutoService(options = {}) {
                 return `${label}：已覆盖 ${observed}；优先补齐 ${gaps}`;
             });
         const existingDirectionNames = safeArray(exclusionContext.existingDirectionNames).slice(0, 30);
+        const historicalExpansionNames = safeArray(exclusionContext.historicalExpansionNames).slice(0, 30);
         const historicalDirectionNames = safeArray(exclusionContext.historicalDirectionNames).slice(0, 30);
         const historicalPromptHashes = safeArray(exclusionContext.historicalPromptHashes).slice(0, 30);
         const rejectedDirections = safeArray(exclusionContext.rejectedDirections).slice(0, 12);
@@ -1601,7 +2492,7 @@ function createCreativeAutoService(options = {}) {
         ].filter(Boolean).join('\n');
     }
 
-    function buildAgentInstruction({ selected, referenceImages, payload, config, quota, memoryRules = [], historicalCreativeContext = null }) {
+    function buildAgentInstruction({ selected, referenceImages, payload, config, quota, memoryRules = [], historicalCreativeContext = null, diversityContext = null }) {
         const direction = selected.direction;
         const insight = selected.topMaterialInsight || null;
         const aggregateTarget = selected.aggregateTarget || null;
@@ -1609,25 +2500,33 @@ function createCreativeAutoService(options = {}) {
         const creativeBriefTargets = creativeBrief && Array.isArray(creativeBrief.creativeTargets)
             ? creativeBrief.creativeTargets
             : [];
+        const instructionPlanConfig = buildDirectionPlanConfig(payload, config);
         const expansionTargets = creativeBriefTargets.map(target => {
             const newDirectionsPerSource = Math.max(1, Math.min(10, Math.floor(Number(target.newDirectionsPerSource) || 3)));
             const promptGroupsPerNewDirection = Math.max(1, Math.min(10, Math.floor(Number(target.promptGroupsPerNewDirection) || 4)));
+            const candidateDirectionsPerSource = Math.max(
+                newDirectionsPerSource,
+                Math.min(30, Math.floor(Number(target.candidateDirectionsPerSource) || (newDirectionsPerSource * instructionPlanConfig.candidateMultiplier)))
+            );
             return {
                 ...target,
                 newDirectionsPerSource,
+                candidateDirectionsPerSource,
                 promptGroupsPerNewDirection,
                 expectedPromptCount: newDirectionsPerSource * promptGroupsPerNewDirection
             };
         });
         const totalNewDirectionCount = expansionTargets.reduce((sum, target) => sum + target.newDirectionsPerSource, 0);
+        const totalCandidateDirectionCount = expansionTargets.reduce((sum, target) => sum + target.candidateDirectionsPerSource, 0);
         const totalExpectedPromptCount = expansionTargets.reduce((sum, target) => sum + target.expectedPromptCount, 0);
         const promptColumnCount = Math.max(5, ...expansionTargets.map(target => target.promptGroupsPerNewDirection));
         const promptHeaders = Array.from({ length: promptColumnCount }, (_, index) => `提示词${index + 1}`);
+        const directionPlanConfig = instructionPlanConfig;
         const creativeBriefTargetText = creativeBriefTargets.length
             ? expansionTargets.map((target, index) => [
                 `${index + 1}. 原始方向：${target.sourceDirectionPath || target.sourceDirectionKey || target.materialName || target.targetId || ''}`,
                 `   任务：${target.task || `输出 ${target.newDirectionsPerSource || 3} 个新方向，每个新方向 ${target.promptGroupsPerNewDirection || 4} 组 Legil 提示词`}`,
-                `   数量约束：新方向 ${target.newDirectionsPerSource} 个；每个新方向 ${target.promptGroupsPerNewDirection} 条 prompt；本原始方向合计 ${target.expectedPromptCount} 条 prompt`,
+                `   数量约束：先生成候选方向 ${target.candidateDirectionsPerSource} 个；筛选入选新方向 ${target.newDirectionsPerSource} 个；每个新方向 ${target.promptGroupsPerNewDirection} 条 prompt；本原始方向合计 ${target.expectedPromptCount} 条 prompt`,
                 `   视觉洞察：${target.visualSummary || target.visualInsight || ''}`,
                 Array.isArray(target.retainElements) && target.retainElements.length ? `   必须保留：${target.retainElements.join('、')}` : '',
                 Array.isArray(target.variationAxes) && target.variationAxes.length ? `   变化轴：${target.variationAxes.join('、')}` : '',
@@ -1650,6 +2549,100 @@ function createCreativeAutoService(options = {}) {
             .concat(directionMustAvoid ? [directionMustAvoid] : [])
             .map(item => String(item || '').trim())
             .filter(Boolean);
+        const diversityBrief = formatDirectionDiversityContext(diversityContext);
+        const compactAgentInstruction = payload.compactAgentInstruction === true;
+        if (compactAgentInstruction) {
+            const targetDirectionCount = Math.max(1, totalNewDirectionCount || directionPlanConfig.selectedExtensionsPerSource || DEFAULT_AUTO_CONFIG.newDirectionsPerSource);
+            const promptsPerDirection = Math.max(1, expansionTargets[0]?.promptGroupsPerNewDirection || directionPlanConfig.promptsPerExtension || DEFAULT_AUTO_CONFIG.promptsPerNewDirection);
+            const targetCandidateCount = Math.max(targetDirectionCount * 2, directionPlanConfig.candidateExtensionsPerSource || targetDirectionCount * 2);
+            const targetText = expansionTargets.length
+                ? expansionTargets.map((target, index) => [
+                    `${index + 1}. sourcePath=${target.sourceDirectionPath || target.sourceDirectionKey || target.materialName || direction.path}`,
+                    `newDirectionCount=${target.newDirectionsPerSource}`,
+                    `candidateDirectionCount=${target.candidateDirectionsPerSource}`,
+                    `promptsPerDirection=${target.promptGroupsPerNewDirection}`,
+                    target.visualSummary || target.visualInsight ? `visualInsight=${target.visualSummary || target.visualInsight}` : ''
+                ].filter(Boolean).join('; ')).join('\n')
+                : `1. sourcePath=${direction.path}; newDirectionCount=${targetDirectionCount}; candidateDirectionCount=${targetCandidateCount}; promptsPerDirection=${promptsPerDirection}`;
+            const referenceText = referenceImages.length
+                ? referenceImages.slice(0, 3).map((image, index) => `ref${image.slot || index + 1}: ${[
+                    image.roleTag || '',
+                    image.useFor || '',
+                    image.visualNotes || '',
+                    image.relativePath || image.fileName
+                ].filter(Boolean).join(' / ')}`).join('\n')
+                : '';
+            return [
+                '# Creative Auto Fast Prompt Generation',
+                'Return compact JSON only. No markdown. No table. No explanation.',
+                'directionPlans is the primary output. Do not set directionPlans to [].',
+                `For each source direction, generate a candidate pool of newDirectionCount * 2 extensions, then mirror only the best newDirectionCount items in candidateDirections.`,
+                'Stage 1 is direction-only: do not generate promptPair, prompts, finalPrompt, or long image prompts.',
+                '',
+                `Source direction id: ${direction.id || ''}`,
+                `Source direction path: ${direction.path || ''}`,
+                `Source direction name: ${direction.name || ''}`,
+                `Source description: ${direction.description || ''}`,
+                diversityBrief,
+                insight ? `Top material signal: ${insight.pathKey || ''}; materialCount=${insight.materialCount || 0}; keywords=${safeArray(insight.keywords).slice(0, 8).join('/')}` : '',
+                referenceText,
+                '',
+                '# Targets',
+                targetText,
+                '',
+                '# Must Follow',
+                '- Generate short direction candidates only; full Legil prompts will be generated after backend scoring.',
+                '- Style: high quality 3D cartoon commercial game ad poster, frozen apocalypse survival world.',
+                '- Each new direction must change at least two of: subject relationship, action mechanism, camera angle, scene structure, reward/danger prop, emotional hook.',
+                '- Avoid real brands, large English text, cyber UI, mecha, laser screens, and pure scenery.',
+                '- If text appears in the image, it must be short, readable Chinese.',
+                constraints.length ? constraints.slice(0, 6).map(item => `- Avoid: ${item}`).join('\n') : '',
+                '',
+                '# JSON Schema',
+                JSON.stringify({
+                    directionPlans: [{
+                        sourceDirectionPath: direction.path || '',
+                        currentJudgment: 'short judgment',
+                        exclusionSummary: 'what must be different from existing ideas',
+                        extensions: [{
+                            extensionKey: 'candidate-1',
+                            extensionType: 'candidate',
+                            name: 'specific event-based new direction name',
+                            description: 'one sentence describing the visual mechanism',
+                            visualHook: 'clear visible hook',
+                            dedupeReason: 'why this differs from existing directions',
+                            riskNote: 'controllable production risk',
+                            productionAdvice: 'how to make it readable'
+                        }]
+                    }],
+                    candidateDirections: [{
+                        type: 'new-direction',
+                        sourcePath: direction.path || '',
+                        targetLevel: 'L4',
+                        label: '具体新方向名',
+                        description: '一句话说明画面机制',
+                        dimensions: {
+                            mood: '',
+                            perspective: '',
+                            time: '',
+                            narrative: '',
+                            scale: '',
+                            material: '',
+                            subjectRelation: '',
+                            hook: ''
+                        },
+                        duplicateRisk: 'low',
+                        reason: '为什么值得生成'
+                    }]
+                }, null, 2),
+                '',
+                `Return exactly ${targetCandidateCount} directionPlans[].extensions[] candidates in total for this source direction unless Targets specify per-source candidateDirectionCount.`,
+                `Return exactly ${targetDirectionCount} candidateDirections as the compatibility mirror of your best directions.`,
+                `Do not include prompts in candidateDirections during stage 1; promptsPerDirection=${promptsPerDirection} is for the backend second stage.`,
+                'Do not repeat the source direction name as a new direction label.',
+                'Keep each direction candidate concise but visually complete.'
+            ].filter(Boolean).join('\n');
+        }
         const lines = [
             creativeBrief
                 ? [
@@ -1694,6 +2687,8 @@ function createCreativeAutoService(options = {}) {
             `选择原因：${safeArray(selected.reasons).join('；') || '默认自动选题'}`,
             '',
             formatHistoricalCreativeContext(historicalCreativeContext),
+            '',
+            diversityBrief,
             '',
             formatDirectionFocusContext(selected),
             aggregateTarget
@@ -1742,6 +2737,9 @@ function createCreativeAutoService(options = {}) {
             `比例：${config.generationSettings.aspectRatio}`,
             `分辨率：${config.generationSettings.resolution}`,
             `每条 prompt 出图：${config.generationSettings.outputQuantity} 张`,
+            `提示词风格：${getCreativePromptStyle(config.creativePromptStyle).label}`,
+            '比例、分辨率、输出数量只作为 Legil 参数使用，不要写进 prompt 文本。',
+            buildStyleInstruction(config.creativePromptStyle),
             quota.unlimitedPrompts
                 ? '本次提交 prompt：不限额，Prompt Gate 接受多少就提交多少。'
                 : `本次最多提交 prompt：${quota.maxPrompts}`,
@@ -1757,30 +2755,42 @@ function createCreativeAutoService(options = {}) {
                 ].join('\n'),
             '',
             '# 输出要求',
-            '只输出 JSON，不输出 Markdown 表格、Excel 表格、CSV 表格或任何 spreadsheet-ready 表格；JSON 顶层字段为 candidateDirections。',
-            `每个 candidateDirections item 的 prompts 最多 ${promptHeaders.length} 条，按本次目标数量生成，不要为了补齐数量写无效提示词。`,
-            'candidateDirections 每一项必须包含 type、sourcePath、targetLevel、label、description、dimensions、duplicateRisk、reason、prompts。dimensions 必须包含 mood、perspective、time、narrative、scale、material、subjectRelation、hook。prompts 为 1-5 个 {title,prompt} 对象。',
+            '只输出 JSON，不输出 Markdown 表格、Excel 表格、CSV 表格或任何 spreadsheet-ready 表格；JSON 顶层字段必须包含 directionPlans 和 candidateDirections。',
+            `隐藏式方向规划：每个原始方向先生成 ${directionPlanConfig.candidateExtensionsPerSource} 个候选延展方向，后台会自动评分、去重和淘汰；不要要求人工预览或勾选。`,
+            `第一阶段只生成短方向候选，不生成 promptPair、prompts、finalPrompt 或任何长生图提示词；入选后后台会单独进入第二阶段生成 prompt。`,
+            `directionPlans 每一项必须包含 sourceDirectionPath、currentJudgment、exclusionSummary、extensions；extensions 默认 ${directionPlanConfig.candidateExtensionsPerSource} 个候选，每个 extension 必须包含 extensionKey、extensionType、name、description、visualHook、dedupeReason、riskNote、productionAdvice。`,
+            `candidateDirections 是兼容旧解析器的扁平字段，只放最终推荐延展方向即可；第一阶段不要在 candidateDirections 里写 prompts。`,
+            'candidateDirections 每一项必须包含 type、sourcePath、targetLevel、label、description、dimensions、duplicateRisk、reason。dimensions 必须包含 mood、perspective、time、narrative、scale、material、subjectRelation、hook。',
             expansionTargets.length
-                ? `本次必须逐个执行 creativeTargets：总计 ${expansionTargets.length} 个原始方向、${totalNewDirectionCount} 个新方向、${totalExpectedPromptCount} 条 prompt。每个原始方向的行数和 prompt 数必须严格按该 target 的“数量约束”执行。`
-                : '默认输出 3 个新方向，每个新方向 4 条 prompt，共 12 条 prompt。',
+                ? `本次必须逐个执行 creativeTargets：总计 ${expansionTargets.length} 个原始方向。每个原始方向先产候选延展池，再由后台自动筛选；最终推荐数量和 prompt 数参考 target 的“数量约束”。`
+                : `默认后台候选 ${directionPlanConfig.candidateExtensionsPerSource} 个延展，自动入选 ${directionPlanConfig.selectedExtensionsPerSource} 个延展；入选后第二阶段再为每个延展生成 ${directionPlanConfig.promptsPerExtension} 条 prompt，最终约 ${directionPlanConfig.selectedExtensionsPerSource * directionPlanConfig.promptsPerExtension} 条 prompt。`,
             '新方向之间的差异要明显拉开，但不能脱离当前《无尽冬日》冰封末世、3D 卡通广告图、买量素材体系。至少在场景机制、人物关系、危机/奖励道具、镜头距离/角度中改变两项，禁止只改同义词或轻微换景。',
             '即使原始方向是“物品展示/静物展示”，每个新方向也必须至少绑定一个动态关系或行动机制，例如发现、争夺、护送、抢救、交换、撤离、守护或倒计时选择；不要只写物品静置特写。',
-            '同一新方向下的不同 prompt 也要有更大的画面差异：每条 prompt 必须使用不同的动作节点、镜头景别、前景道具、空间位置或情绪冲突，同时保留该新方向的核心卖点和可读广告点击点。',
+            '同一候选池内的新方向要有更大的画面差异：不同方向必须使用不同的动作节点、镜头景别、前景道具、空间位置或情绪冲突，同时保留该新方向的核心卖点和可读广告点击点。',
             '所有变化必须仍符合当前体系：冰雪末世求生、明确危险或奖励关系、主体动作清楚、商业级 3D 卡通游戏广告风格，不要漂移到无关题材、写实品牌、纯风景或无法转化的抽象画面。',
             expansionTargets.length
                 ? '不要把一个原始方向改写成另一个方向；每一行“参考方向”必须填写对应 target 的原始方向路径。某个 target 只要求 3 条 prompt 时，不要为了填满表头硬补无效提示词。'
                 : '',
-            '每条 prompt 必须是中文完整长提示词，可直接给 Legil 生成 1:1 方图。'
+            `最终 prompt 数量目标为入选后每个方向 ${directionPlanConfig.promptsPerExtension} 条，但第一阶段不要生成这些 prompt。`
         ];
 
         lines.push(
             '',
             '# Current Automation Contract',
             'Output JSON only for this run. Do not output Markdown tables, Excel tables, CSV tables, or spreadsheet-ready tables.',
-            'The JSON top-level object must contain candidateDirections.',
-            'Each candidateDirections item must contain: type, sourcePath, targetLevel, label, description, dimensions, duplicateRisk, reason, prompts.',
+            'The JSON top-level object must contain directionPlans and candidateDirections.',
+            'Stage 1 is direction-only. Do not output promptPair, prompts, finalPrompt, or long image-generation prompts.',
+            'directionPlans[].extensions[] must include name, description, visualHook, dedupeReason, riskNote, and productionAdvice.',
+            'Each candidateDirections item must contain: type, sourcePath, targetLevel, label, description, dimensions, duplicateRisk, reason.',
             'dimensions must include mood, perspective, time, narrative, scale, material, subjectRelation, hook.',
-            'prompts must be 1-5 objects, each with title and prompt. The prompt field must be the complete final image-generation prompt.'
+            '',
+            '# Fast Response Contract',
+            'Prefer a compact JSON response so the automation can continue quickly.',
+            'Do not set directionPlans to []; directionPlans[].extensions[] is the primary candidate pool for scoring.',
+            `DirectionPlans candidate target for this run is ${expansionTargets.length ? totalCandidateDirectionCount : directionPlanConfig.candidateExtensionsPerSource} extensions total; use each target's candidate count when creativeTargets are present.`,
+            `candidateDirections is only a compatibility mirror of the best ${Math.max(1, totalNewDirectionCount || directionPlanConfig.selectedExtensionsPerSource)} directions; the backend will score directionPlans first.`,
+            `Do not include prompts in candidateDirections; promptsPerDirection=${Math.max(1, expansionTargets[0]?.promptGroupsPerNewDirection || directionPlanConfig.promptsPerExtension)} is for the backend second stage.`,
+            'Keep each direction candidate concise but visually complete.'
         );
 
         return lines.join('\n');
@@ -1942,6 +2952,677 @@ function createCreativeAutoService(options = {}) {
                     selfCheck: item.selfCheck
                 }))
             }
+        };
+    }
+
+    function shouldUseMaxCompletionTokensForRepair(model = '') {
+        return /\bgpt-5\b|\bo[134]\b|reasoning/i.test(String(model || ''));
+    }
+
+    function extractWinkyRepairText(data) {
+        const choice = data && Array.isArray(data.choices) ? data.choices[0] : null;
+        const message = choice && choice.message ? choice.message : {};
+        const content = message.content !== undefined ? message.content : (choice && choice.text);
+        if (Array.isArray(content)) {
+            return content.map(part => {
+                if (typeof part === 'string') return part;
+                if (part && typeof part === 'object') {
+                    return part.text || part.content || '';
+                }
+                return '';
+            }).join('\n').trim();
+        }
+        return String(content || '').trim();
+    }
+
+    function buildRepairJsonPayload({ model, provider, messages, maxTokens = 9000, temperature = 0.62 }) {
+        const payload = {
+            model,
+            messages,
+            stream: false,
+            response_format: { type: 'json_object' }
+        };
+        if (shouldUseMaxCompletionTokensForRepair(model)) {
+            payload.max_completion_tokens = maxTokens;
+        } else {
+            payload.temperature = temperature;
+            payload.max_tokens = maxTokens;
+        }
+        if (provider) {
+            payload.provider = provider;
+        }
+        return payload;
+    }
+
+    async function callWinkyRepairJson({ winkyConfig = {}, messages = [], timeout = 10 * 60 * 1000 }) {
+        if (!winkyConfig.apiKey || !winkyConfig.apiUrl || !winkyConfig.model) {
+            throw new Error('Winky 修复调用缺少 API Key、API URL 或模型');
+        }
+        const client = options.axios || axios;
+        const response = await client.post(
+            winkyConfig.apiUrl,
+            buildRepairJsonPayload({
+                model: winkyConfig.model,
+                provider: winkyConfig.provider,
+                messages
+            }),
+            {
+                timeout,
+                headers: {
+                    Authorization: `Bearer ${winkyConfig.apiKey}`,
+                    'Content-Type': 'application/json'
+                }
+            }
+        );
+        const text = extractWinkyRepairText(response && response.data);
+        if (!text) {
+            throw new Error('Winky 修复调用返回为空');
+        }
+        return text;
+    }
+
+    function compactRepairPromptItem(item = {}) {
+        return {
+            index: item.index || '',
+            direction: item.newDirectionName || item.direction || item.extensionName || '',
+            promptTitle: item.promptTitle || '',
+            visualHook: item.visualHook || '',
+            score: item.directionPlanScore || '',
+            scoreSummary: item.directionPlanScoreSummary || ''
+        };
+    }
+
+    const REPAIR_FORBIDDEN_TERM_REPLACEMENTS = {
+        '真实品牌': '商标水印',
+        '品牌 logo': '商标标识',
+        '品牌logo': '商标标识',
+        '强赛博': '过强科幻感',
+        '高科技 UI': '科幻操作屏',
+        '高科技UI': '科幻操作屏',
+        '悬浮设备': '漂浮装置',
+        '机甲': '重型装甲装置',
+        '激光界面': '发光屏幕',
+        '大面积英文': '复杂字母标语',
+        '枪支': '危险道具',
+        '重军事': '重型对抗',
+        '军事': '对抗',
+        '血腥': '不适画面',
+        '过度血腥': '过度不适画面'
+    };
+
+    function escapeRegExp(value = '') {
+        return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+
+    function sanitizeRepairForbiddenText(value = '', forbiddenTerms = []) {
+        let text = String(value || '');
+        safeArray(forbiddenTerms)
+            .map(term => String(term || '').trim())
+            .filter(Boolean)
+            .sort((a, b) => b.length - a.length)
+            .forEach(term => {
+                const replacement = REPAIR_FORBIDDEN_TERM_REPLACEMENTS[term] || '风险元素';
+                text = text.replace(new RegExp(escapeRegExp(term), 'g'), replacement);
+            });
+        Object.entries(REPAIR_FORBIDDEN_TERM_REPLACEMENTS).forEach(([term, replacement]) => {
+            text = text.replace(new RegExp(escapeRegExp(term), 'g'), replacement);
+        });
+        return text.replace(/\s+/g, ' ').trim();
+    }
+
+    function buildRepairRiskPolicy(forbiddenTerms = []) {
+        return [
+            '最终 prompt 只描述应该出现在画面里的内容，不写“避免/不要/禁止”这类负面排除句。',
+            '风险元素统一改写为安全表达：商标水印、复杂字母标语、科幻操作屏、重型装甲装置、危险道具、重型对抗、过度不适画面都不要作为画面主体出现。',
+            `内部禁用词已重写为安全表达：${sanitizeRepairForbiddenText(safeArray(forbiddenTerms).join('、'), forbiddenTerms)}`
+        ].join('\n');
+    }
+
+    function sanitizeRepairPromptItem(item = {}, forbiddenTerms = []) {
+        const next = { ...item };
+        ['prompt', 'finalPrompt', 'promptText', 'sourcePrompt'].forEach(key => {
+            if (next[key]) {
+                next[key] = sanitizeRepairForbiddenText(next[key], forbiddenTerms);
+            }
+        });
+        ['direction', 'newDirectionName', 'contentTitle', 'outputNameBase', 'promptTitle'].forEach(key => {
+            if (next[key]) {
+                next[key] = sanitizeRepairForbiddenText(next[key], forbiddenTerms);
+            }
+        });
+        return next;
+    }
+
+    function targetAcceptedPromptCount({ quota = {}, payload = {}, config = {} }) {
+        const planConfig = buildDirectionPlanConfig(payload, config);
+        const planTarget = Math.max(1, planConfig.selectedExtensionsPerSource * planConfig.promptsPerExtension);
+        if (quota.unlimitedPrompts) {
+            return planTarget;
+        }
+        const quotaMax = Math.max(0, Number(quota.maxPrompts) || 0);
+        return quotaMax > 0 ? Math.max(1, Math.min(planTarget, quotaMax)) : planTarget;
+    }
+
+    function buildDirectionRepairMessages({ selected, payload, config, run, directionPlanReport, promptQualityReport, acceptedPrompts, targetPromptCount, attemptIndex, directionOnly = false }) {
+        const direction = selected && selected.direction ? selected.direction : {};
+        const planConfig = buildDirectionPlanConfig(payload, config);
+        const forbiddenTerms = buildForbiddenTerms({
+            direction,
+            payload,
+            config
+        });
+        const repairRiskPolicy = buildRepairRiskPolicy(forbiddenTerms);
+        const acceptedNames = uniqueStrings(safeArray(acceptedPrompts).map(item => item.newDirectionName || item.direction || item.extensionName));
+        const rejectedExtensions = safeArray(directionPlanReport && directionPlanReport.rejectedExtensions)
+            .slice(0, 10)
+            .map(item => ({
+                ...item,
+                name: sanitizeRepairForbiddenText(item.name, forbiddenTerms),
+                extensionKey: sanitizeRepairForbiddenText(item.extensionKey, forbiddenTerms),
+                reason: sanitizeRepairForbiddenText(item.reason, forbiddenTerms)
+            }));
+        const rejectedPrompts = safeArray(promptQualityReport && promptQualityReport.rejectedPrompts)
+            .slice(0, 12)
+            .map(item => ({
+                direction: sanitizeRepairForbiddenText(item.newDirectionName || item.direction || '', forbiddenTerms),
+                promptTitle: sanitizeRepairForbiddenText(item.promptTitle || '', forbiddenTerms),
+                reason: item.reason || '',
+                message: sanitizeRepairForbiddenText(item.message || '', forbiddenTerms)
+            }));
+        const acceptedCompact = safeArray(acceptedPrompts)
+            .slice(0, 12)
+            .map(item => sanitizeRepairPromptItem(compactRepairPromptItem(item), forbiddenTerms));
+        const missingPromptCount = Math.max(0, targetPromptCount - safeArray(acceptedPrompts).length);
+
+        const systemPrompt = [
+            '你是自动创意修复 Agent，只负责为后台自动化补生成或重写失败的方向规划。',
+            '只输出严格 JSON object，不要 Markdown，不要代码块，不要解释。',
+            'JSON 顶层必须包含 directionPlans 和 candidateDirections。',
+            directionOnly
+                ? 'directionPlans[].extensions[] 必须包含 extensionKey、extensionType、name、description、visualHook、dedupeReason、riskNote、productionAdvice；不要包含 promptPair。'
+                : 'directionPlans[].extensions[] 必须包含 extensionKey、extensionType、name、description、visualHook、dedupeReason、riskNote、productionAdvice、promptPair。',
+            directionOnly
+                ? '本轮是方向级修复：只补短方向候选，不要生成 promptPair、prompts、finalPrompt 或长生图提示词。'
+                : `Each extension.promptPair must contain exactly ${planConfig.promptsPerExtension} complete Chinese prompts.`,
+            directionOnly
+                ? '入选方向的 prompt 会在第二阶段单独生成；这里请把 visualHook、dedupeReason、productionAdvice 写完整。'
+                : '每个 promptPair 的条数必须跟当前 promptsPerExtension 一致，并包含 主题、画风、情绪氛围、画面内容、整体基调。',
+            '不要复用已接受方向名，不要重复被淘汰方向的问题，不要输出抽象方向名。',
+            '最终 prompt 字段只能写正向画面描述，不要写任何“避免/不要/禁止/不能出现”排除句，也不要复述风险词清单。'
+        ].join('\n');
+        const userPrompt = [
+            '# 修复任务',
+            `这是第 ${attemptIndex + 1} 轮自动修复。当前目标至少保留 ${targetPromptCount} 条 prompt，还缺 ${missingPromptCount} 条。`,
+            directionOnly
+                ? `请补生成 ${planConfig.candidateExtensionsPerSource} 个新的短候选延展方向，不要写 promptPair。`
+                : `请补生成 ${Math.max(planConfig.selectedExtensionsPerSource, Math.ceil(missingPromptCount / Math.max(1, planConfig.promptsPerExtension)) + 2)} 个新的候选延展方向，每个延展 ${planConfig.promptsPerExtension} 条 promptPair。`,
+            '',
+            '# 当前原始方向',
+            JSON.stringify({
+                id: direction.id || '',
+                path: direction.path || '',
+                name: direction.name || '',
+                description: direction.description || '',
+                tags: [direction.primaryTag, direction.secondaryTag, direction.tertiaryTag, direction.subTag].filter(Boolean),
+                mustKeep: direction.mustKeep || '',
+                riskPolicy: repairRiskPolicy
+            }, null, 2),
+            '',
+            '# 已接受内容，禁止复用或近似改写',
+            JSON.stringify({
+                acceptedNames,
+                acceptedPrompts: acceptedCompact
+            }, null, 2),
+            '',
+            '# Direction Plan Gate 淘汰原因',
+            JSON.stringify({
+                summary: directionPlanReport && directionPlanReport.summary,
+                qualifiedExtensionCount: directionPlanReport && directionPlanReport.qualifiedExtensionCount,
+                targetSelectedExtensionCount: directionPlanReport && directionPlanReport.targetSelectedExtensionCount,
+                lowScoreSelectedExtensions: safeArray(directionPlanReport && directionPlanReport.lowScoreSelectedExtensions),
+                rejectedExtensions
+            }, null, 2),
+            '',
+            '# Prompt Gate 拒绝原因',
+            JSON.stringify({
+                rejectionSummary: promptQualityReport && promptQualityReport.rejectionSummary,
+                rejectedPrompts
+            }, null, 2),
+            '',
+            '# 输出要求',
+            `0. This is direction-level repair: optimize or regenerate candidate extensions so at least ${planConfig.selectedExtensionsPerSource} directions score >= ${planConfig.minScore}. Do not merely add prompt text under weak directions.`,
+            `0.1 Generate up to ${planConfig.candidateExtensionsPerSource} candidate extensions if needed; the backend will select the best ${planConfig.selectedExtensionsPerSource}.`,
+            directionOnly ? '0.2 Direction-only repair: do not output promptPair/prompts/finalPrompt in this round.' : '',
+            '1. 只补新候选，不要重复已接受方向名。',
+            '2. 方向名称必须具体到一个可见事件，不要写“氛围感/主题拓展/高级感”。',
+            '3. 每个 extension 必须写清 visualHook 和 dedupeReason。',
+            directionOnly
+                ? '4. 第一阶段只写方向结构字段，不写 prompt 字段。'
+                : '4. prompt 字段只写正向画面内容，不写风险排除句，不写禁用词字面量，不复述风险清单。',
+            '5. 仍然保持冰封末世、资源稀缺、现实废土、高质量3D卡通商业广告海报风格。',
+            '',
+            '# 兼容字段',
+            'candidateDirections 只放你认为最值得进入旧解析器的最终推荐延展。'
+        ].join('\n');
+
+        return [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt }
+        ];
+    }
+
+    async function generateDirectionRepairPrompts({ selected, payload, config, run, directionPlanReport, promptQualityReport, acceptedPrompts, targetPromptCount, attemptIndex, winkyConfig, directionOnly = false }) {
+        const startedAt = new Date().toISOString();
+        const report = {
+            attempt: attemptIndex + 1,
+            startedAt,
+            completedAt: '',
+            success: false,
+            generatedPromptCount: 0,
+            directionPlanCount: 0,
+            error: ''
+        };
+        try {
+            const text = await callWinkyRepairJson({
+                winkyConfig,
+                messages: buildDirectionRepairMessages({
+                    selected,
+                    payload,
+                    config,
+                    run,
+                    directionPlanReport,
+                    promptQualityReport,
+                    acceptedPrompts,
+                    targetPromptCount,
+                    attemptIndex,
+                    directionOnly
+                })
+            });
+            const directionPlans = extractDirectionPlansFromText(text);
+            const forbiddenTerms = buildForbiddenTerms({
+                direction: selected && selected.direction ? selected.direction : {},
+                payload,
+                config
+            });
+            const prompts = flattenDirectionPlansToPromptItems(directionPlans)
+                .map((item, index) => ({
+                    ...sanitizeRepairPromptItem(item, forbiddenTerms),
+                    index: index + 1,
+                    repairAttempt: attemptIndex + 1,
+                    source: 'direction-plan-repair'
+                }));
+            report.completedAt = new Date().toISOString();
+            report.success = prompts.length > 0 || directionPlans.length > 0;
+            report.generatedPromptCount = prompts.length;
+            report.directionPlanCount = directionPlans.length;
+            return {
+                prompts,
+                directionPlans,
+                rawText: text,
+                report
+            };
+        } catch (error) {
+            report.completedAt = new Date().toISOString();
+            report.error = error.message || String(error);
+            return {
+                prompts: [],
+                directionPlans: [],
+                rawText: '',
+                report
+            };
+        }
+    }
+
+    function compactDirectionExtensionForPromptStage(extension = {}) {
+        return {
+            sourceDirectionId: extension.sourceDirectionId || '',
+            sourceDirectionPath: extension.sourceDirectionPath || '',
+            extensionKey: extension.extensionKey || '',
+            extensionType: extension.extensionType || '',
+            name: extension.name || extension.extensionName || extension.newDirectionName || '',
+            description: extension.description || extension.extensionDescription || '',
+            visualHook: extension.visualHook || '',
+            dedupeReason: extension.dedupeReason || '',
+            riskNote: extension.riskNote || '',
+            productionAdvice: extension.productionAdvice || '',
+            dimensions: extension.dimensions || {},
+            directionPlanScore: extension.score || extension.directionPlanScore || '',
+            directionPlanScoreSummary: extension.scoreSummary || extension.directionPlanScoreSummary || ''
+        };
+    }
+
+    function buildSelectedDirectionPromptMessages({ selected, payload, config, directionPlanGate }) {
+        const direction = selected && selected.direction ? selected.direction : {};
+        const planConfig = buildDirectionPlanConfig(payload, config);
+        const forbiddenTerms = buildForbiddenTerms({
+            direction,
+            payload,
+            config
+        });
+        const selectedExtensions = safeArray(directionPlanGate && directionPlanGate.selectedExtensions)
+            .map(compactDirectionExtensionForPromptStage);
+        const systemPrompt = [
+            '你是 Legil 生图提示词生成 Agent。',
+            '只输出严格 JSON object，不要 Markdown，不要代码块，不要解释。',
+            '你只负责给已经通过 Direction Plan Gate 的入选方向生成完整 promptPair；不要新增方向、不要改方向名。',
+            'JSON 顶层必须包含 directionPlans。directionPlans[].extensions[] 必须和输入 selectedExtensions 一一对应。',
+            `每个 extension.promptPair 必须正好 ${planConfig.promptsPerExtension} 条中文完整长 prompt。`,
+            'prompt 字段只写正向画面内容，不写“避免/不要/禁止/不能出现”排除句，也不要复述风险词清单。'
+        ].join('\n');
+        const userPrompt = [
+            '# 原始方向',
+            JSON.stringify({
+                id: direction.id || '',
+                path: direction.path || '',
+                name: direction.name || '',
+                description: direction.description || '',
+                tags: [direction.primaryTag, direction.secondaryTag, direction.tertiaryTag, direction.subTag].filter(Boolean)
+            }, null, 2),
+            '',
+            '# 入选方向',
+            JSON.stringify({
+                promptsPerExtension: planConfig.promptsPerExtension,
+                selectedExtensions
+            }, null, 2),
+            '',
+            '# 生成要求',
+            [
+                `1. 必须只为上面的 ${selectedExtensions.length} 个 selectedExtensions 生成 promptPair。`,
+                `2. 每个 promptPair 正好 ${planConfig.promptsPerExtension} 条；不要多，不要少。`,
+                '3. 每条 prompt 必须是一段自然中文镜头描述，不要写“主题：/画风：/画面内容：/核心构图：”字段模板。',
+                '4. 同一方向下的多条 prompt 必须在主体组合、动作机制、镜头角度、空间结构、前景道具、光线方案、情绪瞬间或广告钩子中至少改变两项。',
+                '5. 保留每个方向的 visualHook、dedupeReason、riskNote、productionAdvice，不要改写方向名称。',
+                `6. 遵守当前提示词风格：${getCreativePromptStyle(config.creativePromptStyle).label}；不要把比例、分辨率、输出数量写进 prompt。`,
+                buildStyleInstruction(config.creativePromptStyle),
+                forbiddenTerms.length
+                    ? `7. 内部风险词只用于规避，不要写进 prompt 字面：${sanitizeRepairForbiddenText(forbiddenTerms.join('、'), forbiddenTerms)}`
+                    : ''
+            ].filter(Boolean).join('\n'),
+            '',
+            '# 输出 JSON schema',
+            JSON.stringify({
+                directionPlans: [{
+                    sourceDirectionPath: direction.path || '',
+                    extensions: selectedExtensions.map((extension, index) => ({
+                        extensionKey: extension.extensionKey || `selected-${index + 1}`,
+                        extensionType: extension.extensionType || 'selected',
+                        name: extension.name,
+                        description: extension.description,
+                        visualHook: extension.visualHook,
+                        dedupeReason: extension.dedupeReason,
+                        riskNote: extension.riskNote,
+                        productionAdvice: extension.productionAdvice,
+                        promptPair: Array.from({ length: planConfig.promptsPerExtension }, (_, promptIndex) => ({
+                            title: `提示词${promptIndex + 1}`,
+                            prompt: '完整中文提示词'
+                        }))
+                    }))
+                }]
+            }, null, 2)
+        ].join('\n');
+
+        return [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt }
+        ];
+    }
+
+    async function generatePromptsForSelectedDirections({ selected, payload, config, directionPlanGate, winkyConfig }) {
+        const startedAt = new Date().toISOString();
+        const report = {
+            startedAt,
+            completedAt: '',
+            success: false,
+            selectedExtensionCount: safeArray(directionPlanGate && directionPlanGate.selectedExtensions).length,
+            generatedPromptCount: 0,
+            directionPlanCount: 0,
+            error: ''
+        };
+        try {
+            const text = await callWinkyRepairJson({
+                winkyConfig,
+                messages: buildSelectedDirectionPromptMessages({
+                    selected,
+                    payload,
+                    config,
+                    directionPlanGate
+                })
+            });
+            const directionPlans = extractDirectionPlansFromText(text);
+            const forbiddenTerms = buildForbiddenTerms({
+                direction: selected && selected.direction ? selected.direction : {},
+                payload,
+                config
+            });
+            const prompts = flattenDirectionPlansToPromptItems(directionPlans)
+                .map((item, index) => ({
+                    ...sanitizeRepairPromptItem(item, forbiddenTerms),
+                    index: index + 1,
+                    source: 'selected-direction-prompt-stage'
+                }));
+            report.completedAt = new Date().toISOString();
+            report.success = prompts.length > 0;
+            report.generatedPromptCount = prompts.length;
+            report.directionPlanCount = directionPlans.length;
+            return {
+                prompts,
+                directionPlans,
+                rawText: text,
+                report
+            };
+        } catch (error) {
+            report.completedAt = new Date().toISOString();
+            report.error = error.message || String(error);
+            return {
+                prompts: [],
+                directionPlans: [],
+                rawText: '',
+                report
+            };
+        }
+    }
+
+    async function selectDirectionPlansWithRepair({ directionPlans, selected, payload, config, store, run, winkyConfig }) {
+        const planConfig = buildDirectionPlanConfig(payload, config);
+        const targetPromptCount = targetAcceptedPromptCount({ quota: { unlimitedPrompts: true }, payload, config });
+        const maxRepairAttempts = Math.max(0, Number(planConfig.maxRepairAttempts) || 0);
+        let candidateDirectionPlans = safeArray(directionPlans).slice();
+        let directionPlanGate = null;
+        const repairReport = {
+            enabled: maxRepairAttempts > 0,
+            maxRepairAttempts,
+            attempts: [],
+            generatedPromptCount: 0,
+            finalQualifiedExtensionCount: 0,
+            finalSelectedExtensionCount: 0,
+            finalSelectedBelowMinScoreCount: 0,
+            lowScoreFallbackUsed: false,
+            candidatePoolFallbackUsed: false,
+            success: false,
+            summary: ''
+        };
+
+        for (let attemptIndex = 0; attemptIndex <= maxRepairAttempts; attemptIndex += 1) {
+            directionPlanGate = selectDirectionPlanExtensions({
+                directionPlans: candidateDirectionPlans,
+                selected,
+                payload,
+                config,
+                historyUsage: collectDirectionPlanHistoryUsage(store, run, selected, payload, config)
+            });
+
+            const directionReport = directionPlanGate.directionPlanReport || {};
+            if (directionReport.needsRepair !== true || attemptIndex >= maxRepairAttempts) {
+                break;
+            }
+
+            const acceptedExtensions = safeArray(directionPlanGate.selectedExtensions)
+                .filter(item => Number(item.score) >= planConfig.minScore)
+                .map(compactDirectionExtensionForPromptStage);
+            const repair = await generateDirectionRepairPrompts({
+                selected,
+                payload,
+                config,
+                run,
+                directionPlanReport: directionReport,
+                promptQualityReport: null,
+                acceptedPrompts: acceptedExtensions,
+                targetPromptCount,
+                attemptIndex,
+                winkyConfig,
+                directionOnly: true
+            });
+            repairReport.attempts.push(repair.report);
+            repairReport.generatedPromptCount += repair.report.generatedPromptCount || 0;
+            if (logger && typeof logger.info === 'function') {
+                logger.info(repair.report.success
+                    ? `Direction candidate repair attempt ${repair.report.attempt}: generated ${repair.report.directionPlanCount} direction plan candidates`
+                    : `Direction candidate repair attempt ${repair.report.attempt} failed: ${repair.report.error || 'no direction plans generated'}`);
+            }
+            if (!safeArray(repair.directionPlans).length) {
+                break;
+            }
+            candidateDirectionPlans = candidateDirectionPlans.concat(repair.directionPlans);
+        }
+
+        const finalReport = directionPlanGate && directionPlanGate.directionPlanReport
+            ? directionPlanGate.directionPlanReport
+            : {};
+        repairReport.finalQualifiedExtensionCount = finalReport.qualifiedExtensionCount || 0;
+        repairReport.finalSelectedExtensionCount = finalReport.selectedExtensionCount || 0;
+        repairReport.finalSelectedBelowMinScoreCount = finalReport.selectedBelowMinScoreCount || 0;
+        repairReport.lowScoreFallbackUsed = finalReport.fallbackLowScoreUsed === true;
+        repairReport.candidatePoolFallbackUsed = finalReport.candidatePoolComplete === false;
+        repairReport.success = safeArray(directionPlanGate && directionPlanGate.selectedExtensions).length > 0;
+        repairReport.summary = repairReport.attempts.length
+            ? `方向候选修复 ${repairReport.attempts.length} 轮，70分方向 ${repairReport.finalQualifiedExtensionCount}/${planConfig.selectedExtensionsPerSource}${repairReport.lowScoreFallbackUsed || repairReport.candidatePoolFallbackUsed ? '，三轮后兜底' : ''}`
+            : `方向候选无需修复，70分方向 ${repairReport.finalQualifiedExtensionCount}/${planConfig.selectedExtensionsPerSource}${repairReport.lowScoreFallbackUsed || repairReport.candidatePoolFallbackUsed ? '，兜底' : ''}`;
+
+        return {
+            directionPlanGate,
+            repairReport,
+            directionPlans: candidateDirectionPlans
+        };
+    }
+
+    async function applyPromptGatesWithRepair({ translation, selected, quota, store, run, payload, config, memoryRules, winkyConfig, skipDirectionRepair = false }) {
+        const basePlanConfig = buildDirectionPlanConfig(payload, config);
+        const gatePayload = skipDirectionRepair
+            ? {
+                ...(payload || {}),
+                directionPlanning: {
+                    ...((payload && payload.directionPlanning) || {}),
+                    candidateExtensionsPerSource: basePlanConfig.selectedExtensionsPerSource
+                }
+            }
+            : payload;
+        const planConfig = buildDirectionPlanConfig(gatePayload, config);
+        const targetPromptCount = targetAcceptedPromptCount({ quota, payload, config });
+        const maxRepairAttempts = skipDirectionRepair
+            ? 0
+            : Math.max(0, Number(planConfig.maxRepairAttempts) || 0);
+        let candidatePrompts = safeArray(translation.prompts).slice();
+        let directionPlanGate = null;
+        let gate = null;
+        const repairReport = {
+            enabled: maxRepairAttempts > 0,
+            targetPromptCount,
+            maxRepairAttempts,
+            attempts: [],
+            generatedPromptCount: 0,
+            finalAcceptedPromptCount: 0,
+            success: false,
+            summary: ''
+        };
+
+        for (let attemptIndex = 0; attemptIndex <= maxRepairAttempts; attemptIndex += 1) {
+            directionPlanGate = selectDirectionExtensions({
+                prompts: candidatePrompts,
+                selected,
+                payload: gatePayload,
+                config,
+                historyUsage: collectDirectionPlanHistoryUsage(store, run, selected, gatePayload, config)
+            });
+            gate = applyPromptGate({
+                prompts: directionPlanGate.prompts,
+                selected,
+                quota,
+                store,
+                runId: run.runId,
+                payload: gatePayload,
+                config,
+                memoryRules
+            });
+
+            const directionReport = directionPlanGate.directionPlanReport || {};
+            const directionPlanReady = directionReport.needsRepair !== true
+                && Number(directionReport.selectedExtensionCount) >= planConfig.selectedExtensionsPerSource;
+            const promptGateReady = gate.prompts.length >= targetPromptCount;
+
+            if ((promptGateReady && directionPlanReady) || attemptIndex >= maxRepairAttempts) {
+                break;
+            }
+
+            const scoreRepairNeeded = Number(directionReport.qualifiedExtensionCount) < planConfig.selectedExtensionsPerSource;
+            const acceptedPromptsForRepair = scoreRepairNeeded
+                ? gate.prompts.filter(item => Number(item.directionPlanScore) >= planConfig.minScore)
+                : gate.prompts;
+
+            const repair = await generateDirectionRepairPrompts({
+                selected,
+                payload,
+                config,
+                run,
+                directionPlanReport: directionPlanGate.directionPlanReport,
+                promptQualityReport: gate.promptQualityReport,
+                acceptedPrompts: acceptedPromptsForRepair,
+                targetPromptCount,
+                attemptIndex,
+                winkyConfig
+            });
+            repairReport.attempts.push(repair.report);
+            repairReport.generatedPromptCount += repair.report.generatedPromptCount || 0;
+            if (logger && typeof logger.info === 'function') {
+                logger.info(repair.report.success
+                    ? `Direction repair attempt ${repair.report.attempt}: generated ${repair.report.generatedPromptCount} prompt candidates`
+                    : `Direction repair attempt ${repair.report.attempt} failed: ${repair.report.error || 'no prompts generated'}`);
+            }
+            if (!repair.prompts.length) {
+                break;
+            }
+            candidatePrompts = candidatePrompts.concat(repair.prompts);
+        }
+
+        repairReport.finalAcceptedPromptCount = gate && gate.prompts ? gate.prompts.length : 0;
+        repairReport.finalQualifiedExtensionCount = directionPlanGate && directionPlanGate.directionPlanReport
+            ? directionPlanGate.directionPlanReport.qualifiedExtensionCount
+            : 0;
+        repairReport.finalSelectedExtensionCount = directionPlanGate && directionPlanGate.directionPlanReport
+            ? directionPlanGate.directionPlanReport.selectedExtensionCount
+            : 0;
+        repairReport.finalSelectedBelowMinScoreCount = directionPlanGate && directionPlanGate.directionPlanReport
+            ? directionPlanGate.directionPlanReport.selectedBelowMinScoreCount
+            : 0;
+        repairReport.directionPlanPassed = directionPlanGate && directionPlanGate.directionPlanReport
+            ? directionPlanGate.directionPlanReport.needsRepair !== true
+            : false;
+        repairReport.lowScoreFallbackUsed = directionPlanGate && directionPlanGate.directionPlanReport
+            ? directionPlanGate.directionPlanReport.fallbackLowScoreUsed === true
+            : false;
+        repairReport.candidatePoolFallbackUsed = directionPlanGate && directionPlanGate.directionPlanReport
+            ? directionPlanGate.directionPlanReport.candidatePoolComplete === false
+            : false;
+        repairReport.success = repairReport.finalAcceptedPromptCount >= targetPromptCount;
+        repairReport.summary = skipDirectionRepair
+            ? `二阶段方向候选已预筛，跳过 prompt 阶段补候选；最终接受 ${repairReport.finalAcceptedPromptCount}/${targetPromptCount} 条`
+            : (repairReport.attempts.length
+            ? `自动修复 ${repairReport.attempts.length} 轮，补候选 ${repairReport.generatedPromptCount} 条，最终接受 ${repairReport.finalAcceptedPromptCount}/${targetPromptCount} 条，70分方向 ${repairReport.finalQualifiedExtensionCount}/${planConfig.selectedExtensionsPerSource}${repairReport.lowScoreFallbackUsed || repairReport.candidatePoolFallbackUsed ? '，三轮后兜底' : ''}`
+            : `无需自动修复，最终接受 ${repairReport.finalAcceptedPromptCount}/${targetPromptCount} 条，70分方向 ${repairReport.finalQualifiedExtensionCount}/${planConfig.selectedExtensionsPerSource}${repairReport.lowScoreFallbackUsed || repairReport.candidatePoolFallbackUsed ? '，兜底' : ''}`);
+
+        return {
+            directionPlanGate,
+            gate,
+            repairReport
         };
     }
 
@@ -2122,6 +3803,59 @@ function createCreativeAutoService(options = {}) {
         });
     }
 
+    function notifyCreativeTargetQueueFinal(queue = {}, previousRun = {}) {
+        const summary = publicTargetQueue(queue) || {};
+        if (!summary.queueId) {
+            return;
+        }
+
+        const totalTargets = Number(summary.totalTargets) || safeArray(queue.targets).length;
+        const completedTargets = Number(summary.completedTargets) || safeArray(queue.completedTargetIds).length;
+        const skippedTargets = safeArray(summary.skippedTargets).length;
+        const failedRuns = safeArray(queue.failedRunIds).length;
+        const expectedPrompts = Number(summary.totalExpectedPromptCount) || 0;
+        const rawPrompts = Number(summary.rawPromptCount) || 0;
+        const acceptedPrompts = Number(summary.acceptedPromptCount) || 0;
+        const rejectedPrompts = Number(summary.rejectedPromptCount) || 0;
+        const failedPrompts = Number(summary.failedPromptCount) || 0;
+        const savedImages = Number(summary.savedImageCount) || 0;
+        const hasRunStats = Object.keys(queue.runStatsById || {}).length > 0;
+        const promptText = expectedPrompts > 0
+            ? `${acceptedPrompts}/${expectedPrompts}`
+            : `${acceptedPrompts}`;
+        const savedText = hasRunStats ? `${savedImages} 张` : '见运行中心';
+        const queueLine = skippedTargets > 0
+            ? `队列：${completedTargets}/${totalTargets}，跳过 ${skippedTargets}`
+            : `队列：${completedTargets}/${totalTargets}`;
+        const promptLine = `提示词：通过 ${promptText}，拒绝 ${rejectedPrompts}${rawPrompts > 0 ? `，原始 ${rawPrompts}` : ''}`;
+        const outputLine = `产图：失败 ${failedPrompts}，保存 ${savedText}`;
+        const extraLines = [
+            queueLine,
+            promptLine,
+            outputLine,
+            failedRuns > 0 ? `异常 run：${failedRuns}` : '',
+            previousRun && previousRun.config && previousRun.config.outputFolder ? `输出目录：${previousRun.config.outputFolder}` : '',
+            `queueId：${summary.queueId}`
+        ].filter(Boolean);
+
+        notifyCreativeAutoEvent({
+            level: failedRuns > 0 ? 'warning' : 'info',
+            title: failedRuns > 0 ? '创意队列完成，含异常' : '创意队列已完成',
+            taskType: '创意目标队列',
+            progress: queueLine,
+            message: skippedTargets > 0
+                ? `全部可运行目标已处理，跳过 ${skippedTargets} 个目标。`
+                : '全部目标已处理完成。',
+            suggestion: '可进入知识库审核资产，或继续交付处理。',
+            extraLines
+        }, {
+            key: `creative-target-queue-final:${summary.queueId}:${summary.updatedAt || previousRun.runId || ''}`,
+            category: 'completion',
+            cooldownMs: 0,
+            immediate: true
+        });
+    }
+
     function notifyCreativeAutoRunFinal(run, eventType) {
         if (!run) {
             return;
@@ -2137,16 +3871,26 @@ function createCreativeAutoService(options = {}) {
         const failedCount = Number(result.failedCount) || 0;
         const isCompleted = eventType === 'completed';
         const isPaused = eventType === 'paused';
+        const isQueuedRun = Boolean(run.targetQueue && run.targetQueue.queueId);
+        if (isQueuedRun && isCompleted) {
+            if (logger && typeof logger.info === 'function') {
+                logger.info(`Creative target queue run completed silently: ${run.runId}`);
+            }
+            return;
+        }
         const promptGateEmpty = isCompleted && acceptedCount <= 0 && rejectedCount > 0;
         const title = promptGateEmpty
             ? '运行一次自动创意未进入生图'
             : (isCompleted
                 ? '运行一次自动创意已完成'
-                : (isPaused ? '运行一次自动创意已暂停' : '运行一次自动创意异常'));
+                : (isPaused
+                    ? (isQueuedRun ? '创意队列已暂停' : '运行一次自动创意已暂停')
+                    : (isQueuedRun ? '创意队列异常' : '运行一次自动创意异常')));
         const level = promptGateEmpty ? 'warning' : (isCompleted ? 'info' : (isPaused ? 'warning' : 'error'));
         const progress = `prompt ${acceptedCount}/${Number(run.promptTotalRaw) || acceptedCount}，拒绝 ${rejectedCount}，失败 ${failedCount}，保存 ${savedCount}`;
         const extraLines = [
             `runId：${run.runId}`,
+            isQueuedRun ? `队列：${run.targetQueue.currentIndex || 0}/${run.targetQueue.totalTargets || 0}` : '',
             directionPath ? `方向：${directionPath}` : '',
             run.config && run.config.outputFolder ? `输出目录：${run.config.outputFolder}` : '',
             assets.newAssetCount !== undefined ? `资产登记：新增 ${assets.newAssetCount || 0}，匹配 ${assets.matchedFileCount || 0}` : ''
@@ -2155,7 +3899,7 @@ function createCreativeAutoService(options = {}) {
         notifyCreativeAutoEvent({
             level,
             title,
-            taskType: '运行一次自动创意',
+            taskType: isQueuedRun ? '创意目标队列' : '运行一次自动创意',
             progress,
             message: run.message || result.message || '',
             suggestion: promptGateEmpty
@@ -2238,7 +3982,7 @@ function createCreativeAutoService(options = {}) {
                         lastSnapshot: snapshot,
                         completedAt
                     });
-                    const finalRun = updateRun(store, run.runId, {
+                    let finalRun = updateRun(store, run.runId, {
                         status: completed ? 'completed' : (paused ? 'paused' : 'failed'),
                         phase: completed ? 'legil_completed' : (paused ? 'legil_paused' : 'legil_failed'),
                         completedAt,
@@ -2257,6 +4001,13 @@ function createCreativeAutoService(options = {}) {
                             ? `Legil 生图完成：成功 ${successCount} 组，失败 ${failedCount} 组，保存 ${savedCount} 张`
                             : `Legil 生图未完成：${progress.currentAction || progress.phase}`
                     });
+                    if (run.legilRetry && run.legilRetry.active && finalRun) {
+                        finalRun = updateRun(store, run.runId, appendLegilRetryFinalUpdates(run, {
+                            status: finalRun.status,
+                            phase: finalRun.phase,
+                            completedAt
+                        }, progress, finalRun.legilResult || {}, completedAt)) || finalRun;
+                    }
                     let runWithAssets = finalRun;
                     let assetReport = null;
                     if (savedCount > 0 && finalRun) {
@@ -2307,7 +4058,8 @@ function createCreativeAutoService(options = {}) {
                     if (activeRunId === run.runId) {
                         activeRunId = null;
                     }
-                    return runWithAssets;
+                    startNextQueuedTarget(runWithAssets || finalRun);
+                    return runWithAssets || finalRun;
                 }
             }
 
@@ -2371,6 +4123,546 @@ function createCreativeAutoService(options = {}) {
             activeRunId = null;
         }
         return timeoutRun;
+    }
+
+    function isPipelinePrefetchEnabled(context = {}) {
+        const creativeConfig = context.appConfig && context.appConfig.creative ? context.appConfig.creative : {};
+        if (creativeConfig.pipelinePrefetch === false) return false;
+        const depth = Number(creativeConfig.pipelinePrefetchDepth);
+        return !(Number.isFinite(depth) && depth <= 0);
+    }
+
+    function createPrefetchAgentRun({ store, payload, context, queue, target, index, attempt }) {
+        const appConfig = context.appConfig || {};
+        const knowledge = readKnowledge(context);
+        const preflight = buildPreflight(appConfig, knowledge);
+        if (!preflight.ok) {
+            throw new Error('Preflight check failed before target prefetch');
+        }
+
+        const winkyConfig = typeof options.getStoredWinkyConfig === 'function'
+            ? options.getStoredWinkyConfig()
+            : {};
+        if (!winkyConfig.apiKey || !winkyConfig.apiUrl || !winkyConfig.model) {
+            throw new Error('Creative Agent LLM configuration is incomplete');
+        }
+        if (typeof options.startCreativeAgentTask !== 'function' || typeof options.getCreativeAgentTask !== 'function') {
+            throw new Error('Creative Agent task runner is not configured');
+        }
+
+        const selectedBase = resolveSelectedDirection(knowledge, payload);
+        const directionSystemContext = buildDirectionSystemContext({
+            directions: knowledge.directions,
+            selected: selectedBase,
+            store
+        });
+        const selected = {
+            ...selectedBase,
+            directionSystemContext,
+            siblings: directionSystemContext.siblings,
+            dimensionCoverage: directionSystemContext.dimensionCoverage,
+            exclusionContext: directionSystemContext.exclusionContext,
+            directionTreeSummary: directionSystemContext.directionTreeSummary
+        };
+        const creativeConfig = appConfig.creative || {};
+        const config = {
+            ...DEFAULT_AUTO_CONFIG,
+            outputFolder: creativeConfig.outputFolder || 'D:\\工作\\自动化工作流1\\创意拓展\\输出',
+            referenceFolder: creativeConfig.referenceFolder || knowledge.knowledgeConfig.referenceFolder,
+            browserMode: normalizeAutoBrowserMode(creativeConfig.browserMode || DEFAULT_AUTO_CONFIG.browserMode),
+            creativePromptStyle: normalizeCreativePromptStyle(payload.creativePromptStyle || creativeConfig.creativePromptStyle || DEFAULT_AUTO_CONFIG.creativePromptStyle),
+            directionPlanning: {
+                ...DEFAULT_AUTO_CONFIG.directionPlanning,
+                ...(creativeConfig.directionPlanning || {}),
+                ...(payload.directionPlanning || {})
+            },
+            generationSettings: {
+                ...DEFAULT_AUTO_CONFIG.generationSettings,
+                ...(creativeConfig.generationSettings || {})
+            }
+        };
+        const requestedMaxPrompts = payload.maxPrompts
+            || payload.legilMaxPrompts
+            || (payload.fullScale === true ? DEFAULT_AUTO_CONFIG.maxPromptsPerRun : DEFAULT_AUTO_CONFIG.legilSmokeMaxPrompts);
+        const quota = buildQuota({
+            maxPrompts: requestedMaxPrompts,
+            unlimitedPrompts: payload.unlimitedPrompts === true || payload.fullScale === true,
+            outputQuantity: config.generationSettings.outputQuantity
+        }, knowledge.schedulerState);
+        if (quota.maxPrompts <= 0) {
+            throw new Error('Prompt quota is 0; cannot prefetch target prompts');
+        }
+
+        const referenceImages = getMatchedReferenceImages(selected.direction, knowledge);
+        const runId = `creative_run_${formatRunTimestamp()}_${crypto.randomBytes(3).toString('hex')}`;
+        const diversityContext = buildDirectionDiversityContext({
+            store,
+            selectedDirection: selected.direction,
+            payload,
+            config,
+            runId
+        });
+        const historicalCreativeContext = summarizeHistoricalCreativeUsage({
+            store,
+            selectedDirection: selected.direction,
+            maxDirections: 30,
+            maxPrompts: 12
+        });
+        const instruction = buildAgentInstruction({
+            selected,
+            referenceImages,
+            payload,
+            config,
+            quota,
+            memoryRules: knowledge.memoryRules,
+            historicalCreativeContext,
+            diversityContext
+        });
+        const now = new Date().toISOString();
+        const queueBrief = creativeBriefFromPayload(payload);
+        const queueInfo = queueBrief && queueBrief.sequentialQueue ? queueBrief.sequentialQueue : null;
+        const queueTarget = creativeBriefTargetsFromPayload(payload)[0] || target || null;
+        const run = {
+            runId,
+            mode: 'legil-prefetch',
+            agentOnly: true,
+            prefetch: {
+                queueId: queue.queueId,
+                index,
+                total: safeArray(queue.targets).length,
+                targetId: targetQueueTargetId(target, index),
+                attempt,
+                maxAttempts: TARGET_QUEUE_PREFETCH_MAX_ATTEMPTS,
+                startedAt: now
+            },
+            status: 'running',
+            phase: 'agent_prefetch_running',
+            createdAt: now,
+            startedAt: now,
+            completedAt: '',
+            sourceDirection: selected.direction,
+            targetSelection: payload.targetSelection || null,
+            creativeBrief: payload.creativeBrief || null,
+            aggregateTarget: selected.aggregateTarget || null,
+            targetQueue: queueInfo ? {
+                ...queueInfo,
+                targetId: queueTarget && (queueTarget.targetId || queueTarget.targetKey || queueTarget.sourceMaterialId || ''),
+                targetName: queueTarget && (queueTarget.sourceMaterialName || queueTarget.materialName || queueTarget.sourceDirectionPath || '')
+            } : null,
+            selection: {
+                score: selected.score,
+                scoreParts: selected.scoreParts,
+                reasons: selected.reasons,
+                topMaterialInsight: selected.topMaterialInsight
+            },
+            referenceImages,
+            config,
+            quota,
+            schedulerState: knowledge.schedulerState,
+            memoryRules: knowledge.memoryRules,
+            historicalCreativeContext,
+            directionDiversityContext: diversityContext,
+            directionSystemContext,
+            instruction,
+            promptTotalRaw: 0,
+            promptTotalTranslated: 0,
+            promptTotal: 0,
+            expectedImageTotal: 0,
+            directionDefinitions: [],
+            prompts: [],
+            qualityReport: null,
+            directionPlanReport: null,
+            directionPlanRepairReport: null,
+            promptQualityReport: null,
+            promptTranslation: null,
+            agentTask: null,
+            agentOutput: null,
+            legilPayload: null,
+            legilTask: null,
+            legilProgress: null,
+            legilResult: null,
+            message: `Pipeline prefetch started for target ${index + 1}/${safeArray(queue.targets).length}`
+        };
+
+        const agentTask = options.startCreativeAgentTask({
+            apiUrl: winkyConfig.apiUrl,
+            apiKey: winkyConfig.apiKey,
+            model: winkyConfig.model,
+            provider: winkyConfig.provider,
+            instruction,
+            targetCount: DEFAULT_AUTO_CONFIG.newDirectionsPerSource,
+            attachments: [],
+            suppressNotification: true
+        });
+        run.agentTaskRunId = agentTask.runId;
+        run.agentTask = options.publicCreativeAgentTask(agentTask);
+        writeRun(store, run);
+
+        return {
+            run,
+            agentTask,
+            selected,
+            quota,
+            payload,
+            config,
+            promptTranslatorConfig: winkyConfig
+        };
+    }
+
+    function handleTargetPrefetchFailure({ store, queueId, index, attempt, runId = '', error, context = {} }) {
+        const latestQueue = loadTargetQueue(store, queueId);
+        if (!latestQueue || latestQueue.status !== 'running') {
+            return null;
+        }
+        const target = safeArray(latestQueue.targets)[index] || {};
+        const targetId = targetQueueTargetId(target, index);
+        const message = error && error.message ? error.message : String(error || 'unknown prefetch error');
+        const failedAt = new Date().toISOString();
+        if (runId) {
+            updateRun(store, runId, {
+                status: 'failed',
+                phase: 'agent_prefetch_failed',
+                completedAt: failedAt,
+                error: message,
+                message: `Pipeline prefetch failed for target ${index + 1}: ${message}`
+            });
+        }
+
+        const attemptsByIndex = {
+            ...(latestQueue.prefetchAttemptsByIndex || {}),
+            [index]: attempt
+        };
+        if (attempt >= TARGET_QUEUE_PREFETCH_MAX_ATTEMPTS) {
+            const skippedRecord = {
+                index,
+                displayIndex: index + 1,
+                targetId,
+                targetName: target.sourceMaterialName || target.materialName || target.sourceDirectionPath || '',
+                attempts: attempt,
+                error: message,
+                skippedAt: failedAt
+            };
+            const skippedTargets = safeArray(latestQueue.skippedTargets)
+                .filter(item => Number(item && item.index) !== index)
+                .concat([skippedRecord]);
+            const skippedTargetIndexes = uniqueStrings(safeArray(latestQueue.skippedTargetIndexes).concat([String(index)]))
+                .map(value => Number(value))
+                .filter(Number.isFinite);
+            const skippedTargetIds = uniqueStrings(safeArray(latestQueue.skippedTargetIds).concat([targetId]));
+            const skippedQueue = writeTargetQueue(store, clearQueuePrefetchFields(latestQueue, {
+                prefetchAttemptsByIndex: attemptsByIndex,
+                skippedTargets,
+                skippedTargetIndexes,
+                skippedTargetIds,
+                nextAction: 'prefetch_skipped'
+            }));
+            if (logger && typeof logger.warn === 'function') {
+                logger.warn(`Creative target prefetch skipped after ${attempt} failures: ${latestQueue.queueId} target ${index + 1}, ${message}`);
+            }
+            const currentRunId = String(skippedQueue.currentRunId || latestQueue.currentRunId || '').trim();
+            const currentRun = currentRunId ? store.read(path.join('runs', `${path.basename(currentRunId)}.json`), null) : null;
+            if (currentRun && currentRun.status === 'running') {
+                setTimeout(() => maybePrefetchNextQueuedTarget({
+                    store,
+                    run: currentRun,
+                    context: targetQueueContext(skippedQueue) || context
+                }), TARGET_QUEUE_PREFETCH_RETRY_DELAY_MS);
+            } else if (currentRun && currentRun.status === 'completed') {
+                setTimeout(() => startNextQueuedTarget(currentRun), TARGET_QUEUE_PREFETCH_WAIT_MS);
+            }
+            return skippedQueue;
+        }
+
+        const retryQueue = writeTargetQueue(store, clearQueuePrefetchFields(latestQueue, {
+            prefetchAttemptsByIndex: attemptsByIndex,
+            nextAction: 'prefetch_retry',
+            nextPrepareError: message
+        }));
+        if (logger && typeof logger.warn === 'function') {
+            logger.warn(`Creative target prefetch failed attempt ${attempt}/${TARGET_QUEUE_PREFETCH_MAX_ATTEMPTS}: ${latestQueue.queueId} target ${index + 1}, retrying`);
+        }
+        setTimeout(() => {
+            const queueForRetry = loadTargetQueue(store, queueId);
+            if (!queueForRetry || queueForRetry.status !== 'running') return;
+            startQueuedTargetPrefetch({
+                store,
+                queue: queueForRetry,
+                index,
+                context: targetQueueContext(queueForRetry) || context
+            });
+        }, TARGET_QUEUE_PREFETCH_RETRY_DELAY_MS);
+        return retryQueue;
+    }
+
+    function startQueuedTargetPrefetch({ store, queue, index, context = {} }) {
+        if (!queue || queue.status !== 'running') return null;
+        if (!isPipelinePrefetchEnabled(context)) return null;
+        if (typeof options.hasActiveCreativeAgentTask === 'function' && options.hasActiveCreativeAgentTask()) {
+            setTimeout(() => {
+                const latestQueue = loadTargetQueue(store, queue.queueId);
+                if (!latestQueue || latestQueue.status !== 'running') return;
+                if (latestQueue.nextPreparingRunId || latestQueue.nextPreparedRunId) return;
+                startQueuedTargetPrefetch({
+                    store,
+                    queue: latestQueue,
+                    index,
+                    context: targetQueueContext(latestQueue) || context
+                });
+            }, TARGET_QUEUE_PREFETCH_WAIT_MS);
+            return null;
+        }
+
+        const targets = safeArray(queue.targets);
+        const target = targets[index];
+        if (!target) return null;
+        const attempt = queuePrefetchAttempt(queue, index) + 1;
+        const payload = payloadForSingleCreativeTarget(
+            queue.originalPayload,
+            target,
+            index,
+            targets.length,
+            queue.queueId
+        );
+        let bundle = null;
+        try {
+            bundle = createPrefetchAgentRun({
+                store,
+                payload,
+                context,
+                queue,
+                target,
+                index,
+                attempt
+            });
+        } catch (error) {
+            handleTargetPrefetchFailure({
+                store,
+                queueId: queue.queueId,
+                index,
+                attempt,
+                error,
+                context
+            });
+            return null;
+        }
+
+        const preparingQueue = writeTargetQueue(store, {
+            ...queue,
+            nextPreparingRunId: bundle.run.runId,
+            nextPreparedRunId: '',
+            nextPrepareIndex: index,
+            nextPreparePhase: 'agent_running',
+            nextPrepareAttempt: attempt,
+            nextPrepareError: '',
+            nextAction: 'prefetch_next_target'
+        });
+        activeTargetQueue = preparingQueue || queue;
+        writeSchedulerState(store, {
+            targetQueue: publicTargetQueue(preparingQueue || queue)
+        });
+        if (logger && typeof logger.info === 'function') {
+            logger.info(`Creative target prefetch started: ${queue.queueId} target ${index + 1}/${targets.length}, attempt ${attempt}`);
+        }
+
+        followAgentTask({
+            store,
+            run: bundle.run,
+            agentTask: bundle.agentTask,
+            selected: bundle.selected,
+            quota: bundle.quota,
+            payload: bundle.payload,
+            config: bundle.config,
+            agentOnly: true,
+            promptTranslatorConfig: bundle.promptTranslatorConfig,
+            memoryRules: bundle.run.memoryRules,
+            prefetch: true
+        }).then(completedRun => {
+            const latestQueue = loadTargetQueue(store, queue.queueId);
+            if (!latestQueue || latestQueue.status !== 'running') return;
+            if (latestQueue.nextPreparingRunId !== completedRun.runId) return;
+            const preparedQueue = writeTargetQueue(store, clearQueuePrefetchFields(latestQueue, {
+                nextPreparedRunId: completedRun.runId,
+                nextPrepareIndex: index,
+                nextPreparePhase: 'agent_completed',
+                nextPrepareAttempt: attempt,
+                nextAction: 'prefetch_ready'
+            }));
+            activeTargetQueue = preparedQueue || latestQueue;
+            writeSchedulerState(store, {
+                targetQueue: publicTargetQueue(preparedQueue || latestQueue)
+            });
+            if (logger && typeof logger.info === 'function') {
+                logger.info(`Creative target prefetch ready: ${queue.queueId} target ${index + 1}/${targets.length}, run ${completedRun.runId}`);
+            }
+        }).catch(error => {
+            handleTargetPrefetchFailure({
+                store,
+                queueId: queue.queueId,
+                index,
+                attempt,
+                runId: bundle.run.runId,
+                error,
+                context
+            });
+        });
+
+        return preparingQueue;
+    }
+
+    function maybePrefetchNextQueuedTarget({ store, run, context = {} }) {
+        if (!run || !run.targetQueue || !run.targetQueue.queueId) return null;
+        const queue = loadTargetQueue(store, run.targetQueue.queueId);
+        if (!queue || queue.status !== 'running') return null;
+        if (!isPipelinePrefetchEnabled(context || targetQueueContext(queue))) return null;
+        if (queue.nextPreparingRunId || queue.nextPreparedRunId) return null;
+
+        const currentIndex = targetQueueIndexFromRun(run, queue);
+        const nextIndex = nextRunnableTargetIndex(queue, currentIndex + 1);
+        if (nextIndex < 0) return null;
+        return startQueuedTargetPrefetch({
+            store,
+            queue,
+            index: nextIndex,
+            context: targetQueueContext(queue) || context
+        });
+    }
+
+    function startPreparedQueuedTargetLegil({ store, queue, previousRun, preparedRun, nextIndex }) {
+        const prompts = safeArray(preparedRun.prompts).filter(item => item && item.selected !== false);
+        if (!prompts.length) {
+            return skipPreparedQueuedTarget({
+                store,
+                queue,
+                previousRun,
+                preparedRun,
+                nextIndex,
+                reason: 'Prompt Gate accepted 0 prompts for prefetched target'
+            });
+        }
+        const selected = buildSelectedFromRun(preparedRun);
+        const config = {
+            ...DEFAULT_AUTO_CONFIG,
+            ...(preparedRun.config || {})
+        };
+        const preparedQueue = writeTargetQueue(store, clearQueuePrefetchFields(queue, {
+            status: 'running',
+            currentIndex: nextIndex,
+            nextIndex,
+            currentRunId: preparedRun.runId,
+            lastRunId: previousRun.runId || queue.lastRunId || '',
+            lastRunStatus: previousRun.status || '',
+            lastRunPhase: previousRun.phase || '',
+            nextAction: 'start_prepared_legil'
+        })) || queue;
+        activeTargetQueue = preparedQueue;
+        activeRunId = preparedRun.runId;
+        const preparedForLegil = updateRun(store, preparedRun.runId, {
+            status: 'running',
+            phase: 'legil_pending',
+            agentOnly: false,
+            mode: 'legil-run-once',
+            completedAt: '',
+            message: `Pipeline prefetch ready; starting Legil for target ${nextIndex + 1}/${safeArray(queue.targets).length}`
+        }) || preparedRun;
+        writeSchedulerState(store, {
+            status: 'running',
+            currentRunId: preparedRun.runId,
+            currentAgentTaskRunId: null,
+            targetQueue: publicTargetQueue(preparedQueue)
+        });
+        startLegilAfterAgent({
+            store,
+            run: preparedForLegil,
+            selected,
+            prompts,
+            config
+        }).catch(error => {
+            const failedAt = new Date().toISOString();
+            const failedRun = updateRun(store, preparedRun.runId, {
+                status: 'failed',
+                phase: 'legil_prefetch_start_failed',
+                completedAt: failedAt,
+                error: error.message,
+                message: 'Pipeline prepared run failed to start Legil: ' + error.message
+            });
+            updateTargetQueueFromRun(store, failedRun || preparedForLegil, 'failed');
+            writeSchedulerState(store, {
+                status: 'idle',
+                currentRunId: null,
+                currentAgentTaskRunId: null,
+                currentLegilTask: null,
+                lastRunId: preparedRun.runId,
+                lastError: error.message
+            });
+            if (activeRunId === preparedRun.runId) {
+                activeRunId = null;
+            }
+            if (logger && typeof logger.error === 'function') {
+                logger.error(`Pipeline prepared run failed to start Legil: ${error.message}`);
+            }
+        });
+        return {
+            success: true,
+            queue: publicTargetQueue(preparedQueue),
+            run: preparedForLegil
+        };
+    }
+
+    function skipPreparedQueuedTarget({ store, queue, previousRun, preparedRun, nextIndex, reason = '' }) {
+        const targets = safeArray(queue.targets);
+        const target = targets[nextIndex] || {};
+        const targetId = targetQueueTargetId(target, nextIndex);
+        const skippedAt = new Date().toISOString();
+        const skippedRecord = {
+            index: nextIndex,
+            displayIndex: nextIndex + 1,
+            targetId,
+            targetName: target.sourceMaterialName || target.materialName || target.sourceDirectionPath || '',
+            runId: preparedRun.runId || '',
+            error: reason || preparedRun.message || 'Prefetched target has no accepted prompts',
+            skippedAt
+        };
+        const skippedTargets = safeArray(queue.skippedTargets)
+            .filter(item => Number(item && item.index) !== nextIndex)
+            .concat([skippedRecord]);
+        const skippedTargetIndexes = uniqueStrings(safeArray(queue.skippedTargetIndexes).concat([String(nextIndex)]))
+            .map(value => Number(value))
+            .filter(Number.isFinite);
+        const skippedTargetIds = uniqueStrings(safeArray(queue.skippedTargetIds).concat([targetId]));
+        const completedIndex = targetQueueIndexFromRun(previousRun, queue);
+        const skippedQueue = writeTargetQueue(store, clearQueuePrefetchFields(queue, {
+            status: 'running',
+            currentIndex: completedIndex,
+            nextIndex: nextIndex + 1,
+            currentRunId: previousRun.runId || queue.currentRunId || '',
+            lastRunId: preparedRun.runId || queue.lastRunId || '',
+            lastRunStatus: preparedRun.status || '',
+            lastRunPhase: preparedRun.phase || '',
+            skippedTargets,
+            skippedTargetIndexes,
+            skippedTargetIds,
+            nextAction: 'prefetch_prompt_gate_empty',
+            ...mergeTargetQueueRunStats(queue, preparedRun)
+        })) || queue;
+        activeTargetQueue = skippedQueue;
+        writeSchedulerState(store, {
+            status: 'idle',
+            currentRunId: null,
+            currentAgentTaskRunId: null,
+            currentLegilTask: null,
+            lastRunId: previousRun.runId || preparedRun.runId || '',
+            targetQueue: publicTargetQueue(skippedQueue)
+        });
+        if (logger && typeof logger.warn === 'function') {
+            logger.warn(`Creative target queue skipped prefetched empty run: ${queue.queueId} target ${nextIndex + 1}, run ${preparedRun.runId}`);
+        }
+        setTimeout(() => startNextQueuedTarget(previousRun), TARGET_QUEUE_PREFETCH_WAIT_MS);
+        return {
+            success: true,
+            queue: publicTargetQueue(skippedQueue),
+            skippedPreparedRun: true,
+            nextIndex: nextRunnableTargetIndex(skippedQueue, nextIndex + 1)
+        };
     }
 
     async function startLegilAfterAgent({ store, run, selected, prompts, config, legilPayloadExtra = {} }) {
@@ -2488,6 +4780,16 @@ function createCreativeAutoService(options = {}) {
             currentRunId: run.runId,
             currentAgentTaskRunId: null,
             currentLegilTask: runningTask
+        });
+        maybePrefetchNextQueuedTarget({
+            store,
+            run: currentRun,
+            context: (() => {
+                const queue = currentRun.targetQueue && currentRun.targetQueue.queueId
+                    ? loadTargetQueue(store, currentRun.targetQueue.queueId)
+                    : null;
+                return targetQueueContext(queue);
+            })()
         });
 
         return await pollLegilUntilFinal({
@@ -2864,6 +5166,14 @@ function createCreativeAutoService(options = {}) {
 
         const afterSnapshot = getLegilCreativeProgressSnapshot() || beforeSnapshot;
         const progress = afterSnapshot && afterSnapshot.progress ? afterSnapshot.progress : null;
+        const finalizedRun = reconcileFinalLegilRun(store, run, afterSnapshot);
+        if (finalizedRun && finalizedRun.status !== 'running') {
+            return {
+                success: true,
+                message: finalizedRun.message || '自动创意任务已完成',
+                run: finalizedRun
+            };
+        }
         if (!afterSnapshot || afterSnapshot.running === false) {
             const completedAt = new Date().toISOString();
             const pausedTask = updateLegilTaskState(run.legilTask || {}, {
@@ -2921,6 +5231,221 @@ function createCreativeAutoService(options = {}) {
         };
     }
 
+    function failedPromptResultsFromRun(run = {}) {
+        const sources = [
+            run.legilProgress && run.legilProgress.failedPromptResults,
+            run.legilTask && run.legilTask.progress && run.legilTask.progress.failedPromptResults
+        ];
+        const seen = new Set();
+        return sources.flatMap(safeArray)
+            .filter(Boolean)
+            .filter(item => {
+                const key = [
+                    item.promptHash || '',
+                    item.promptListIndex || '',
+                    item.displayIndex || '',
+                    item.sourceRow || '',
+                    item.promptTitle || '',
+                    item.error || item.message || ''
+                ].join('|');
+                if (seen.has(key)) return false;
+                seen.add(key);
+                return true;
+            });
+    }
+
+    function matchPromptForFailedResult(prompts = [], failed = {}) {
+        return safeArray(prompts).find(prompt => {
+            if (!prompt) return false;
+            if (failed.promptHash && prompt.promptHash === failed.promptHash) return true;
+            if (failed.promptListIndex && Number(prompt.index) === Number(failed.promptListIndex)) return true;
+            if (failed.promptListIndex && Number(prompt.originalIndex) === Number(failed.promptListIndex)) return true;
+            if (failed.sourceRow && Number(prompt.sourceRow) === Number(failed.sourceRow)) return true;
+            if (failed.promptTitle && prompt.promptTitle === failed.promptTitle) return true;
+            return false;
+        }) || null;
+    }
+
+    function buildRetryPromptsFromRun(run = {}, failedResults = []) {
+        const prompts = safeArray(run.prompts);
+        return safeArray(failedResults)
+            .map((failed, index) => {
+                const matched = matchPromptForFailedResult(prompts, failed);
+                if (!matched) return null;
+                return {
+                    ...matched,
+                    index: Number(matched.index) || Number(failed.promptListIndex) || index + 1,
+                    originalIndex: matched.originalIndex || matched.index || failed.promptListIndex || index + 1,
+                    selected: true,
+                    retryOf: {
+                        promptListIndex: failed.promptListIndex || '',
+                        displayIndex: failed.displayIndex || '',
+                        failedAt: failed.failedAt || '',
+                        error: failed.error || failed.message || ''
+                    }
+                };
+            })
+            .filter(item => item && (item.finalPrompt || item.prompt));
+    }
+
+    function appendLegilRetryFinalUpdates(run = {}, updates = {}, progress = {}, result = {}, completedAt = new Date().toISOString()) {
+        const retry = run.legilRetry && run.legilRetry.active ? run.legilRetry : null;
+        if (!retry) return updates;
+
+        const retryRecord = {
+            ...retry,
+            active: false,
+            status: updates.status || '',
+            phase: updates.phase || '',
+            completedAt,
+            progress,
+            result
+        };
+        return {
+            ...updates,
+            legilRetry: retryRecord,
+            legilRetries: safeArray(run.legilRetries).concat([retryRecord]).slice(-20),
+            legilProgressHistory: safeArray(run.legilProgressHistory)
+                .concat(run.legilProgress ? [run.legilProgress] : [])
+                .slice(-20),
+            legilResultHistory: safeArray(run.legilResultHistory)
+                .concat(run.legilResult ? [run.legilResult] : [])
+                .slice(-20)
+        };
+    }
+
+    function retryFailedPrompts(runId, payload = {}, context = {}) {
+        if (activeRunId) {
+            return {
+                success: false,
+                message: 'A creative-auto run is already running',
+                activeRun: getRun(activeRunId, context)
+            };
+        }
+
+        if (typeof options.isLegilBusy === 'function' && options.isLegilBusy()) {
+            return {
+                success: false,
+                message: 'Legil is busy; retry failed prompts after the current task finishes'
+            };
+        }
+
+        const { store } = getKnowledgeStore(context);
+        store.ensureBase();
+        const run = getRun(runId, context);
+        if (!run) {
+            return {
+                success: false,
+                message: 'Creative-auto run not found'
+            };
+        }
+        if (run.status === 'running') {
+            return {
+                success: false,
+                message: 'The run is still running; retry failed prompts after the current batch finishes',
+                run
+            };
+        }
+
+        const failedResults = failedPromptResultsFromRun(run);
+        const prompts = buildRetryPromptsFromRun(run, failedResults);
+        if (!prompts.length) {
+            return {
+                success: false,
+                message: 'No retryable failed prompts were found',
+                run,
+                failedPromptResults: failedResults
+            };
+        }
+
+        const selected = buildSelectedFromRun(run);
+        const creativeConfig = context.appConfig && context.appConfig.creative ? context.appConfig.creative : {};
+        const config = {
+            ...DEFAULT_AUTO_CONFIG,
+            ...(run.config || {}),
+            browserMode: normalizeAutoBrowserMode(
+                payload.browserMode
+                    || creativeConfig.browserMode
+                    || (run.config && run.config.browserMode)
+                    || DEFAULT_AUTO_CONFIG.browserMode
+            )
+        };
+        const now = new Date().toISOString();
+        const retryId = 'legil_retry_' + formatRunTimestamp() + '_' + crypto.randomBytes(3).toString('hex');
+        const preparedRun = updateRun(store, run.runId, {
+            status: 'running',
+            phase: 'legil_retry_pending',
+            completedAt: '',
+            resumedAt: now,
+            legilRetry: {
+                retryId,
+                active: true,
+                status: 'running',
+                phase: 'legil_retry_pending',
+                failedPromptCount: failedResults.length,
+                retryPromptCount: prompts.length,
+                failedPromptResults,
+                startedAt: now
+            },
+            message: 'Preparing to retry ' + prompts.length + ' failed prompt(s)'
+        }) || run;
+        activeRunId = run.runId;
+        writeSchedulerState(store, {
+            status: 'running',
+            currentRunId: run.runId,
+            currentAgentTaskRunId: null,
+            lastStartedAt: now
+        });
+
+        startLegilAfterAgent({
+            store,
+            run: preparedRun,
+            selected,
+            prompts,
+            config,
+            legilPayloadExtra: {
+                retryMode: true,
+                retryId,
+                retryFailedPromptCount: failedResults.length,
+                legilTaskId: buildLegilTaskId(preparedRun, prompts) + '_' + retryId
+            }
+        }).catch(error => {
+            const failedAt = new Date().toISOString();
+            const failedRun = updateRun(store, run.runId, appendLegilRetryFinalUpdates(preparedRun, {
+                status: 'failed',
+                phase: 'legil_retry_failed',
+                completedAt: failedAt,
+                error: error.message,
+                message: 'Retry failed prompts failed: ' + error.message
+            }, null, {
+                success: false,
+                message: error.message
+            }, failedAt));
+            notifyCreativeAutoRunFinal(failedRun, 'failed');
+            writeSchedulerState(store, {
+                status: 'idle',
+                currentRunId: null,
+                currentAgentTaskRunId: null,
+                currentLegilTask: null,
+                lastRunId: run.runId,
+                lastError: error.message
+            });
+            if (activeRunId === run.runId) {
+                activeRunId = null;
+            }
+            if (logger && typeof logger.error === 'function') {
+                logger.error('Retry failed prompts failed: ' + error.message);
+            }
+        });
+
+        return {
+            success: true,
+            message: 'Retrying ' + prompts.length + ' failed prompt(s)',
+            run: preparedRun,
+            failedPromptResults: failedResults,
+            retryPromptCount: prompts.length
+        };
+    }
     function resumeRun(runId, payload = {}, context = {}) {
         if (activeRunId) {
             return {
@@ -2944,6 +5469,24 @@ function createCreativeAutoService(options = {}) {
             return {
                 success: false,
                 message: '自动创意运行记录不存在'
+            };
+        }
+
+        if (canAdvanceTargetQueueFromRun(store, run)) {
+            const queuedRun = attachTargetQueueProgress(store, run);
+            const advanceResult = startNextQueuedTarget(queuedRun);
+            if (advanceResult && advanceResult.queue) {
+                writeSchedulerState(store, {
+                    targetQueue: advanceResult.queue
+                });
+            }
+            return {
+                success: true,
+                message: '已继续创意目标队列，准备启动下一个目标',
+                run: attachTargetQueueProgress(store, getRun(run.runId, context) || run),
+                targetQueue: advanceResult && advanceResult.queue
+                    ? advanceResult.queue
+                    : (targetQueueRecoverySummary(store, run) || (queuedRun && queuedRun.targetQueueProgress) || null)
             };
         }
 
@@ -3012,11 +5555,22 @@ function createCreativeAutoService(options = {}) {
                 message: '已恢复创意 Agent，正在重新生成 prompt'
             }) || run;
             activeRunId = run.runId;
+            let resumedQueue = null;
+            if (run.targetQueue && run.targetQueue.queueId) {
+                resumedQueue = updateTargetQueue(store, run.targetQueue.queueId, {
+                    status: 'running',
+                    currentRunId: run.runId,
+                    lastRunId: run.runId,
+                    lastRunStatus: 'running',
+                    lastRunPhase: 'agent_running'
+                });
+            }
             writeSchedulerState(store, {
                 status: 'running',
                 currentRunId: run.runId,
                 currentAgentTaskRunId: agentTask.runId,
-                lastStartedAt: now
+                lastStartedAt: now,
+                targetQueue: resumedQueue ? publicTargetQueue(resumedQueue) : (run.targetQueue || null)
             });
             runAgentOnlyInBackground({
                 store,
@@ -3121,7 +5675,7 @@ function createCreativeAutoService(options = {}) {
         };
     }
 
-    async function followAgentTask({ store, run, agentTask, selected, quota, payload, config, agentOnly, promptTranslatorConfig, memoryRules = [] }) {
+    async function followAgentTask({ store, run, agentTask, selected, quota, payload, config, agentOnly, promptTranslatorConfig, memoryRules = [], prefetch = false }) {
         const startedAt = Date.now();
         const maxWaitMs = 12 * 60 * 1000;
 
@@ -3134,6 +5688,9 @@ function createCreativeAutoService(options = {}) {
             if (['completed', 'failed', 'cancelled'].includes(String(currentTask.phase || ''))) {
                 const publicTask = options.publicCreativeAgentTask(currentTask, true);
                 if (currentTask.phase === 'cancelled') {
+                    if (prefetch) {
+                        throw new Error(publicTask.message || 'Creative Agent prefetch was cancelled');
+                    }
                     const pausedRun = {
                         ...run,
                         status: 'paused',
@@ -3162,40 +5719,103 @@ function createCreativeAutoService(options = {}) {
                 }
 
                 const result = publicTask.result || {};
+                const hasDirectionCandidates = safeArray(result.directionPlans)
+                    .some(plan => safeArray(plan && plan.extensions).length > 0);
+                let agentPrompts = safeArray(result.prompts);
+                let directionCandidateStage = null;
+                let selectedDirectionPromptStage = null;
+
+                if (hasDirectionCandidates && agentPrompts.length === 0) {
+                    directionCandidateStage = await selectDirectionPlansWithRepair({
+                        directionPlans: result.directionPlans,
+                        selected,
+                        payload,
+                        config,
+                        store,
+                        run,
+                        winkyConfig: promptTranslatorConfig
+                    });
+                    if (logger && typeof logger.info === 'function') {
+                        logger.info(`Direction Candidate Gate: ${directionCandidateStage.directionPlanGate.directionPlanReport.summary}`);
+                        logger.info(`Direction candidate repair: ${directionCandidateStage.repairReport.summary}`);
+                    }
+                    selectedDirectionPromptStage = await generatePromptsForSelectedDirections({
+                        selected,
+                        payload,
+                        config,
+                        directionPlanGate: directionCandidateStage.directionPlanGate,
+                        winkyConfig: promptTranslatorConfig
+                    });
+                    if (logger && typeof logger.info === 'function') {
+                        logger.info(selectedDirectionPromptStage.report.success
+                            ? `Selected direction prompt stage generated ${selectedDirectionPromptStage.report.generatedPromptCount} final prompts`
+                            : `Selected direction prompt stage failed: ${selectedDirectionPromptStage.report.error || 'no prompts generated'}`);
+                    }
+                    agentPrompts = selectedDirectionPromptStage.prompts;
+                }
+
                 const translation = bypassPromptTranslationForLegil({
-                    prompts: result.prompts,
+                    prompts: agentPrompts,
                     selected,
                     runId: run.runId
                 });
                 if (logger && typeof logger.info === 'function') {
-                    logger.info(`Prompt Translator skipped: Creative Agent returned ${translation.report.promptCount} final Legil prompts`);
+                    logger.info(`Prompt Translator skipped: ${translation.report.promptCount} final Legil prompts are ready`);
                 }
-                const gate = applyPromptGate({
-                    prompts: translation.prompts,
+                const gates = await applyPromptGatesWithRepair({
+                    translation,
                     selected,
                     quota,
                     store,
-                    runId: run.runId,
+                    run,
                     payload,
                     config,
-                    memoryRules
+                    memoryRules,
+                    winkyConfig: promptTranslatorConfig,
+                    skipDirectionRepair: Boolean(directionCandidateStage && selectedDirectionPromptStage)
                 });
+                const directionPlanGate = gates.directionPlanGate;
+                const gate = gates.gate;
+                if (logger && typeof logger.info === 'function') {
+                    logger.info(`Direction Plan Gate: ${directionPlanGate.directionPlanReport.summary}`);
+                    logger.info(`Direction repair: ${gates.repairReport.summary}`);
+                }
+                const plannedDirectionDefinitions = buildDirectionDefinitions(directionPlanGate.prompts, selected);
                 const prompts = gate.prompts;
                 const qualityReport = gate.qualityReport;
+                const repairMessageSuffix = gates.repairReport.attempts.length
+                    ? `，自动修复 ${gates.repairReport.attempts.length} 轮`
+                    : '';
+                const directionExpansionHistoryAdditions = appendDirectionExpansionHistory(store, {
+                    run,
+                    selected,
+                    directionPlanGate,
+                    diversityContext: run.directionDiversityContext
+                });
                 const completedRun = {
                     ...run,
                     status: agentOnly ? 'completed' : 'running',
                     phase: 'agent_completed',
                     completedAt: agentOnly ? new Date().toISOString() : '',
-                    promptTotalRaw: safeArray(result.prompts).length,
+                    promptTotalRaw: agentPrompts.length,
                     promptTotalTranslated: translation.report.promptCount,
+                    promptTotalDirectionPlanned: directionPlanGate.directionPlanReport.selectedPromptCount,
                     promptTotalCandidate: gate.promptQualityReport.candidatePromptCount,
                     promptTotal: prompts.length,
                     promptTotalRejected: gate.promptQualityReport.rejectedPromptCount,
                     expectedImageTotal: gate.promptQualityReport.expectedImageTotal,
-                    directionDefinitions: translation.directionDefinitions,
+                    directionDefinitions: plannedDirectionDefinitions,
                     prompts,
                     qualityReport,
+                    directionDiversityContext: run.directionDiversityContext || null,
+                    directionExpansionHistoryAdditions,
+                    directionPlanReport: directionPlanGate.directionPlanReport,
+                    directionCandidateReport: directionCandidateStage && directionCandidateStage.directionPlanGate
+                        ? directionCandidateStage.directionPlanGate.directionPlanReport
+                        : null,
+                    directionCandidateRepairReport: directionCandidateStage ? directionCandidateStage.repairReport : null,
+                    selectedDirectionPromptReport: selectedDirectionPromptStage ? selectedDirectionPromptStage.report : null,
+                    directionPlanRepairReport: gates.repairReport,
                     promptQualityReport: gate.promptQualityReport,
                     promptTranslation: translation.report,
                     agentTask: publicTask,
@@ -3206,11 +5826,19 @@ function createCreativeAutoService(options = {}) {
                         rawText: result.rawText || '',
                         rawTableMarkdown: result.rawTableMarkdown || result.rawText || '',
                         markdownPreview: result.markdownPreview || '',
-                        message: result.message || ''
+                        message: result.message || '',
+                        directionPlans: result.directionPlans || [],
+                        directionPlanCount: result.directionPlanCount || 0,
+                        candidateDirections: result.candidateDirections || [],
+                        candidateDirectionCount: result.candidateDirectionCount || 0,
+                        twoStagePromptGeneration: Boolean(selectedDirectionPromptStage),
+                        selectedDirectionPromptCount: selectedDirectionPromptStage && selectedDirectionPromptStage.report
+                            ? selectedDirectionPromptStage.report.generatedPromptCount
+                            : 0
                     },
                     message: agentOnly
-                        ? `Agent-only 已生成 ${safeArray(result.prompts).length} 条 prompt，Prompt Gate 接受 ${prompts.length} 条，未调用 Legil`
-                        : `Agent 已生成 ${safeArray(result.prompts).length} 条 prompt，Prompt Gate 接受 ${prompts.length} 条，准备调用 Legil`
+                        ? `Agent-only 已生成 ${agentPrompts.length} 条 prompt，方向规划入选 ${directionPlanGate.directionPlanReport.selectedExtensionCount} 个延展${repairMessageSuffix}，Prompt Gate 接受 ${prompts.length} 条，未调用 Legil`
+                        : `Agent 已生成 ${agentPrompts.length} 条 prompt，方向规划入选 ${directionPlanGate.directionPlanReport.selectedExtensionCount} 个延展${repairMessageSuffix}，Prompt Gate 接受 ${prompts.length} 条，准备调用 Legil`
                 };
                 writeRun(store, completedRun);
                 updateSelectedDirectionPromptStats(store, selected, {
@@ -3220,6 +5848,9 @@ function createCreativeAutoService(options = {}) {
                 });
 
                 if (agentOnly) {
+                    if (prefetch) {
+                        return completedRun;
+                    }
                     notifyCreativeAutoRunFinal(completedRun, 'completed');
                     writeSchedulerState(store, {
                         status: 'idle',
@@ -3259,7 +5890,7 @@ function createCreativeAutoService(options = {}) {
             : loadTargetQueue(store, queueId);
 
         if (!queue || (queue.currentRunId && queue.currentRunId !== previousRun.runId)) {
-            return;
+            return null;
         }
 
         if (queue.status && queue.status !== 'running') {
@@ -3271,29 +5902,40 @@ function createCreativeAutoService(options = {}) {
                 }) || queue;
             } else {
                 activeTargetQueue = null;
-                return;
+                return null;
             }
         }
 
         if (previousRun.status !== 'completed') {
-            updateTargetQueueFromRun(store, previousRun, previousRun.status === 'paused' ? 'paused' : 'failed');
+            const stoppedQueue = updateTargetQueueFromRun(store, previousRun, previousRun.status === 'paused' ? 'paused' : 'failed') || queue;
             if (logger && typeof logger.warn === 'function') {
                 logger.warn(`Creative target queue stopped after ${previousRun.runId}: ${previousRun.status || 'unknown'}`);
             }
             activeTargetQueue = null;
-            return;
+            return {
+                success: false,
+                queue: publicTargetQueue(stoppedQueue)
+            };
         }
 
         const completedQueue = updateTargetQueueFromRun(store, previousRun, 'completed') || queue;
-        const completedIndex = Math.max(0, Number(previousRun.targetQueue && previousRun.targetQueue.index) ? Number(previousRun.targetQueue.index) - 1 : Number(completedQueue.currentIndex) || 0);
-        const nextIndex = completedIndex + 1;
+        const completedIndex = targetQueueIndexFromRun(previousRun, completedQueue);
+        const nextIndex = nextRunnableTargetIndex(completedQueue, completedIndex + 1);
         if (nextIndex >= safeArray(completedQueue.targets).length) {
             const finalQueue = writeTargetQueue(store, {
                 ...completedQueue,
                 status: 'completed',
-                nextIndex,
+                nextIndex: safeArray(completedQueue.targets).length,
                 currentIndex: completedIndex,
-                currentRunId: previousRun.runId
+                currentRunId: previousRun.runId,
+                nextAction: '',
+                lastError: '',
+                nextPreparingRunId: '',
+                nextPreparedRunId: '',
+                nextPrepareIndex: null,
+                nextPreparePhase: '',
+                nextPrepareError: '',
+                nextPrepareAttempt: 0
             });
             writeSchedulerState(store, {
                 targetQueue: publicTargetQueue(finalQueue)
@@ -3301,8 +5943,86 @@ function createCreativeAutoService(options = {}) {
             if (logger && typeof logger.info === 'function') {
                 logger.info(`Creative target queue completed: ${completedQueue.queueId}`);
             }
+            notifyCreativeTargetQueueFinal(finalQueue, previousRun);
             activeTargetQueue = null;
-            return;
+            return {
+                success: true,
+                queue: publicTargetQueue(finalQueue),
+                completed: true
+            };
+        }
+
+        if (nextIndex < 0) {
+            const finalQueue = writeTargetQueue(store, {
+                ...completedQueue,
+                status: 'completed',
+                nextIndex: safeArray(completedQueue.targets).length,
+                currentIndex: completedIndex,
+                currentRunId: previousRun.runId,
+                nextAction: '',
+                lastError: '',
+                nextPreparingRunId: '',
+                nextPreparedRunId: '',
+                nextPrepareIndex: null,
+                nextPreparePhase: '',
+                nextPrepareError: '',
+                nextPrepareAttempt: 0
+            });
+            writeSchedulerState(store, {
+                targetQueue: publicTargetQueue(finalQueue)
+            });
+            if (logger && typeof logger.info === 'function') {
+                logger.info(`Creative target queue completed with skipped targets: ${completedQueue.queueId}`);
+            }
+            notifyCreativeTargetQueueFinal(finalQueue, previousRun);
+            activeTargetQueue = null;
+            return {
+                success: true,
+                queue: publicTargetQueue(finalQueue),
+                completed: true
+            };
+        }
+
+        const preparedRunId = String(completedQueue.nextPreparedRunId || '').trim();
+        const preparedIndex = Number(completedQueue.nextPrepareIndex);
+        if (preparedRunId && preparedIndex === nextIndex) {
+            const preparedRun = store.read(path.join('runs', `${path.basename(preparedRunId)}.json`), null);
+            if (preparedRun && preparedRun.status === 'completed' && preparedRun.phase === 'agent_completed') {
+                if (logger && typeof logger.info === 'function') {
+                    logger.info(`Creative target queue using prefetched run: ${completedQueue.queueId} target ${nextIndex + 1}, run ${preparedRunId}`);
+                }
+                return startPreparedQueuedTargetLegil({
+                    store,
+                    queue: completedQueue,
+                    previousRun,
+                    preparedRun,
+                    nextIndex
+                });
+            }
+        }
+
+        const preparingRunId = String(completedQueue.nextPreparingRunId || '').trim();
+        const preparingIndex = Number(completedQueue.nextPrepareIndex);
+        if (preparingRunId && preparingIndex === nextIndex) {
+            const waitingQueue = writeTargetQueue(store, {
+                ...completedQueue,
+                status: 'running',
+                nextIndex,
+                currentIndex: completedIndex,
+                currentRunId: previousRun.runId,
+                nextAction: 'waiting_for_prefetch'
+            }) || completedQueue;
+            activeTargetQueue = waitingQueue;
+            writeSchedulerState(store, {
+                targetQueue: publicTargetQueue(waitingQueue)
+            });
+            setTimeout(() => startNextQueuedTarget(previousRun), TARGET_QUEUE_PREFETCH_WAIT_MS);
+            return {
+                success: true,
+                queue: publicTargetQueue(waitingQueue),
+                waitingForPrefetch: true,
+                nextIndex
+            };
         }
 
         queue = writeTargetQueue(store, {
@@ -3328,18 +6048,77 @@ function createCreativeAutoService(options = {}) {
                 activeTargetQueue = null;
                 return;
             }
+            const latestRunId = String(latestQueue.currentRunId || '').trim();
+            if (latestRunId && latestRunId !== previousRun.runId) {
+                activeTargetQueue = latestQueue;
+                if (logger && typeof logger.warn === 'function') {
+                    logger.warn(`Creative target queue skipped duplicate next-target start: ${queue.queueId}, active run ${latestRunId}`);
+                }
+                return;
+            }
+            const latestCurrentIndex = Math.max(0, Number(latestQueue.currentIndex) || 0);
+            const latestNextIndex = Math.max(0, Number(latestQueue.nextIndex) || 0);
+            if (latestCurrentIndex !== nextIndex || latestNextIndex !== nextIndex) {
+                activeTargetQueue = latestQueue;
+                if (logger && typeof logger.warn === 'function') {
+                    logger.warn(`Creative target queue skipped stale next-target start: ${queue.queueId}, expected index ${nextIndex}, actual ${latestCurrentIndex}/${latestNextIndex}`);
+                }
+                return;
+            }
             const result = runOnce(nextPayload, queue.context);
             if (!result || result.success === false) {
+                const message = result && result.message ? String(result.message) : 'unknown error';
+                const refreshedQueue = loadTargetQueue(store, queue.queueId);
+                const claimedRunId = refreshedQueue && String(refreshedQueue.currentRunId || '').trim();
+                if (/已有自动创意任务正在运行|already running/i.test(message) && claimedRunId && claimedRunId !== previousRun.runId) {
+                    activeTargetQueue = refreshedQueue;
+                    if (logger && typeof logger.warn === 'function') {
+                        logger.warn(`Creative target queue duplicate start ignored after ${queue.queueId}: ${message}`);
+                    }
+                    return;
+                }
+                if (result && result.policy && result.policy.allowed === false) {
+                    const blockedQueue = updateTargetQueue(store, queue.queueId, {
+                        status: 'paused',
+                        currentRunId: previousRun.runId || '',
+                        currentIndex: nextIndex,
+                        nextIndex,
+                        nextAction: 'policy_blocked',
+                        lastError: message,
+                        lastPolicyBlock: result.policy
+                    });
+                    writeSchedulerState(store, {
+                        status: 'idle',
+                        currentRunId: null,
+                        currentAgentTaskRunId: null,
+                        currentLegilTask: null,
+                        lastRunId: previousRun.runId || queue.lastRunId || '',
+                        lastError: message,
+                        targetQueue: publicTargetQueue(blockedQueue || queue)
+                    });
+                    activeTargetQueue = null;
+                    if (logger && typeof logger.warn === 'function') {
+                        logger.warn(`Creative target queue paused by policy guard: ${queue.queueId}, ${message}`);
+                    }
+                    return;
+                }
                 if (logger && typeof logger.error === 'function') {
-                    logger.error(`Creative target queue failed to start next target: ${result && result.message ? result.message : 'unknown error'}`);
+                    logger.error(`Creative target queue failed to start next target: ${message}`);
                 }
                 updateTargetQueue(store, queue.queueId, {
                     status: 'failed',
-                    lastError: result && result.message ? result.message : 'unknown error'
+                    lastError: message
                 });
                 activeTargetQueue = null;
             }
         }, 1000);
+
+        return {
+            success: true,
+            queue: publicTargetQueue(queue),
+            completed: false,
+            nextIndex
+        };
     }
 
     async function runAgentOnlyInBackground({ store, run, agentTask, selected, quota, payload, config, agentOnly, promptTranslatorConfig }) {
@@ -3358,6 +6137,20 @@ function createCreativeAutoService(options = {}) {
             });
             startNextQueuedTarget(finalRun);
         } catch (error) {
+            if (isWinkyTimeoutError(error && error.message ? error.message : error)) {
+                const pausedMessage = 'Winky 连续超时，本轮自动创意已暂停队列，可稍后点击继续重试；如果反复出现，建议缩小批量后再跑。';
+                const pausedRun = markRunPaused(store, run, {
+                    phase: 'agent_winky_timeout',
+                    error: pausedMessage,
+                    message: pausedMessage
+                });
+                notifyCreativeAutoRunFinal(pausedRun, 'paused');
+                if (logger && typeof logger.warn === 'function') {
+                    logger.warn(pausedMessage);
+                }
+                return;
+            }
+
             const failedRun = {
                 ...run,
                 status: 'failed',
@@ -3395,6 +6188,39 @@ function createCreativeAutoService(options = {}) {
 
     function runOnce(payload = {}, context = {}) {
         const agentOnly = payload.agentOnly === true;
+        const incomingBrief = creativeBriefFromPayload(payload);
+        const incomingQueueInfo = incomingBrief && incomingBrief.sequentialQueue ? incomingBrief.sequentialQueue : null;
+        const isAutomaticStart = payload.automatic === true ||
+            payload.autoStarted === true ||
+            context.automatic === true ||
+            (incomingQueueInfo && Number(incomingQueueInfo.index) > 1);
+
+        if (isAutomaticStart && typeof options.canPerformAction === 'function') {
+            const policyResult = options.canPerformAction('start_loop', {
+                module: 'creative-auto',
+                automatic: true,
+                mode: agentOnly ? 'agent-only' : 'legil-run-once',
+                runId: context.previousRunId || '',
+                queueId: incomingQueueInfo && incomingQueueInfo.queueId || '',
+                queueIndex: incomingQueueInfo && incomingQueueInfo.index || '',
+                source: payload.source || context.source || 'creative-auto',
+                targetId: payload.targetSelection && payload.targetSelection.targetId || '',
+                targetLabel: payload.targetSelection && payload.targetSelection.label || ''
+            });
+            if (!policyResult.allowed) {
+                notifyCreativeAutoBlocked({
+                    title: '自动创意启动被 Policy Guard 拦截',
+                    message: policyResult.reason || '当前自治策略不允许自动启动闭环任务',
+                    level: 'warn',
+                    keySuffix: 'policy-start-loop'
+                });
+                return {
+                    success: false,
+                    message: policyResult.reason || '当前自治策略不允许自动启动闭环任务',
+                    policy: policyResult
+                };
+            }
+        }
 
         if (activeRunId) {
             notifyCreativeAutoBlocked({
@@ -3476,6 +6302,19 @@ function createCreativeAutoService(options = {}) {
 
         const { store } = getKnowledgeStore(context);
         store.ensureBase();
+        const blockingRun = findBlockingRunningRun(store, knowledge.schedulerState);
+        if (blockingRun) {
+            notifyCreativeAutoBlocked({
+                title: '运行一次自动创意未启动',
+                message: '已有自动创意任务正在运行',
+                keySuffix: 'persisted-running-run'
+            });
+            return {
+                success: false,
+                message: '已有自动创意任务正在运行',
+                activeRun: blockingRun
+            };
+        }
 
         let pendingTargetQueue = null;
         if (isSequentialCreativeTargetPayload(payload)) {
@@ -3514,6 +6353,12 @@ function createCreativeAutoService(options = {}) {
             outputFolder: creativeConfig.outputFolder || 'D:\\工作\\自动化工作流1\\创意拓展\\输出',
             referenceFolder: creativeConfig.referenceFolder || knowledge.knowledgeConfig.referenceFolder,
             browserMode: normalizeAutoBrowserMode(creativeConfig.browserMode || DEFAULT_AUTO_CONFIG.browserMode),
+            creativePromptStyle: normalizeCreativePromptStyle(payload.creativePromptStyle || creativeConfig.creativePromptStyle || DEFAULT_AUTO_CONFIG.creativePromptStyle),
+            directionPlanning: {
+                ...DEFAULT_AUTO_CONFIG.directionPlanning,
+                ...(creativeConfig.directionPlanning || {}),
+                ...(payload.directionPlanning || {})
+            },
             generationSettings: {
                 ...DEFAULT_AUTO_CONFIG.generationSettings,
                 ...(creativeConfig.generationSettings || {})
@@ -3542,6 +6387,14 @@ function createCreativeAutoService(options = {}) {
         }
 
         const referenceImages = getMatchedReferenceImages(selected.direction, knowledge);
+        const runId = `creative_run_${formatRunTimestamp()}_${crypto.randomBytes(3).toString('hex')}`;
+        const diversityContext = buildDirectionDiversityContext({
+            store,
+            selectedDirection: selected.direction,
+            payload,
+            config,
+            runId
+        });
         const historicalCreativeContext = summarizeHistoricalCreativeUsage({
             store,
             selectedDirection: selected.direction,
@@ -3555,9 +6408,9 @@ function createCreativeAutoService(options = {}) {
             config,
             quota,
             memoryRules: knowledge.memoryRules,
-            historicalCreativeContext
+            historicalCreativeContext,
+            diversityContext
         });
-        const runId = `creative_run_${formatRunTimestamp()}_${crypto.randomBytes(3).toString('hex')}`;
         const now = new Date().toISOString();
         const queueBrief = creativeBriefFromPayload(payload);
         const queueInfo = queueBrief && queueBrief.sequentialQueue ? queueBrief.sequentialQueue : null;
@@ -3592,6 +6445,7 @@ function createCreativeAutoService(options = {}) {
             schedulerState: knowledge.schedulerState,
             memoryRules: knowledge.memoryRules,
             historicalCreativeContext,
+            directionDiversityContext: diversityContext,
             directionSystemContext,
             instruction,
             promptTotalRaw: 0,
@@ -3601,6 +6455,8 @@ function createCreativeAutoService(options = {}) {
             directionDefinitions: [],
             prompts: [],
             qualityReport: null,
+            directionPlanReport: null,
+            directionPlanRepairReport: null,
             promptQualityReport: null,
             promptTranslation: null,
             agentTask: null,
@@ -3673,10 +6529,22 @@ function createCreativeAutoService(options = {}) {
     }
 
     return {
+        __test: {
+            applyPromptGatesWithRepair,
+            appendDirectionExpansionHistory,
+            buildDirectionDiversityContext,
+            buildDirectionRepairMessages,
+            buildSelectedDirectionPromptMessages,
+            generateDirectionRepairPrompts,
+            generatePromptsForSelectedDirections,
+            selectDirectionPlansWithRepair
+        },
         continueRunToLegil,
+        getDiagnostics,
         getRun,
         getStatus,
         pauseRun,
+        retryFailedPrompts,
         resumeRun,
         runOnce
     };

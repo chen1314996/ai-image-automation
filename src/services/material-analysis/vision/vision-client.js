@@ -52,6 +52,8 @@ function getStoredWinkyVisionConfig() {
 
 function classifyVisionApiError(statusCode, detail = '') {
     const text = String(detail || '');
+    if (/upstream request timeout|upstream.*timeout|request timeout|timed?\s*out|timeout/i.test(text)) return 'UPSTREAM_TIMEOUT';
+    if ([408, 502, 503, 504].includes(Number(statusCode))) return 'UPSTREAM_TIMEOUT';
     if (statusCode === 401 || statusCode === 403) return 'AUTH_FAILED';
     if (statusCode === 429) return 'RATE_LIMIT';
     if (/context_length|max_tokens|maximum context|token/i.test(text)) return 'TOKEN_LIMIT';

@@ -17,6 +17,7 @@ const CREATIVE_AGENT_ROOT = process.env.CREATIVE_AGENT_ROOT || path.join(__dirna
 const CREATIVE_AGENT_PROJECT_SETTINGS_FILE = path.join(CREATIVE_AGENT_ROOT, 'PROJECT_SETTINGS.md');
 const CREATIVE_AGENT_PROMPT_SETTINGS_FILE = path.join(CREATIVE_AGENT_ROOT, 'CREATIVE_PROMPT_AGENT_SETTINGS.md');
 const CREATIVE_AGENT_OUTPUT_DIR = path.join(__dirname, 'creative_agent_outputs');
+const CREATIVE_AGENT_DEBUG_DIR = path.join(__dirname, 'data', 'debug', 'creative-agent');
 const CREATIVE_AGENT_CORE_SKILLS = [
     'reference-analysis-table',
     'batch-iteration-strategy-table',
@@ -275,7 +276,7 @@ function selectCreativeAgentSkills(inputText) {
         selected.add('strict-table-direction-iteration');
     }
 
-    if (/(100|dozens|hundreds|batch|large scale|series|dedupe|duplicate|asset pool|几十|上百|批量|大规模|系列化|去重|同质化|扩量|素材池)/i.test(text)) {
+    if (/(100\s*\+|dozens|hundreds|large scale|asset pool|几十|上百|批量生成|批量拓展|批量扩展|大规模|系列化扩量|扩量|素材池)/i.test(text)) {
         selected.add('batch-creative-expansion-accelerator');
     }
 
@@ -314,9 +315,12 @@ function buildCreativeAgentUserPrompt({ instruction, targetCount, attachmentSumm
         '',
         '# Output Requirements',
         '如果这是后台“运行一次自动创意 / run-once / creative-auto / Legil 自动生图”任务，只输出 JSON，不输出 Markdown 表格、Excel 表格、CSV 表格或任何 spreadsheet-ready 表格。',
+        '后台自动创意优先输出 hidden direction planning：JSON 顶层必须包含 directionPlans，用于程序自动评分、去重、淘汰和补位，不需要人工预览或勾选。',
+        'directionPlans 每一项代表一个原始方向，必须包含 sourceDirectionPath、currentJudgment、exclusionSummary、extensions。extensions 是候选延展池，默认至少 8 个候选延展；每个延展包含 extensionKey、extensionType、name、description、visualHook、dedupeReason、riskNote、productionAdvice、promptPair。',
+        '每个 extension.promptPair 必须正好 2 条 prompt：第 1 条是主视觉稳定版，第 2 条是差异化变体版；两条至少改变主体组合、动作机制、镜头角度、空间结构、前景道具、光线方案、情绪瞬间或广告钩子中的两项。',
         '新方向之间要有更明显差异，但必须符合当前项目体系；至少改变场景机制、人物关系、危机/奖励道具、镜头距离/角度中的两项，不能只是同义词改写。',
         '同一新方向下的不同提示词也要拉开画面差异，每条提示词的动作节点、空间位置、前景道具、镜头景别或情绪冲突至少有两项不同，同时保留该新方向的核心卖点。',
-        'JSON 顶层字段必须是 candidateDirections，供程序解析、入库、Prompt Gate 和 Legil 队列使用。',
+        'JSON 顶层字段也要保留 candidateDirections，作为旧解析器兼容字段；candidateDirections 可以只包含最终推荐延展的扁平版本。',
         'candidateDirections 每一项必须包含：type、sourcePath、targetLevel、label、description、dimensions、duplicateRisk、reason、prompts。dimensions 至少覆盖 mood、perspective、time、narrative、scale、material、subjectRelation、hook。prompts 是 1-5 条对象数组，每条包含 title 和 prompt。',
         'Agent 只输出候选方向和可出图 prompt，不直接操作 Legil、不写入飞书或方向种子表、不评价生成图片好坏。',
         'Prompt Gate 会拦截禁用词、短 prompt、抽象 prompt、重复 prompt 和多方案混写；请在输出前自检。',
@@ -328,7 +332,10 @@ function buildCreativeAgentUserPrompt({ instruction, targetCount, attachmentSumm
         '# Current Automation Contract',
         'For run-once, creative-auto, and Legil automation tasks, output JSON only.',
         'Do not output Markdown tables, Excel tables, CSV tables, or spreadsheet-ready tables.',
-        'The JSON top-level object must contain candidateDirections.',
+        'The JSON top-level object must contain directionPlans and candidateDirections.',
+        'directionPlans must contain sourceDirectionPath, currentJudgment, exclusionSummary, and extensions.',
+        'Each extension must contain extensionKey, extensionType, name, description, visualHook, dedupeReason, riskNote, productionAdvice, and promptPair.',
+        'Each promptPair must contain exactly two complete Chinese image-generation prompts.',
         'Each candidateDirections item must contain: type, sourcePath, targetLevel, label, description, dimensions, duplicateRisk, reason, prompts.',
         'dimensions must include mood, perspective, time, narrative, scale, material, subjectRelation, hook.',
         'prompts must be 1-5 objects, each with title and prompt. The prompt field must be the complete final image-generation prompt.'
@@ -422,6 +429,37 @@ function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+function collectCreativeAgentErrorText(error) {
+    if (!error) return '';
+    if (typeof error === 'string') return error;
+    const items = [error];
+    if (Array.isArray(error.errors)) {
+        items.push(...error.errors);
+    }
+    const texts = [];
+    for (const item of items) {
+        if (!item) continue;
+        const response = item.response || {};
+        const request = item.request || {};
+        texts.push(
+            item.code,
+            item.message,
+            response.status,
+            response.statusText,
+            typeof response.data === 'string' ? response.data : (response.data ? JSON.stringify(response.data) : ''),
+            request.path
+        );
+    }
+    return texts.map(value => String(value || '')).filter(Boolean).join('\n');
+}
+
+function isWinkyTimeoutError(error) {
+    const status = Number(error && error.response && error.response.status);
+    const text = collectCreativeAgentErrorText(error);
+    return status === 504 ||
+        /\b504\b|Gateway Timeout|stream timeout|ERR_BAD_RESPONSE|ECONNABORTED|ETIMEDOUT|ESOCKETTIMEDOUT|timeout|超时/i.test(text);
+}
+
 function isRetryableCreativeAgentError(error) {
     const status = Number(error && error.response && error.response.status);
     if (status === 429 || status >= 500) return true;
@@ -433,9 +471,24 @@ function isRetryableCreativeAgentError(error) {
     return /(AggregateError|ECONNRESET|ETIMEDOUT|ESOCKETTIMEDOUT|ECONNABORTED|ENOTFOUND|EAI_AGAIN|socket hang up|timeout|network)/i.test(texts);
 }
 
-async function postCreativeAgentApi({ apiUrl, apiKey, payload, timeout = 10 * 60 * 1000 }) {
+function formatCreativeAgentRetryMessage({ retryIndex = 1, maxRetries = 2, error = null } = {}) {
+    if (isWinkyTimeoutError(error)) {
+        return `Winky 超时（504/stream timeout），已自动重试第 ${retryIndex}/${maxRetries} 次。`;
+    }
+    return `Winky 临时异常，已自动重试第 ${retryIndex}/${maxRetries} 次。`;
+}
+
+function formatCreativeAgentPausedMessage(error = null) {
+    if (isWinkyTimeoutError(error)) {
+        return 'Winky 连续超时，本轮创意 Agent 已暂停；队列会保留在当前方向，稍后点击继续即可重试。';
+    }
+    return '';
+}
+
+async function postCreativeAgentApi({ apiUrl, apiKey, payload, timeout = 10 * 60 * 1000, onRetry = null }) {
     let lastError = null;
-    for (let attempt = 0; attempt < 2; attempt += 1) {
+    const maxRetries = 2;
+    for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
         try {
             return await axios.post(apiUrl, payload, {
                 timeout,
@@ -448,13 +501,93 @@ async function postCreativeAgentApi({ apiUrl, apiKey, payload, timeout = 10 * 60
             });
         } catch (error) {
             lastError = error;
-            if (attempt >= 1 || !isRetryableCreativeAgentError(error)) {
+            if (attempt >= maxRetries || !isRetryableCreativeAgentError(error)) {
                 throw error;
             }
-            await sleep(1500);
+            const retryIndex = attempt + 1;
+            const delayMs = retryIndex === 1 ? 3000 : 8000;
+            const retryMessage = formatCreativeAgentRetryMessage({ retryIndex, maxRetries, error });
+            if (typeof onRetry === 'function') {
+                try {
+                    onRetry({
+                        retryIndex,
+                        maxRetries,
+                        delayMs,
+                        winkyTimeout: isWinkyTimeoutError(error),
+                        message: retryMessage,
+                        detail: sanitizeCreativeAgentError(error, apiKey)
+                    });
+                } catch {
+                    // Retry notification is best-effort; do not fail the Agent call because logging failed.
+                }
+            }
+            await sleep(delayMs);
         }
     }
     throw lastError;
+}
+
+function creativeAgentContentLength(content) {
+    if (typeof content === 'string') return content.length;
+    if (Array.isArray(content)) {
+        return content.reduce((sum, part) => {
+            if (typeof part === 'string') return sum + part.length;
+            if (!part || typeof part !== 'object') return sum;
+            return sum + String(part.text || part.content || part.image_url?.url || '').length;
+        }, 0);
+    }
+    if (!content || typeof content !== 'object') return 0;
+    return JSON.stringify(content).length;
+}
+
+function summarizeCreativeAgentResponse(data) {
+    if (!data || typeof data !== 'object') {
+        return {
+            dataType: typeof data,
+            textLength: typeof data === 'string' ? data.length : 0
+        };
+    }
+    const firstChoice = Array.isArray(data.choices) ? data.choices[0] : null;
+    const message = firstChoice && firstChoice.message && typeof firstChoice.message === 'object'
+        ? firstChoice.message
+        : null;
+    const delta = firstChoice && firstChoice.delta && typeof firstChoice.delta === 'object'
+        ? firstChoice.delta
+        : null;
+    const content = message ? message.content : (delta ? delta.content : undefined);
+    return {
+        responseKeys: Object.keys(data).slice(0, 20),
+        choiceCount: Array.isArray(data.choices) ? data.choices.length : 0,
+        firstChoiceKeys: firstChoice && typeof firstChoice === 'object' ? Object.keys(firstChoice).slice(0, 20) : [],
+        finishReason: firstChoice ? firstChoice.finish_reason || firstChoice.finishReason || '' : '',
+        messageKeys: message ? Object.keys(message).slice(0, 20) : [],
+        deltaKeys: delta ? Object.keys(delta).slice(0, 20) : [],
+        contentType: Array.isArray(content) ? 'array' : typeof content,
+        contentLength: creativeAgentContentLength(content),
+        reasoningContentLength: message && typeof message.reasoning_content === 'string'
+            ? message.reasoning_content.length
+            : 0,
+        refusalLength: message && typeof message.refusal === 'string' ? message.refusal.length : 0,
+        outputTextLength: typeof data.output_text === 'string' ? data.output_text.length : 0,
+        textLength: typeof data.text === 'string' ? data.text.length : 0,
+        usage: data.usage || null
+    };
+}
+
+function writeCreativeAgentDebugSnapshot(kind, details = {}) {
+    try {
+        fs.mkdirSync(CREATIVE_AGENT_DEBUG_DIR, { recursive: true });
+        const fileName = `${new Date().toISOString().replace(/[:.]/g, '-')}_${kind}.json`;
+        const filePath = path.join(CREATIVE_AGENT_DEBUG_DIR, fileName);
+        fs.writeFileSync(filePath, JSON.stringify({
+            savedAt: new Date().toISOString(),
+            kind,
+            ...details
+        }, null, 2));
+        return filePath;
+    } catch {
+        return '';
+    }
 }
 
 function extractCreativeAgentResponseText(data) {
@@ -469,6 +602,14 @@ function extractCreativeAgentResponseText(data) {
         if (typeof message.content === 'string') return message.content;
         if (Array.isArray(message.content)) {
             return message.content
+                .map(part => typeof part === 'string' ? part : (part && (part.text || part.content) ? String(part.text || part.content) : ''))
+                .filter(Boolean)
+                .join('\n');
+        }
+        const delta = firstChoice.delta || {};
+        if (typeof delta.content === 'string') return delta.content;
+        if (Array.isArray(delta.content)) {
+            return delta.content
                 .map(part => typeof part === 'string' ? part : (part && (part.text || part.content) ? String(part.text || part.content) : ''))
                 .filter(Boolean)
                 .join('\n');
@@ -488,7 +629,7 @@ function shouldUseMaxCompletionTokens(model) {
     return /^gpt-5\.5(?:$|[-_.\s])/i.test(String(model || '').trim());
 }
 
-async function callCreativeAgentLlm({ apiUrl, apiKey, model, provider, instruction, targetCount, attachments }) {
+async function callCreativeAgentLlm({ apiUrl, apiKey, model, provider, instruction, targetCount, attachments, onRetry }) {
     const request = buildCreativeAgentMessages({ instruction, targetCount, attachments });
     const payload = {
         model,
@@ -509,11 +650,29 @@ async function callCreativeAgentLlm({ apiUrl, apiKey, model, provider, instructi
     const response = await postCreativeAgentApi({
         apiUrl,
         apiKey,
-        payload
+        payload,
+        onRetry
     });
     const text = extractCreativeAgentResponseText(response.data);
     if (!text.trim()) {
-        throw new Error('Creative Agent did not return readable prompt content');
+        const responseSummary = summarizeCreativeAgentResponse(response.data);
+        const debugPath = writeCreativeAgentDebugSnapshot('empty-response', {
+            apiUrl: String(apiUrl || '').replace(/[?].*$/, ''),
+            model,
+            provider,
+            selectedSkillNames: request.selectedSkillNames,
+            attachmentCount: request.attachmentCount,
+            targetCount: targetCount || null,
+            messageStats: {
+                systemChars: creativeAgentContentLength(request.messages[0] && request.messages[0].content),
+                userChars: creativeAgentContentLength(request.messages[1] && request.messages[1].content),
+                totalChars: request.messages.reduce((sum, message) => sum + creativeAgentContentLength(message.content), 0)
+            },
+            httpStatus: response.status,
+            responseSummary
+        });
+        const reason = responseSummary.finishReason ? `, finish_reason=${responseSummary.finishReason}` : '';
+        throw new Error(`Creative Agent did not return readable prompt content${reason}${debugPath ? `; debug=${debugPath}` : ''}`);
     }
 
     return {
@@ -540,7 +699,7 @@ function extractJsonObject(text) {
     }
 }
 
-async function callCreativeAgentJson({ apiUrl, apiKey, model, provider, messages, maxTokens = 9000, temperature = 0.72 }) {
+async function callCreativeAgentJson({ apiUrl, apiKey, model, provider, messages, maxTokens = 9000, temperature = 0.72, onRetry }) {
     const payload = {
         model,
         messages,
@@ -561,7 +720,8 @@ async function callCreativeAgentJson({ apiUrl, apiKey, model, provider, messages
     const response = await postCreativeAgentApi({
         apiUrl,
         apiKey,
-        payload
+        payload,
+        onRetry
     });
     return extractJsonObject(extractCreativeAgentResponseText(response.data));
 }
@@ -642,9 +802,9 @@ function buildStructuredRowPrompt(sourceRow, sourceRows, retryReason = '') {
         '# 质量要求',
         `1. newDirections 必须正好 ${STRUCTURED_BATCH_NEW_DIRECTION_COUNT} 条，每条必须相对当前原始方向有明显不同的画面机制。`,
         `2. 每条 newDirection 的 prompts 必须正好 ${STRUCTURED_BATCH_PROMPTS_PER_DIRECTION} 条。`,
-        '3. 每条提示词必须是 300-430 个中文字符，不能是关键词列表，必须是一段可直接出图的完整中文画面提示词。',
-        '4. 每条提示词都要覆盖：主题、画风、情绪氛围、主体、场景、构图、镜头、光线色彩、材质细节、广告传播点，并默认适配 Legil Nano Banana 2、1:1 方图、2K、每 prompt 4 张。',
-        `5. 每条提示词结尾必须包含：${STRUCTURED_PROMPT_SUFFIX}`,
+        '3. 每条提示词建议 80-180 个中文字符，复杂场景最多 240 个中文字符，不能是关键词列表，必须是一段可直接出图的自然中文镜头描述。',
+        '4. 每条提示词都要覆盖：参考图角色基础、造型服装保留、明确场景、明确动作、前景或关键道具、光线或氛围、构图或画面中心。',
+        '5. 每条提示词不要写“主题：/画风：/画面内容：”字段标签，不要写 1:1、方图、宽高比、分辨率、输出几张等生图参数，默认以“不要文字，不要水印。”收尾。',
         '6. 不要把所有提示词写成同一模板；同一新方向下多条提示词必须在主体关系、动作机制、镜头景别、空间结构和光线方案上拉开。',
         '7. referenceAnalysis 和 detailedStrategy 每个字段都要具体，不能写泛泛的“氛围好、视觉强”。',
         '8. 保持冰封末世、现实废土、生存资源、3D卡通商业海报质感，默认不要赛博、激光 UI、机甲、悬浮设备。',
@@ -719,7 +879,7 @@ function normalizeStructuredRowResult(result, sourceRow) {
                 ? direction.prompts.slice(0, STRUCTURED_BATCH_PROMPTS_PER_DIRECTION).map(normalizeCellText)
                 : [];
             while (prompts.length < STRUCTURED_BATCH_PROMPTS_PER_DIRECTION) {
-                prompts.push(`主题：${sourceRow.directionName}的冰封末世拓展画面。画风：高质量3D卡通渲染，商业级游戏宣传海报风格，电影镜头感。情绪氛围：紧张、压迫、带有求生希望。画面内容：幸存者在冰雪废墟中围绕关键资源展开行动，前景有霜雪覆盖的道具与手部动作，中景有角色关系和明确冲突，远景是被风雪吞没的旧文明建筑。构图突出核心物资和人物反应，冷蓝环境光与局部暖光形成对比，材质包含厚雪、磨损金属、破旧布料和雾气层次。整体基调强调一眼可读的广告爆点与末世生存叙事。${STRUCTURED_PROMPT_SUFFIX}`);
+                prompts.push(`以参考图角色为基础，保持角色造型和服装特征，生成高质量场景图：${sourceRow.directionName}的冰封末世拓展画面，角色在冰雪废墟中围绕关键资源展开行动，前景有霜雪覆盖的道具与手部动作，冷蓝环境光与局部暖光形成对比，画面中心清晰，构图稳定，材质细节丰富，不要文字，不要水印。`);
             }
             const normalizedDirection = {
                 type: normalizeCellText(direction && direction.type) || 'new',
@@ -849,6 +1009,7 @@ async function generateStructuredRowExpansion(payload, sourceRow, sourceRows) {
             provider: payload.provider,
             maxTokens: 9000,
             temperature: attempt === 0 ? 0.72 : 0.62,
+            onRetry: payload.onRetry,
             messages: [
                 { role: 'system', content: systemPrompt },
                 { role: 'user', content: buildStructuredRowPrompt(sourceRow, sourceRows, retryReason) }
@@ -1071,6 +1232,104 @@ function extractCandidateDirectionsFromText(text) {
     });
 }
 
+function normalizePromptPairItem(item, index = 0) {
+    if (typeof item === 'string') {
+        return {
+            title: `提示词${index + 1}`,
+            prompt: normalizeCellText(item)
+        };
+    }
+    const source = item && typeof item === 'object' ? item : {};
+    return {
+        title: normalizeCellText(source.title || source.promptTitle || source.name) || `提示词${index + 1}`,
+        prompt: normalizeCellText(source.prompt || source.finalPrompt || source.promptText || source.content || source.text)
+    };
+}
+
+function normalizeDirectionPlanExtension(extension, index = 0, plan = {}) {
+    const source = extension && typeof extension === 'object' ? extension : {};
+    const name = normalizeCellText(source.name || source.extensionName || source.newDirectionName || source.direction || source.label);
+    const promptSource = Array.isArray(source.promptPair)
+        ? source.promptPair
+        : (Array.isArray(source.prompts)
+            ? source.prompts
+            : (Array.isArray(source.promptGroups) ? source.promptGroups : []));
+    const promptPair = promptSource
+        .map(normalizePromptPairItem)
+        .filter(item => item.prompt);
+    return {
+        extensionKey: normalizeCellText(source.extensionKey || source.key || source.column || `延展${index + 1}`),
+        extensionType: normalizeCellText(source.extensionType || source.type || plan.planType || 'candidate'),
+        name: name || `候选延展${index + 1}`,
+        description: normalizeCellText(source.description || source.directionDescription || source.summary),
+        visualHook: normalizeCellText(source.visualHook || source.hook || source.pictureHook || source['画面抓手']),
+        priority: normalizeCellText(source.priority || source['优先级']),
+        riskNote: normalizeCellText(source.riskNote || source.risk || source.qualityRisk || source['风险/注意'] || source['风险备注']),
+        productionAdvice: normalizeCellText(source.productionAdvice || source.advice || source.makingAdvice || source['制作建议']),
+        dedupeReason: normalizeCellText(source.dedupeReason || source.dedupReason || source.reason || source['排重说明']),
+        dimensions: normalizeDimensionObject(source.dimensions || {}),
+        promptPair
+    };
+}
+
+function collectDirectionPlansFromObject(value, bucket = []) {
+    if (!value || typeof value !== 'object') {
+        return bucket;
+    }
+    if (Array.isArray(value)) {
+        value.forEach(item => collectDirectionPlansFromObject(item, bucket));
+        return bucket;
+    }
+    if (Array.isArray(value.directionPlans)) {
+        value.directionPlans.forEach(plan => bucket.push(plan));
+    }
+    if (Array.isArray(value.plans)) {
+        value.plans.forEach(plan => bucket.push(plan));
+    }
+    if (value.directionPlan && typeof value.directionPlan === 'object') {
+        bucket.push(value.directionPlan);
+    }
+    return bucket;
+}
+
+function normalizeDirectionPlan(plan, index = 0) {
+    const source = plan && typeof plan === 'object' ? plan : {};
+    const extensionArrays = [
+        source.extensions,
+        source.candidateExtensions,
+        source.selectedExtensions,
+        source.newExtensions
+    ].filter(Array.isArray);
+    const extensions = extensionArrays
+        .flat()
+        .map((extension, extensionIndex) => normalizeDirectionPlanExtension(extension, extensionIndex, source))
+        .filter(extension => extension.name || extension.promptPair.length);
+    return {
+        planIndex: index + 1,
+        planningVersion: normalizeCellText(source.planningVersion || source.version || 'creative-direction-plan-v2'),
+        sourceDirectionId: normalizeCellText(source.sourceDirectionId || source.directionId),
+        sourceDirectionPath: normalizeCellText(source.sourceDirectionPath || source.sourcePath || source.referenceDirection || source.directionPath),
+        sourceDirectionName: normalizeCellText(source.sourceDirectionName || source.directionName),
+        currentJudgment: normalizeCellText(source.currentJudgment || source.judgment || source['当前判断']),
+        sourceMaterial: normalizeCellText(source.sourceMaterial || source.material || source['来源素材']),
+        exclusionSummary: normalizeCellText(source.exclusionSummary || source.dedupeSummary || source['排除范围']),
+        extensions
+    };
+}
+
+function extractDirectionPlansFromText(text) {
+    const plans = [];
+    parseJsonBlocksFromText(text).forEach(parsed => {
+        collectDirectionPlansFromObject(parsed).forEach(plan => {
+            const normalized = normalizeDirectionPlan(plan, plans.length);
+            if (normalized.extensions.length) {
+                plans.push(normalized);
+            }
+        });
+    });
+    return plans;
+}
+
 function sourcePathToLabelPath(sourcePath = '') {
     return String(sourcePath || '')
         .split(/[/>|]+/)
@@ -1138,6 +1397,59 @@ function flattenCandidateDirectionsToPromptItems(candidateDirections = []) {
                     sourceRow: directionIndex + 1
                 });
             }
+        });
+    });
+    return sanitizeCreativePromptItems(promptItems);
+}
+
+function flattenDirectionPlansToPromptItems(directionPlans = []) {
+    const promptItems = [];
+    (Array.isArray(directionPlans) ? directionPlans : []).forEach(plan => {
+        const sourceDirectionPath = normalizeCellText(plan.sourceDirectionPath || plan.sourceDirectionName);
+        const sourceDirectionId = normalizeCellText(plan.sourceDirectionId);
+        const standardLabelPath = sourcePathToLabelPath(sourceDirectionPath);
+        (Array.isArray(plan.extensions) ? plan.extensions : []).forEach((extension, extensionIndex) => {
+            const directionName = normalizeCellText(extension.name);
+            const prompts = Array.isArray(extension.promptPair) ? extension.promptPair : [];
+            prompts.forEach((promptItem, promptIndex) => {
+                const normalized = normalizeDirectCreativePromptItem(promptItem, promptItems.length, {
+                    direction: directionName,
+                    sourceDirectionPath,
+                    promptTitle: `${extension.extensionKey || `延展${extensionIndex + 1}`}-AI提示词${promptIndex + 1}`,
+                    sourceRow: plan.planIndex || extensionIndex + 1
+                });
+                if (!normalized) {
+                    return;
+                }
+                promptItems.push({
+                    ...normalized,
+                    index: promptItems.length + 1,
+                    sourceRow: plan.planIndex || normalized.sourceRow,
+                    sourceDirectionId,
+                    sourceDirectionPath,
+                    standardLabelPath,
+                    primaryTag: standardLabelPath[0] || normalized.primaryTag,
+                    secondaryTag: standardLabelPath[1] || normalized.secondaryTag,
+                    tertiaryTag: standardLabelPath[2] || normalized.tertiaryTag,
+                    newDirectionName: directionName,
+                    contentTitle: directionName,
+                    outputNameBase: directionName,
+                    directionPlanVersion: plan.planningVersion,
+                    currentJudgment: plan.currentJudgment,
+                    sourceMaterial: plan.sourceMaterial,
+                    exclusionSummary: plan.exclusionSummary,
+                    extensionKey: extension.extensionKey || `延展${extensionIndex + 1}`,
+                    extensionType: extension.extensionType,
+                    extensionName: directionName,
+                    extensionDescription: extension.description,
+                    visualHook: extension.visualHook,
+                    priority: extension.priority,
+                    riskNote: extension.riskNote,
+                    productionAdvice: extension.productionAdvice,
+                    dedupeReason: extension.dedupeReason,
+                    dimensions: extension.dimensions || {}
+                });
+            });
         });
     });
     return sanitizeCreativePromptItems(promptItems);
@@ -1399,8 +1711,12 @@ async function runCreativeAgent(payload) {
 
     const agentResult = await callCreativeAgentLlm(payload);
 
+    const directionPlans = extractDirectionPlansFromText(agentResult.text);
     const candidateDirections = extractCandidateDirectionsFromText(agentResult.text);
-    let parsedPrompts = flattenCandidateDirectionsToPromptItems(candidateDirections);
+    let parsedPrompts = flattenDirectionPlansToPromptItems(directionPlans);
+    if (parsedPrompts.length === 0) {
+        parsedPrompts = flattenCandidateDirectionsToPromptItems(candidateDirections);
+    }
     if (parsedPrompts.length === 0) {
         parsedPrompts = extractDirectPromptItemsFromText(agentResult.text);
     }
@@ -1417,6 +1733,8 @@ async function runCreativeAgent(payload) {
         qualityReport,
         selectedSkills: agentResult.selectedSkillNames,
         attachmentCount: agentResult.attachmentCount,
+        directionPlans,
+        directionPlanCount: directionPlans.length,
         candidateDirections,
         candidateDirectionCount: candidateDirections.length,
         rawText: agentResult.text,
@@ -1445,8 +1763,22 @@ function getCreativeAgentStatus() {
 
 module.exports = {
     CREATIVE_AGENT_OUTPUT_DIR,
+    __test: {
+        buildCreativeAgentMessages,
+        extractCreativeAgentResponseText,
+        formatCreativeAgentPausedMessage,
+        formatCreativeAgentRetryMessage,
+        isWinkyTimeoutError,
+        selectCreativeAgentSkills,
+        summarizeCreativeAgentResponse
+    },
     getCreativeAgentStatus,
     getStoredWinkyConfig,
     runCreativeAgent,
-    sanitizeCreativeAgentError
+    sanitizeCreativeAgentError,
+    formatCreativeAgentPausedMessage,
+    formatCreativeAgentRetryMessage,
+    isWinkyTimeoutError,
+    extractDirectionPlansFromText,
+    flattenDirectionPlansToPromptItems
 };

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Legil创意提示词生成器"
+  short_description: "生成无尽冬日 Legil 可用的中文长生图提示词"
+  default_prompt: "Use $legil-creative-prompt-generator to generate promptItems JSON for selected frozen-apocalypse Legil image directions."

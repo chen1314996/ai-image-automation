@@ -44,6 +44,36 @@ function extractTextFromEvent(event) {
     return '';
 }
 
+function pickFirstText(...values) {
+    for (const value of values) {
+        if (typeof value === 'string' && value.trim()) {
+            return value.trim();
+        }
+    }
+    return '';
+}
+
+function normalizeSenderId(event = {}, nestedEvent = {}) {
+    const topSender = event.sender_id;
+    const nestedSender = nestedEvent.sender && nestedEvent.sender.sender_id
+        ? nestedEvent.sender.sender_id
+        : {};
+
+    if (topSender && typeof topSender === 'object') {
+        return pickFirstText(topSender.open_id, topSender.user_id, topSender.union_id);
+    }
+
+    return pickFirstText(
+        topSender,
+        event.open_id,
+        event.user_id,
+        event.union_id,
+        nestedSender.open_id,
+        nestedSender.user_id,
+        nestedSender.union_id
+    );
+}
+
 function normalizeFeishuEvent(event) {
     const nestedEvent = event && event.event ? event.event : {};
     const header = event && event.header ? event.header : {};
@@ -54,7 +84,7 @@ function normalizeFeishuEvent(event) {
         messageId: String(event && (event.message_id || event.id) || nestedMessage.message_id || '').trim(),
         chatId: String(event && event.chat_id || nestedMessage.chat_id || '').trim(),
         chatType: String(event && event.chat_type || nestedMessage.chat_type || '').trim(),
-        senderId: String(event && event.sender_id || (nestedEvent.sender && nestedEvent.sender.sender_id && nestedEvent.sender.sender_id.open_id) || '').trim(),
+        senderId: normalizeSenderId(event || {}, nestedEvent),
         messageType: String(event && event.message_type || nestedMessage.message_type || '').trim(),
         text: normalizeCommandText(extractTextFromEvent(event))
     };
@@ -81,15 +111,17 @@ function accessGuard(event, config) {
         };
     }
 
-    if (allowedChatIds.length && !allowedChatIds.includes(event.chatId)) {
+    const chatAllowed = allowedChatIds.length && allowedChatIds.includes(event.chatId);
+    const userAllowed = allowedUserIds.length && allowedUserIds.includes(event.senderId);
+    if (chatAllowed || userAllowed) {
         return {
-            allowed: false,
-            silent: true,
+            allowed: true,
+            silent: false,
             message: ''
         };
     }
 
-    if (allowedUserIds.length && !allowedUserIds.includes(event.senderId)) {
+    if (allowedUserIds.length && event.senderId && !allowedUserIds.includes(event.senderId)) {
         return {
             allowed: false,
             silent: false,
@@ -98,24 +130,21 @@ function accessGuard(event, config) {
     }
 
     return {
-        allowed: true,
-        silent: false,
+        allowed: false,
+        silent: true,
         message: ''
     };
 }
 
 function buildHelpText() {
     return [
-        '**AI生图控制指令**',
-        '帮助：查看可用指令',
-        '创意状态 / 创意进度：查看新版创意拓展页状态和任务进度',
-        '生成Prompt：只运行 Agent + Prompt Gate，不调用 Legil',
-        '小批量验证：运行一次自动创意，并提交 1 条 prompt 到 Legil',
-        '继续创意 / 暂停创意：继续或暂停自动创意/Legil 创意拓展任务',
-        '开始量产 / 继续任务：启动完整工作流或继续可恢复任务',
-        '停止工作流：停止当前完整工作流或 Legil 任务',
-        '日志 / 浏览器状态：查看最近日志或浏览器状态',
-        '重启工作流：二次确认后按默认配置重启',
+        '**AI图片生产远程值班指令**',
+        '控制面板 / 生产面板 / 交付面板 / 系统面板：打开卡片',
+        '状态 / 进度 / 日志 / 浏览器：查看当前情况',
+        '继续任务 / 停止全部：接管长跑任务',
+        '继续创意 / 暂停创意 / 重试失败：处理创意生产',
+        '继续交付 / 停止交付：处理改尺寸交付',
+        '重启服务器：二次确认后重启本地服务；运行中任务会被后端拒绝',
         '',
         '安全限制：只处理白名单群或白名单用户消息，不执行任意 shell 命令。'
     ].join('\n');
@@ -142,8 +171,28 @@ function detectCommand(text) {
         return { type: 'empty' };
     }
 
-    if (/控制面板|卡片|按钮|菜单|面板|panel|menu/i.test(text)) {
-        return { type: 'control_panel' };
+    if (/生产面板|生图面板|产图面板|production/i.test(text)) {
+        return { type: 'control_panel', panel: 'production' };
+    }
+
+    if (/交付面板|三尺寸面板|delivery/i.test(text)) {
+        return { type: 'control_panel', panel: 'delivery' };
+    }
+
+    if (/系统面板|系统状态|system/i.test(text)) {
+        return { type: 'control_panel', panel: 'system' };
+    }
+
+    if (/素材面板|素材分析面板|任务表面板|material/i.test(text)) {
+        return { type: 'control_panel', panel: 'material' };
+    }
+
+    if (/知识库面板|知识面板|knowledge/i.test(text)) {
+        return { type: 'control_panel', panel: 'knowledge' };
+    }
+
+    if (/控制面板|主面板|卡片|按钮|菜单|面板|panel|menu/i.test(text)) {
+        return { type: 'control_panel', panel: 'main' };
     }
 
     if (/帮助|help|指令|怎么用/i.test(text)) {
@@ -182,8 +231,12 @@ function detectCommand(text) {
         return { type: 'continue_creative' };
     }
 
-    if (/停止.*创意|停.*创意|stop.*creative/i.test(text)) {
+    if (/暂停.*创意|停止.*创意|停.*创意|stop.*creative|pause.*creative/i.test(text)) {
         return { type: 'stop_creative' };
+    }
+
+    if (/停止全部|全部停止|停止所有|停.*全部|stop.*all/i.test(text)) {
+        return { type: 'stop_all' };
     }
 
     if (/停止.*完整|停止.*主流程|停止.*全流程|停止.*工作流|停.*工作流|stop.*workflow/i.test(text)) {
@@ -200,6 +253,58 @@ function detectCommand(text) {
 
     if (/日志|log|最近.*记录/i.test(text)) {
         return { type: 'logs' };
+    }
+
+    if (/静音.*卡住|卡住.*静音|mute.*stale/i.test(text)) {
+        return { type: 'mute_stale_1h' };
+    }
+
+    if (/重试.*失败.*prompt|失败.*prompt.*重试|retry.*failed/i.test(text)) {
+        return { type: 'retry_failed_prompts' };
+    }
+
+    if (/交付状态|三尺寸.*状态|delivery.*status/i.test(text)) {
+        return { type: 'delivery_status' };
+    }
+
+    if (/扫描.*OK|扫描.*ok|scan.*delivery/i.test(text)) {
+        return { type: 'delivery_scan' };
+    }
+
+    if (/开始.*交付|启动.*交付|delivery.*start/i.test(text)) {
+        return { type: 'delivery_start' };
+    }
+
+    if (/继续.*交付|恢复.*交付|delivery.*resume/i.test(text)) {
+        return { type: 'delivery_resume' };
+    }
+
+    if (/停止.*交付|停.*交付|delivery.*stop/i.test(text)) {
+        return { type: 'delivery_stop' };
+    }
+
+    if (/标准化.*jpg|标准化.*JPG|交付.*标准化/i.test(text)) {
+        return { type: 'delivery_standardize' };
+    }
+
+    if (/最终.*打包|交付.*打包|finalize.*delivery/i.test(text)) {
+        return { type: 'delivery_finalize' };
+    }
+
+    if (/素材状态|素材分析状态|material.*status/i.test(text)) {
+        return { type: 'material_status' };
+    }
+
+    if (/任务表状态|任务表|workbook/i.test(text)) {
+        return { type: 'task_workbook_status' };
+    }
+
+    if (/知识库状态|knowledge.*status/i.test(text)) {
+        return { type: 'knowledge_status' };
+    }
+
+    if (/同步飞书库|同步知识库|飞书库同步/i.test(text)) {
+        return { type: 'feishu_sync_import' };
     }
 
     if (/进度|跑到哪|做到哪|目前工作进度|当前工作进度|progress/i.test(text)) {
@@ -309,17 +414,27 @@ class FeishuCommandRouter {
             case 'help':
                 return {
                     replyCard: {
-                        title: 'AI生图控制面板',
+                        title: 'AI图片生产远程控制台',
                         summary: `${buildHelpText()}\n\n常用操作可直接点按钮。`
                     }
                 };
-            case 'control_panel':
+            case 'control_panel': {
+                const panelTitleMap = {
+                    main: 'AI图片生产远程控制台',
+                    production: '生产面板',
+                    delivery: '交付面板',
+                    system: '系统面板',
+                    material: '素材面板',
+                    knowledge: '知识库面板'
+                };
                 return {
                     replyCard: {
-                        title: 'AI生图控制面板',
-                        summary: '常用按钮已精简，其他操作继续发送文字指令。'
+                        title: panelTitleMap[command.panel || 'main'] || 'AI图片生产远程控制台',
+                        panel: command.panel || 'main',
+                        summary: '远程值班面板：查看状态、进度、日志，必要时继续、停止或进入系统面板重启服务器。'
                     }
                 };
+            }
             case 'pair':
                 return await this.pairController(event);
             case 'status':
@@ -342,6 +457,10 @@ class FeishuCommandRouter {
                 const result = await this.controlService.stopAutomation();
                 return `停止工作流结果：${result.message || (result.success ? '已发送停止指令' : '执行失败')}`;
             }
+            case 'stop_all': {
+                const result = await this.controlService.stopAll();
+                return `停止全部结果：${result.message || (result.success ? '已发送停止指令' : '执行失败')}`;
+            }
             case 'start_mass': {
                 const result = await this.controlService.startMassProduction();
                 return `开始量产结果：${result.message || (result.success ? '已启动' : '执行失败')}`;
@@ -358,12 +477,28 @@ class FeishuCommandRouter {
                 const result = await this.controlService.startCreativeFullScale();
                 return `持续生图结果：${result.message || (result.success ? '已启动' : '执行失败')}`;
             }
+            case 'retry_failed_prompts':
+            case 'mute_stale_1h':
+            case 'delivery_status':
+            case 'delivery_scan':
+            case 'delivery_start':
+            case 'delivery_resume':
+            case 'delivery_stop':
+            case 'delivery_standardize':
+            case 'delivery_finalize':
+            case 'material_status':
+            case 'task_workbook_status':
+            case 'knowledge_status':
+            case 'feishu_sync_import': {
+                const result = await this.controlService.executeControlAction(command.type);
+                return result.message || (result.success ? '已执行' : '执行失败');
+            }
             case 'continue_workflow': {
                 const result = await this.controlService.continueAutomation();
                 return `继续工作流结果：${result.message || (result.success ? '已启动' : '执行失败')}`;
             }
             case 'restart_service':
-                return '暂未开放飞书直接重启服务器。为了避免中断正在生成的图片，请先用“状态”确认任务情况，再在本机执行服务重启。';
+                return this.createRestartServerConfirmation(key);
             case 'restart_workflow':
                 return this.createRestartWorkflowConfirmation(key);
             default:
@@ -408,6 +543,21 @@ class FeishuCommandRouter {
         ].join('\n');
     }
 
+    createRestartServerConfirmation(key) {
+        const code = createConfirmationCode(this.random);
+        this.pendingConfirmations.set(key, {
+            action: 'restart_service',
+            code,
+            expiresAt: this.now() + this.confirmTtlMs
+        });
+
+        return [
+            '重启服务器属于高风险操作。若当前有任务正在运行，后端会拒绝执行。',
+            `确认执行请输入：确认重启服务 ${code}`,
+            '确认码 5 分钟内有效。'
+        ].join('\n');
+    }
+
     async executeConfirmation(text, key) {
         this.cleanup();
         const pending = this.pendingConfirmations.get(key);
@@ -424,6 +574,11 @@ class FeishuCommandRouter {
         if (pending.action === 'restart_workflow') {
             const result = await this.controlService.restartWorkflow();
             return `重启工作流结果：${result.message || (result.success ? '已启动' : '执行失败')}`;
+        }
+
+        if (pending.action === 'restart_service') {
+            const result = await this.controlService.restartServer();
+            return `重启服务器结果：${result.message || (result.success ? '已安排重启' : '执行失败')}`;
         }
 
         return '未知确认操作，未执行。';

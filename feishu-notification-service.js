@@ -1,6 +1,7 @@
 const logger = require('./logger');
 
 const DEFAULT_COOLDOWN_MS = 10 * 60 * 1000;
+const DEFAULT_COMPLETION_SUMMARY_DELAY_MS = 5 * 60 * 1000;
 
 function truncateText(value, maxLength = 3500) {
     const text = String(value || '');
@@ -44,6 +45,11 @@ class FeishuNotificationService {
         this.history = [];
         this.maxHistory = 80;
         this.enabled = options.enabled !== false;
+        this.completionSummaryDelayMs = Number(options.completionSummaryDelayMs) > 0
+            ? Number(options.completionSummaryDelayMs)
+            : DEFAULT_COMPLETION_SUMMARY_DELAY_MS;
+        this.completionSummaryTimer = null;
+        this.completionSummaryQueue = [];
     }
 
     configure(options = {}) {
@@ -55,6 +61,9 @@ class FeishuNotificationService {
         }
         if (Number(options.cooldownMs) > 0) {
             this.cooldownMs = Number(options.cooldownMs);
+        }
+        if (Number(options.completionSummaryDelayMs) > 0) {
+            this.completionSummaryDelayMs = Number(options.completionSummaryDelayMs);
         }
     }
 
@@ -153,6 +162,101 @@ class FeishuNotificationService {
         }
     }
 
+    buildCompletionSummaryMessage(entries = []) {
+        const safeEntries = Array.isArray(entries) ? entries : [];
+        const title = safeEntries.length > 1 ? `任务完成汇总（${safeEntries.length} 项）` : '任务完成汇总';
+        const lines = [
+            `**${title}**`,
+            '',
+            `时间：${formatDateTime(new Date())}`
+        ];
+
+        safeEntries.slice(0, 12).forEach((entry, index) => {
+            const payload = entry && entry.payload ? entry.payload : {};
+            const parts = [
+                `${index + 1}. ${payload.title || '任务已完成'}`,
+                payload.taskType ? `类型：${payload.taskType}` : '',
+                payload.progress ? `进度：${payload.progress}` : '',
+                payload.message ? `说明：${payload.message}` : ''
+            ].filter(Boolean);
+            lines.push('', ...parts);
+        });
+
+        if (safeEntries.length > 12) {
+            lines.push('', `另有 ${safeEntries.length - 12} 项完成事件已合并。`);
+        }
+
+        return truncateText(lines.join('\n'));
+    }
+
+    async flushCompletionSummary(reason = 'timer') {
+        if (this.completionSummaryTimer) {
+            clearTimeout(this.completionSummaryTimer);
+            this.completionSummaryTimer = null;
+        }
+
+        const entries = this.completionSummaryQueue.splice(0);
+        if (!entries.length) {
+            return { success: true, skipped: true, message: '没有待发送的完成汇总' };
+        }
+
+        if (!this.enabled) {
+            this.record({ sent: false, skipped: true, reason: 'disabled', level: 'info', key: 'completion-summary', payload: { entries } });
+            return { success: false, skipped: true, message: '飞书通知未启用' };
+        }
+        if (!this.bridge || typeof this.bridge.sendMessage !== 'function') {
+            this.record({ sent: false, skipped: true, reason: 'bridge_missing', level: 'info', key: 'completion-summary', payload: { entries } });
+            return { success: false, skipped: true, message: '飞书桥接未配置' };
+        }
+
+        const text = this.buildCompletionSummaryMessage(entries);
+        try {
+            const result = await this.bridge.sendMessage(text);
+            this.record({
+                sent: true,
+                level: 'info',
+                key: `completion-summary:${reason}`,
+                payload: { count: entries.length, entries },
+                result
+            });
+            return result;
+        } catch (error) {
+            const message = error && error.message ? error.message : String(error || '未知错误');
+            logger.warn('飞书完成汇总发送失败: ' + message);
+            this.record({ sent: false, level: 'info', key: `completion-summary:${reason}`, payload: { entries }, error: message });
+            return { success: false, message };
+        }
+    }
+
+    notifyCompletionSummarySoon(payload = {}, options = {}) {
+        this.completionSummaryQueue.push({
+            payload,
+            options,
+            queuedAt: new Date().toISOString()
+        });
+
+        if (this.completionSummaryTimer) {
+            return {
+                success: true,
+                queued: true,
+                message: '完成通知已加入汇总队列'
+            };
+        }
+
+        this.completionSummaryTimer = setTimeout(() => {
+            this.flushCompletionSummary('batch').catch(error => {
+                logger.warn('飞书完成汇总异步发送失败: ' + error.message);
+            });
+        }, this.completionSummaryDelayMs);
+        this.completionSummaryTimer.unref();
+
+        return {
+            success: true,
+            queued: true,
+            message: '完成通知已加入汇总队列'
+        };
+    }
+
     notifySoon(payload = {}, options = {}) {
         setImmediate(() => {
             this.notify(payload, options).catch(error => {
@@ -165,6 +269,8 @@ class FeishuNotificationService {
         return {
             enabled: this.enabled,
             cooldownMs: this.cooldownMs,
+            completionSummaryDelayMs: this.completionSummaryDelayMs,
+            completionSummaryQueued: this.completionSummaryQueue.length,
             cooldowns: Array.from(this.cooldowns.entries()).map(([key, lastAt]) => ({
                 key,
                 lastAt: new Date(lastAt).toISOString()

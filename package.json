@@ -12,7 +12,7 @@
     "test:qa": "node tests/qa/qa-test-runner.js",
     "test:feishu": "node scripts/test-feishu-command-router.js",
     "test:creative-agent": "node scripts/test-creative-agent-parser-quality.js",
-    "test:creative-auto": "node scripts/test-creative-auto-prompt-gate.js && node scripts/test-creative-auto-run-once-legil.js && node scripts/test-creative-auto-continue-legil.js && node scripts/test-creative-auto-pause-resume.js",
+    "test:creative-auto": "node scripts/test-creative-direction-plan-gate.js && node scripts/test-creative-auto-two-stage-direction-prompts.js && node scripts/test-creative-direction-repair-loop.js && node scripts/test-creative-auto-stale-agent-guard.js && node scripts/test-creative-auto-prompt-gate.js && node scripts/test-creative-auto-run-once-legil.js && node scripts/test-creative-auto-continue-legil.js && node scripts/test-creative-auto-pause-resume.js && node scripts/test-creative-auto-resume-advance.js && node scripts/test-creative-auto-poll-final-queue.js && node scripts/test-creative-auto-pipeline-prefetch.js && node scripts/test-creative-auto-pipeline-prefetch-skip.js && node scripts/test-creative-batch-failed-prompt-record.js && node scripts/test-continue-task-priority.js",
     "test:s5-prompt-translator": "node scripts/test-creative-prompt-translator.js",
     "test:s6-feedback-learning": "node scripts/test-feedback-learning-memory.js",
     "test:s7-acceptance": "node scripts/s7-acceptance-check.js",
@@ -34,6 +34,7 @@
     "test:s9-feishu-sync": "node scripts/test-feishu-readonly-sync.js",
     "test:s10-postprocess": "node scripts/test-s10-postprocess-trace.js && node scripts/test-s10-delivery-candidates.js",
     "test:p5-creative-brief": "node scripts/test-material-analysis-creative-brief.js && node scripts/test-material-analysis-creative-expansion.js",
+    "test:p0": "node scripts/test-autonomy-diagnostics.js && node scripts/test-page-entry-smoke.js",
     "import:creative-references": "node scripts/import-creative-reference-images.js"
   },
   "keywords": [
@@ -49,6 +50,7 @@
     "canvas": "^3.2.3",
     "express": "^4.18.2",
     "fs-extra": "^11.3.5",
+    "multer": "^2.1.1",
     "playwright": "^1.59.1",
     "xlsx": "^0.18.5"
   }

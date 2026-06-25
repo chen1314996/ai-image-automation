@@ -206,6 +206,17 @@ function formatDateTime(value) {
     return date.toLocaleString('zh-CN', { hour12: false });
 }
 
+function formatShortTime(value) {
+    if (!value) {
+        return '未知';
+    }
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+        return String(value);
+    }
+    return date.toLocaleTimeString('zh-CN', { hour12: false });
+}
+
 function normalizeApiBaseUrl(apiBaseUrl) {
     return String(apiBaseUrl || 'http://127.0.0.1:3066').replace(/\/+$/, '');
 }
@@ -287,12 +298,29 @@ class FeishuControlService {
         };
     }
 
+    panelResult(panel, message) {
+        const panelTitleMap = {
+            main: 'AI图片生产远程控制台',
+            production: '生产面板',
+            delivery: '交付面板',
+            system: '系统面板',
+            material: '素材面板',
+            knowledge: '知识库面板'
+        };
+        return {
+            success: true,
+            message: message || '已打开分面板。',
+            cardOptions: {
+                panel,
+                title: panelTitleMap[panel] || 'AI生图控制面板'
+            }
+        };
+    }
+
     async getStatusSummary() {
         const state = await this.collectPlatformState();
         const unified = state.runState || {};
         const workflowStatus = state.workflow && state.workflow.status ? state.workflow.status : {};
-        const workflowDetail = workflowStatus.currentStatus || {};
-        const workflowStats = workflowStatus.stats || {};
         const workflowResume = state.workflowResume && state.workflowResume.resume ? state.workflowResume.resume : {};
         const legil = state.legil || {};
         const creativeResume = state.creativeResume && state.creativeResume.resume ? state.creativeResume.resume : {};
@@ -302,42 +330,49 @@ class FeishuControlService {
         const legilProgress = resolveLegilDisplayProgress(legil, creativeResume, state.creativeProgress);
         const displayTaskType = legil.taskType || legilProgress.taskType;
         const browserStatus = state.browser && state.browser.status ? state.browser.status : {};
-        const agentStatus = state.agent && state.agent.status ? state.agent.status : {};
-        const suggestion = creativeAuto.suggestion && creativeAuto.suggestion.next ? creativeAuto.suggestion.next : null;
-        const suggestionDirection = suggestion && suggestion.direction ? suggestion.direction : {};
-        const preflight = creativeAuto.preflight || {};
-        const config = creativeAuto.config || {};
-        const settings = config.generationSettings || {};
-        const quota = creativeAuto.quota || {};
-        const knowledge = creativeAuto.knowledge || {};
+        const activeRun = unified.activeRun || {};
+        const queue = autoRun.targetQueueProgress || autoRun.targetQueue || activeRun.targetQueue || {};
+        const runStatus = unified.statusLabel || runStatusLabel(unified.status || creativeAuto.status || (workflowStatus.isRunning ? 'running' : 'idle'));
+        const runPhase = unified.phaseLabel || (autoRun.runId ? creativeAutoPhaseLabel(autoRun.phase) : phaseLabel(legilProgress.phase || unified.phase));
+        const taskName = activeRun.runTypeLabel || (displayTaskType ? taskTypeLabel(displayTaskType) : '') || (workflowStatus.isRunning ? '批量产图' : '无');
+        const direction = runDirectionLabel(autoRun) || queue.currentTargetName || queue.targetName || activeRun.currentName || legilProgress.currentName || '';
+        const queueCurrent = numberOrZero(queue.currentIndex || queue.index);
+        const queueTotal = numberOrZero(queue.totalTargets || queue.total);
+        const legilTotal = numberOrZero(legilProgress.total);
+        const legilCompleted = numberOrZero(legilProgress.completed);
+        const saved = numberOrZero(legilProgress.saved || (activeRun.counts && activeRun.counts.savedImages));
+        const failed = numberOrZero(legilProgress.failed || (activeRun.counts && activeRun.counts.failedPrompts));
+        const canResume = Boolean((unified.capabilities && unified.capabilities.canResume) ||
+            creativeResume.hasResume ||
+            workflowResume.hasResume ||
+            (autoRunInfo.source === 'resumable' && autoRun.runId));
+        const browserLine = `${browserStatus.browserRunning ? '运行中' : '未启动'}，Legil ${browserStatus.pages && browserStatus.pages.legil ? '已打开' : '未打开'}`;
+        let advice = '新任务请在网页端确认参数';
+        if (String(unified.status || '').includes('running') || legil.running || workflowStatus.isRunning) {
+            advice = failed > 0 ? '有失败项；先看日志，必要时暂停' : '继续等待；异常时看日志';
+        } else if (canResume) {
+            advice = '确认页面正常后继续任务';
+        } else if (['failed', 'error'].includes(String(unified.status || '').toLowerCase())) {
+            advice = '先看日志，必要时停止全部';
+        }
 
         const lines = [
-            '**创意拓展控制台状态**',
-            ...unifiedRunSummary(unified),
-            '',
-            `自动创意：${runStatusLabel(creativeAuto.status)}${autoRun.runId ? `，${autoRunInfo.source === 'active' ? '当前' : '可继续'} run ${shortId(autoRun.runId)}` : ''}`,
-            `阶段：${autoRun.runId ? `${runStatusLabel(autoRun.status)} / ${creativeAutoPhaseLabel(autoRun.phase)}` : (preflight.ok === false ? '环境检查未通过' : '等待启动')}`,
-            `模式：${modeLabel(autoRun.mode, autoRun.agentOnly)}`,
-            `方向：${runDirectionLabel(autoRun) || (suggestionDirection.path || suggestionDirection.name || '暂无')}`,
-            `Prompt Gate：${promptGateSummary(autoRun)}`,
-            `预计图片：${numberOrZero(autoRun.expectedImageTotal) || '暂无'}；今日已记账：${numberOrZero(quota.usedImagesToday)} 张`,
-            `Legil创意：${legil.running ? '运行中' : '未运行'}${displayTaskType ? `（${taskTypeLabel(displayTaskType)}）` : ''}，阶段 ${phaseLabel(legilProgress.phase)}`,
-            `Legil进度：${legilProgressSummary(legilProgress)}`,
-            `Legil当前：${legilProgress.currentName || '暂无'}`,
-            `当前动作：${firstLine(autoRun.message || legilProgress.currentAction || workflowDetail.currentAction || '暂无')}`,
-            `创意续跑：${creativeResume.hasResume ? `可继续，剩余 ${creativeResume.remainingCount}/${creativeResume.total} 组，阶段 ${phaseLabel(creativeResume.phase)}` : '无可继续任务'}`,
-            `推荐方向：${suggestionDirection.path || suggestionDirection.name || '暂无'}${suggestion && Number.isFinite(Number(suggestion.score)) ? `，评分 ${suggestion.score}` : ''}`,
-            `环境检查：${preflight.ok === false ? '未通过' : '通过'}；知识库：${knowledge.imported ? '已导入' : '未导入'}${knowledge.counts ? `，方向 ${knowledge.counts.directions || 0} 个，参考图 ${knowledge.counts.referenceImages || 0} 张` : ''}`,
-            `生成参数：${settings.imageModel || '--'} / ${settings.aspectRatio || '--'} / ${settings.resolution || '--'} / ${settings.outputQuantity || 1} 张`,
-            `浏览器：${browserStatus.browserRunning ? '运行中' : '未启动'}，Legil页面：${browserStatus.pages && browserStatus.pages.legil ? '已打开' : '未打开'}，Agent：${agentStatus.running ? '运行中' : '空闲'}`,
-            `完整工作流：${workflowStatus.isRunning ? '运行中' : '未运行'}，可继续：${workflowResume.hasResume ? '是' : '否'}`
-        ];
+            '**运行状态**',
+            `状态：${runStatus}`,
+            `阶段：${runPhase}`,
+            `任务：${taskName}`,
+            direction ? `方向：${firstLine(direction, 42)}` : '',
+            queueTotal ? `队列：${queueCurrent}/${queueTotal}` : '',
+            legilTotal || saved || failed ? `生图：${legilCompleted}/${legilTotal || 0}，保存 ${saved}，失败 ${failed}` : '',
+            `浏览器：${browserLine}`,
+            `建议：${advice}`
+        ].filter(Boolean);
 
         if (state.workflowError) {
-            lines.push(`状态接口异常：${state.workflowError.message}`);
+            lines.push(`接口异常：${state.workflowError.message}`);
         }
         if (state.runStateError) {
-            lines.push(`统一状态接口异常：${state.runStateError.message}`);
+            lines.push(`状态异常：${state.runStateError.message}`);
         }
 
         return truncateText(lines.join('\n'));
@@ -356,31 +391,54 @@ class FeishuControlService {
         const autoRun = autoRunInfo.run || {};
         const legilProgress = resolveLegilDisplayProgress(legil, creativeResume, state.creativeProgress);
         const displayTaskType = legil.taskType || legilProgress.taskType;
-        const agentTask = autoRun.agentTask || {};
-        const quota = autoRun.quota || creativeAuto.quota || {};
-
+        const activeRun = unified.activeRun || {};
+        const queue = autoRun.targetQueueProgress || autoRun.targetQueue || activeRun.targetQueue || {};
+        const queueCurrent = numberOrZero(queue.currentIndex || queue.index);
+        const queueTotal = numberOrZero(queue.totalTargets || queue.total);
+        const legilTotal = numberOrZero(legilProgress.total);
+        const legilCompleted = numberOrZero(legilProgress.completed);
+        const saved = numberOrZero(legilProgress.saved || (activeRun.counts && activeRun.counts.savedImages));
+        const outputTotal = numberOrZero(legilProgress.outputTotal || autoRun.expectedImageTotal);
+        const failed = numberOrZero(legilProgress.failed || (activeRun.counts && activeRun.counts.failedPrompts));
+        const currentName = legilProgress.currentName || queue.currentTargetName || queue.targetName || runDirectionLabel(autoRun) || '';
+        const currentAction = legilProgress.currentAction || (activeRun.current && activeRun.current.message) || workflowDetail.currentAction || '';
+        const taskName = (displayTaskType ? taskTypeLabel(displayTaskType) : '') || activeRun.runTypeLabel || (workflowStatus.isRunning ? '批量产图' : '无');
         const lines = [
-            '**创意拓展进度**',
-            ...unifiedRunSummary(unified),
-            '',
-            `Run：${autoRun.runId ? `${shortId(autoRun.runId)}（${autoRunInfo.source === 'active' ? '当前运行' : '可继续'}）` : '暂无自动创意 run'}`,
-            `自动创意阶段：${autoRun.runId ? `${runStatusLabel(autoRun.status)} / ${creativeAutoPhaseLabel(autoRun.phase)}` : runStatusLabel(creativeAuto.status)}`,
-            `模式：${modeLabel(autoRun.mode, autoRun.agentOnly)}`,
-            `方向：${runDirectionLabel(autoRun) || '暂无'}`,
-            `Agent：${agentTask.phase || agentTask.status ? `${phaseLabel(agentTask.phase || agentTask.status)}${agentTask.currentAction ? `，${firstLine(agentTask.currentAction, 80)}` : ''}` : '暂无运行中的 Agent'}`,
-            `Prompt Gate：${promptGateSummary(autoRun)}`,
-            `生图额度：${quota.unlimitedImages || quota.unlimitedPrompts ? '不限额' : `预计 ${numberOrZero(quota.expectedImages)} 张`}；预计图片：${numberOrZero(autoRun.expectedImageTotal) || '暂无'}`,
-            `Legil任务类型：${taskTypeLabel(displayTaskType)}`,
-            `Legil阶段：${phaseLabel(legilProgress.phase)}`,
-            `Legil提示词：${legilProgressSummary(legilProgress)}`,
-            `Legil当前方向：${legilProgress.currentName || '暂无'}`,
-            `Legil动作：${firstLine(legilProgress.currentAction || '暂无')}`,
-            `创意续跑：${creativeResume.hasResume ? `剩余 ${creativeResume.remainingCount}/${creativeResume.total}，阶段 ${phaseLabel(creativeResume.phase)}` : '无可继续任务'}`,
-            `完整工作流：${workflowStatus.isRunning ? '运行中' : '未运行'}，图片 ${workflowStats.processed || 0}/${workflowStatus.totalImages || 0}，失败 ${workflowStats.failed || 0}`,
-            `完整工作流动作：${workflowDetail.currentAction || '暂无'}`,
-            `最近更新：${formatDateTime(autoRun.updatedAt || legilProgress.updatedAt || workflowDetail.updatedAt || creativeResume.updatedAt)}`
-        ];
+            '**当前进度**',
+            `任务：${taskName}`,
+            queueTotal ? `目标：${queueCurrent}/${queueTotal}` : '',
+            currentName ? `当前：${firstLine(currentName, 42)}` : '',
+            legilTotal || legilCompleted ? `Legil：${legilCompleted}/${legilTotal}` : '',
+            saved || outputTotal ? `保存：${saved}/${outputTotal || saved}` : '',
+            `失败：${failed}`,
+            currentAction ? `动作：${firstLine(currentAction, 54)}` : '',
+            workflowStatus.isRunning && !legilTotal ? `参考图：${workflowStats.processed || 0}/${workflowStatus.totalImages || 0}` : '',
+            `更新：${formatShortTime(autoRun.updatedAt || legilProgress.updatedAt || workflowDetail.updatedAt || creativeResume.updatedAt || unified.updatedAt)}`
+        ].filter(Boolean);
 
+        return truncateText(lines.join('\n'));
+    }
+
+    async getSystemSummary() {
+        const [health, feishu, browser] = await Promise.all([
+            this.safeGet('/api/health'),
+            this.safeGet('/api/feishu-cli/status'),
+            this.safeGet('/api/browser-status')
+        ]);
+        const bridge = feishu.ok && feishu.data && feishu.data.bridge ? feishu.data.bridge : {};
+        const browserStatus = browser.ok && browser.data ? browser.data.status || {} : {};
+        const pages = browserStatus.pages || {};
+        const lastError = bridge.lastError || (health.ok ? '' : health.error && health.error.message) || '';
+        const lines = [
+            '**系统状态**',
+            `服务：${health.ok ? '运行中' : '异常'}`,
+            `飞书桥接：${bridge.ready ? '已连接' : '异常'}`,
+            `卡片按钮：${bridge.cardActionReady ? '可用' : '不可用'}`,
+            `浏览器：${browserStatus.browserRunning ? '运行中' : '未启动'}`,
+            `Legil页面：${pages.legil ? '已打开' : '未打开'}`,
+            `最近错误：${lastError ? firstLine(lastError, 80) : '无'}`,
+            `建议：${bridge.ready && bridge.cardActionReady ? '无需处理' : '先重发控制面板；仍异常再重启服务器'}`
+        ];
         return truncateText(lines.join('\n'));
     }
 
@@ -461,6 +519,12 @@ class FeishuControlService {
             success: true,
             message: '当前没有正在运行的工作流或 Legil 任务'
         };
+    }
+
+    async stopAll() {
+        return await this.postJson('/api/run-state/stop-all', {
+            source: 'feishu'
+        });
     }
 
     async continueWorkflow() {
@@ -575,9 +639,24 @@ class FeishuControlService {
     }
 
     async continueAutomation() {
-        const workflowResume = await this.getJson('/api/workflow/resume-info');
-        if (workflowResume.resume && workflowResume.resume.hasResume) {
-            return await this.continueWorkflow();
+        const legil = await this.getJson('/api/legil/task-status');
+        if (legil.running || legil.workflowRunning) {
+            return {
+                success: false,
+                message: '当前已有任务正在运行，不能继续任务'
+            };
+        }
+
+        const creativeAuto = await this.getJson('/api/creative-auto/status').catch(() => null);
+        const autoRun = creativeAuto && creativeAuto.resumableRun ? creativeAuto.resumableRun : null;
+        if (autoRun && autoRun.runId) {
+            const result = await this.postJson(`/api/creative-auto/runs/${encodeURIComponent(autoRun.runId)}/resume`, {
+                source: 'feishu'
+            });
+            return {
+                success: result.success !== false,
+                message: result.message || '已继续自动创意任务'
+            };
         }
 
         const creativeResume = await this.getJson('/api/legil/creative-resume');
@@ -585,10 +664,185 @@ class FeishuControlService {
             return await this.continueCreative();
         }
 
+        const workflowResume = await this.getJson('/api/workflow/resume-info');
+        if (workflowResume.resume && workflowResume.resume.hasResume) {
+            return await this.continueWorkflow();
+        }
+
         return {
             success: false,
             message: '没有可继续的任务'
         };
+    }
+
+    async retryFailedPrompts() {
+        const creativeAuto = await this.getJson('/api/creative-auto/status');
+        const run = creativeAuto.activeRun || creativeAuto.resumableRun || null;
+        if (!run || !run.runId) {
+            return {
+                success: false,
+                message: '当前没有可重试的自动创意 run'
+            };
+        }
+        return await this.postJson(`/api/creative-auto/runs/${encodeURIComponent(run.runId)}/retry-failed-prompts`, {
+            source: 'feishu'
+        });
+    }
+
+    async getDeliveryStatusSummary() {
+        const response = await this.getJson('/api/delivery/status');
+        const run = response.run || {};
+        const task = response.task || {};
+        const progress = task.progress || {};
+        if (!response.hasRun) {
+            return '暂无三尺寸交付 run。可先在网页端配置输入目录后执行“扫描OK图”。';
+        }
+        return [
+            '**三尺寸交付状态**',
+            `Run：${run.runId || '未知'}`,
+            `任务：${task.running ? '运行中' : '未运行'}${task.stopRequested ? '，停止中' : ''}`,
+            `总 job：${run.totalJobs || 0}`,
+            `状态：${run.status || '未知'}`,
+            `进度：${progress.completed || 0}/${progress.total || 0}，成功 ${progress.success || 0}，失败 ${progress.failed || 0}，保存 ${progress.saved || 0}`,
+            `当前：${firstLine(progress.currentAction || '暂无')}`
+        ].join('\n');
+    }
+
+    async getLatestDeliveryRunId() {
+        const response = await this.getJson('/api/delivery/status');
+        const runId = response && response.run && response.run.runId ? String(response.run.runId) : '';
+        if (!runId) {
+            throw new Error('暂无三尺寸交付 run，请先扫描 OK 图。');
+        }
+        return runId;
+    }
+
+    async deliveryScan() {
+        return await this.postJson('/api/delivery/scan', {});
+    }
+
+    async deliveryStart() {
+        return await this.postJson('/api/delivery/start', {});
+    }
+
+    async deliveryResume() {
+        return await this.postJson('/api/delivery/resume', {});
+    }
+
+    async deliveryStop() {
+        return await this.postJson('/api/delivery/stop', {});
+    }
+
+    async deliveryStandardize() {
+        const runId = await this.getLatestDeliveryRunId();
+        return await this.postJson(`/api/delivery/runs/${encodeURIComponent(runId)}/standardize`, {});
+    }
+
+    async deliveryFinalize() {
+        const runId = await this.getLatestDeliveryRunId();
+        return await this.postJson(`/api/delivery/runs/${encodeURIComponent(runId)}/finalize`, {});
+    }
+
+    async getMaterialStatusSummary() {
+        const imports = await this.getJson('/api/material-analysis/imports');
+        const runs = Array.isArray(imports.runs) ? imports.runs : (Array.isArray(imports.imports) ? imports.imports : []);
+        const latest = runs[0] || {};
+        if (!runs.length) {
+            return '暂无素材分析导入记录。';
+        }
+        return [
+            '**素材分析状态**',
+            `最近导入：${latest.runId || latest.importId || '未知'}`,
+            `文件：${latest.fileName || latest.sourceFileName || '未知'}`,
+            `状态：${latest.status || '未知'}`,
+            `素材数：${latest.totalMaterials || latest.materialCount || 0}`,
+            `更新时间：${formatDateTime(latest.updatedAt || latest.createdAt)}`
+        ].join('\n');
+    }
+
+    async getLatestMaterialRunId() {
+        const imports = await this.getJson('/api/material-analysis/imports');
+        const runs = Array.isArray(imports.runs) ? imports.runs : (Array.isArray(imports.imports) ? imports.imports : []);
+        const latest = runs[0] || {};
+        const runId = latest.runId || latest.importId || '';
+        if (!runId) {
+            throw new Error('暂无素材分析导入记录。');
+        }
+        return runId;
+    }
+
+    async materialWeeklyReport() {
+        const runId = await this.getLatestMaterialRunId();
+        return await this.postJson(`/api/material-analysis/imports/${encodeURIComponent(runId)}/reports/generate`, {
+            source: 'feishu'
+        });
+    }
+
+    async materialCreativePlan() {
+        const runId = await this.getLatestMaterialRunId();
+        return await this.postJson(`/api/material-analysis/imports/${encodeURIComponent(runId)}/creative-plan`, {
+            source: 'feishu'
+        });
+    }
+
+    async getTaskWorkbookSummary() {
+        const response = await this.getJson('/api/task-workbooks/imports');
+        const imports = Array.isArray(response.imports) ? response.imports : [];
+        const latest = imports[0] || {};
+        if (!imports.length) {
+            return '暂无自动化任务表导入记录。';
+        }
+        const importId = latest.importId || latest.id || '';
+        let vision = null;
+        if (importId) {
+            vision = await this.safeGet(`/api/task-workbooks/imports/${encodeURIComponent(importId)}/vision/status`);
+        }
+        const visionData = vision && vision.ok ? vision.data || {} : {};
+        return [
+            '**任务表状态**',
+            `最近导入：${importId || '未知'}`,
+            `文件：${latest.fileName || latest.sourceFileName || '未知'}`,
+            `方向数：${latest.directionCount || latest.totalDirections || 0}`,
+            `视觉整理：${visionData.status || '未知'}，${visionData.completed || 0}/${visionData.total || 0}`
+        ].join('\n');
+    }
+
+    async getKnowledgeSummary() {
+        const overview = await this.safeGet('/api/creative-knowledge/overview');
+        const status = overview.ok ? overview.data : await this.getJson('/api/creative-knowledge/status');
+        const counts = status.counts || status.summary || {};
+        return [
+            '**创意知识库状态**',
+            `方向：${counts.directions || counts.directionCount || 0}`,
+            `参考图：${counts.referenceImages || counts.referenceImageCount || 0}`,
+            `资产：${counts.assets || counts.assetCount || 0}`,
+            `反馈：${counts.feedback || counts.feedbackCount || 0}`,
+            `Run：${counts.runs || counts.runCount || 0}`
+        ].join('\n');
+    }
+
+    async getFeishuSyncSummary() {
+        const sync = await this.safeGet('/api/creative-knowledge/feishu-sync/status');
+        const direction = await this.safeGet('/api/creative-knowledge/feishu-direction/status');
+        const syncData = sync.ok ? sync.data : {};
+        const directionData = direction.ok ? direction.data : {};
+        return [
+            '**飞书同步状态**',
+            `知识库同步：${syncData.configured === false ? '未配置' : '可检查'}，最近操作 ${formatDateTime(syncData.lastOperation && syncData.lastOperation.createdAt)}`,
+            `方向表同步：${directionData.configured === false ? '未配置' : '可检查'}，最近操作 ${formatDateTime(directionData.lastOperation && directionData.lastOperation.createdAt)}`
+        ].join('\n');
+    }
+
+    async feishuSyncImport() {
+        return await this.postJson('/api/creative-knowledge/feishu-sync/sync', {
+            source: 'feishu'
+        });
+    }
+
+    async feishuDirectionImport() {
+        return await this.postJson('/api/creative-knowledge/feishu-direction/sync-import', {
+            source: 'feishu'
+        });
     }
 
     async startMassProduction() {
@@ -615,6 +869,8 @@ class FeishuControlService {
     async executeControlAction(action) {
         switch (String(action || '').trim()) {
             case 'status':
+            case 'run_center':
+            case 'production_status':
                 return {
                     success: true,
                     message: await this.getStatusSummary()
@@ -642,6 +898,8 @@ class FeishuControlService {
                 return await this.startCreativeFullScale();
             case 'start_mass':
                 return await this.startMassProduction();
+            case 'retry_failed_prompts':
+                return await this.retryFailedPrompts();
             case 'continue_creative':
                 return await this.continueCreative();
             case 'continue_workflow':
@@ -650,6 +908,72 @@ class FeishuControlService {
                 return await this.stopCreative();
             case 'stop_workflow':
                 return await this.stopAutomation();
+            case 'stop_all':
+                return await this.stopAll();
+            case 'mute_stale_1h':
+                return {
+                    success: true,
+                    message: '卡住提醒已改为一次性提醒；同一任务后续会静默，进度恢复或任务切换后自动重置。'
+                };
+            case 'panel':
+            case 'panel_main':
+                return this.panelResult('main', await this.getStatusSummary());
+            case 'panel_production':
+                return this.panelResult('production', '生产面板已打开。');
+            case 'panel_delivery':
+                return this.panelResult('delivery', await this.getDeliveryStatusSummary());
+            case 'panel_system':
+                return this.panelResult('system', await this.getSystemSummary());
+            case 'panel_material':
+                return this.panelResult('material', await this.getMaterialStatusSummary());
+            case 'panel_knowledge':
+                return this.panelResult('knowledge', await this.getKnowledgeSummary());
+            case 'delivery_status':
+                return {
+                    success: true,
+                    message: await this.getDeliveryStatusSummary()
+                };
+            case 'delivery_scan':
+                return await this.deliveryScan();
+            case 'delivery_start':
+                return await this.deliveryStart();
+            case 'delivery_resume':
+                return await this.deliveryResume();
+            case 'delivery_stop':
+                return await this.deliveryStop();
+            case 'delivery_standardize':
+                return await this.deliveryStandardize();
+            case 'delivery_finalize':
+                return await this.deliveryFinalize();
+            case 'material_status':
+                return {
+                    success: true,
+                    message: await this.getMaterialStatusSummary()
+                };
+            case 'task_workbook_status':
+                return {
+                    success: true,
+                    message: await this.getTaskWorkbookSummary()
+                };
+            case 'material_weekly_report':
+                return await this.materialWeeklyReport();
+            case 'material_creative_plan':
+                return await this.materialCreativePlan();
+            case 'knowledge_status':
+                return {
+                    success: true,
+                    message: await this.getKnowledgeSummary()
+                };
+            case 'feishu_sync_status':
+            case 'feishu_direction_status':
+                return {
+                    success: true,
+                    message: await this.getFeishuSyncSummary()
+                };
+            case 'feishu_sync_import':
+                return await this.feishuSyncImport();
+            case 'feishu_direction_import':
+                return await this.feishuDirectionImport();
             case 'restart_prompt':
                 return {
                     success: true,
@@ -657,11 +981,6 @@ class FeishuControlService {
                 };
             case 'restart_server':
                 return await this.restartServer();
-            case 'panel':
-                return {
-                    success: true,
-                    message: await this.getStatusSummary()
-                };
             default:
                 return {
                     success: false,

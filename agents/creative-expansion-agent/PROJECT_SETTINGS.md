@@ -45,9 +45,10 @@ Agent 是智能策划层，不是执行层。它不直接操作 Legil 浏览器�
 每个原始方向默认生成：
 
 ```text
-3 个新方向
-每个新方向 4 条 prompt
-合计 12 条 prompt
+8 个候选延展方向
+后台自动筛选 4 个入选延展方向
+每个入选延展方向 2 条 prompt
+合计约 8 条进入 Prompt Gate 的 prompt
 每条 prompt 由 Legil 生成 4 张图
 理论单轮最多 48 张图
 ```
@@ -141,21 +142,11 @@ Legil 自动生图
 根据知识库自动拓展
 ```
 
-这类任务优先输出 `新方向拓展表`，不要输出冗长策划文章。
+这类任务优先输出稳定 JSON，不要输出冗长策划文章、Markdown 表格、Excel 表格或 CSV。
 
-表头必须稳定：
+后台自动化任务必须优先输出稳定 JSON，顶层包含 `directionPlans` 和 `candidateDirections`。`directionPlans` 作为隐藏式方向规划层，包含候选延展池、画面抓手、排重说明、风险备注、制作建议和每个延展的 prompt pair。
 
-```text
-参考方向
-新方向名称
-方向描述
-来源于哪条详细迭代策略
-提示词1
-提示词2
-提示词3
-提示词4
-提示词5
-```
+如果 Direction Plan Gate 或 Prompt Gate 后合格 prompt 不足，后台会最多自动调用 Winky 修复 2 轮，只补生成缺口方向/缺口 prompt，并把被淘汰和被拒绝原因传回模型。
 
 如果调用层明确要求完整分析，再输出四部分：
 
@@ -166,7 +157,7 @@ Legil 自动生图
 新方向拓展表
 ```
 
-同时输出 `candidateDirections` JSON 代码块，供程序解析和后续入库。表格与 JSON 必须表达同一批候选方向。
+完整分析模式也要同时输出 `directionPlans` 和 `candidateDirections` JSON，供程序解析和后续入库。人工表格与 JSON 必须表达同一批候选方向。
 
 每个 JSON 候选方向至少包含：
 

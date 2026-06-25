@@ -14,6 +14,11 @@ body.material-analysis-mode #doubaoStatusItem {
     min-width: 0;
 }
 
+.material-analysis-shell.is-unimported .material-analysis-imported-section,
+.material-analysis-shell.is-imported .material-analysis-unimported-section {
+    display: none;
+}
+
 .material-analysis-shell .card {
     min-width: 0;
     border-color: rgba(255, 255, 255, 0.075);
@@ -88,6 +93,79 @@ body.material-analysis-mode #doubaoStatusItem {
     grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
     gap: 16px;
     align-items: start;
+}
+
+.material-analysis-import-dropzone {
+    position: relative;
+    transition:
+        border-color 140ms ease,
+        background 140ms ease,
+        box-shadow 140ms ease,
+        transform 140ms ease;
+}
+
+.material-analysis-import-dropzone::after {
+    content: "松手读取素材数据表";
+    position: absolute;
+    inset: 12px;
+    z-index: 3;
+    display: grid;
+    place-items: center;
+    border: 1px dashed rgba(94, 234, 212, 0.62);
+    border-radius: 8px;
+    background: rgba(5, 18, 22, 0.78);
+    color: #ccfbf1;
+    font-size: 16px;
+    font-weight: 900;
+    letter-spacing: 0;
+    opacity: 0;
+    pointer-events: none;
+    transform: scale(0.985);
+    transition:
+        opacity 120ms ease,
+        transform 120ms ease;
+}
+
+.material-analysis-import-dropzone.is-dragging-file {
+    border-color: rgba(94, 234, 212, 0.62);
+    background:
+        linear-gradient(180deg, rgba(20, 83, 78, 0.24), rgba(10, 14, 18, 0.86));
+    box-shadow:
+        0 0 0 2px rgba(45, 212, 191, 0.12),
+        0 18px 44px rgba(0, 0, 0, 0.24);
+    transform: translateY(-1px);
+}
+
+.material-analysis-import-dropzone.is-dragging-file::after {
+    opacity: 1;
+    transform: scale(1);
+}
+
+.material-analysis-drop-hint {
+    margin-top: 8px;
+    min-height: 30px;
+    padding: 7px 10px;
+    border: 1px dashed rgba(94, 234, 212, 0.24);
+    border-radius: 8px;
+    background: rgba(20, 184, 166, 0.055);
+    color: #9bd8d0;
+    font-size: 12px;
+    font-weight: 800;
+    line-height: 1.35;
+}
+
+.material-analysis-drop-hint.is-ready {
+    border-style: solid;
+    border-color: rgba(34, 197, 94, 0.34);
+    background: rgba(34, 197, 94, 0.095);
+    color: #bbf7d0;
+}
+
+.material-analysis-drop-hint.is-error {
+    border-style: solid;
+    border-color: rgba(248, 113, 113, 0.36);
+    background: rgba(248, 113, 113, 0.09);
+    color: #fecaca;
 }
 
 .material-analysis-kpis {
@@ -1260,6 +1338,11 @@ body.material-analysis-preview-open {
     color: #fca5a5;
 }
 
+.material-analysis-empty-flow {
+    margin-top: 12px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 @media (max-width: 980px) {
     .material-analysis-share-row {
         grid-template-columns: minmax(120px, 0.42fr) minmax(100px, 1fr);
@@ -1329,6 +1412,94 @@ body.material-analysis-preview-open {
     .material-analysis-creative-target-head {
         grid-template-columns: 1fr;
     }
+
+    .material-analysis-table-wrap {
+        max-height: none;
+        overflow: visible;
+        border: 0;
+        background: transparent;
+    }
+
+    .material-analysis-table,
+    .material-analysis-direction-table,
+    .material-analysis-top-table {
+        display: block;
+        min-width: 0;
+        width: 100%;
+        border-collapse: separate;
+    }
+
+    .material-analysis-table thead {
+        display: none;
+    }
+
+    .material-analysis-table tbody {
+        display: grid;
+        gap: 10px;
+    }
+
+    .material-analysis-table tr {
+        display: grid;
+        gap: 7px;
+        padding: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.075);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.035);
+    }
+
+    .material-analysis-table td {
+        display: grid;
+        grid-template-columns: minmax(82px, 0.34fr) minmax(0, 1fr);
+        gap: 8px;
+        align-items: start;
+        padding: 0;
+        border-bottom: 0;
+        background: transparent !important;
+        color: rgba(226, 232, 240, 0.86);
+        overflow-wrap: anywhere;
+    }
+
+    .material-analysis-table td::before {
+        color: #9bd8d0;
+        font-size: 11px;
+        font-weight: 900;
+        line-height: 1.5;
+    }
+
+    .material-analysis-table td[colspan] {
+        display: block;
+        color: var(--flat-muted, var(--text-muted));
+    }
+
+    .material-analysis-table td[colspan]::before {
+        content: none;
+    }
+
+    .material-analysis-direction-table td:nth-child(1)::before { content: "方向"; }
+    .material-analysis-direction-table td:nth-child(2)::before { content: "素材数"; }
+    .material-analysis-direction-table td:nth-child(3)::before { content: "Top100"; }
+    .material-analysis-direction-table td:nth-child(4)::before { content: "花费"; }
+    .material-analysis-direction-table td:nth-child(5)::before { content: "安装"; }
+    .material-analysis-direction-table td:nth-child(6)::before { content: "CPI"; }
+    .material-analysis-direction-table td:nth-child(7)::before { content: "IPM"; }
+    .material-analysis-direction-table td:nth-child(8)::before { content: "D0 ROI"; }
+    .material-analysis-direction-table td:nth-child(9)::before { content: "健康分"; }
+    .material-analysis-direction-table td:nth-child(10)::before { content: "状态"; }
+    .material-analysis-direction-table td:nth-child(11)::before { content: "建议动作"; }
+
+    .material-analysis-top-table td:nth-child(1)::before { content: "排名"; }
+    .material-analysis-top-table td:nth-child(2)::before { content: "素材名称"; }
+    .material-analysis-top-table td:nth-child(3)::before { content: "花费"; }
+    .material-analysis-top-table td:nth-child(4)::before { content: "安装"; }
+    .material-analysis-top-table td:nth-child(5)::before { content: "CTR"; }
+    .material-analysis-top-table td:nth-child(6)::before { content: "CVR"; }
+    .material-analysis-top-table td:nth-child(7)::before { content: "CPI"; }
+    .material-analysis-top-table td:nth-child(8)::before { content: "IPM"; }
+    .material-analysis-top-table td:nth-child(9)::before { content: "D0 ROI"; }
+    .material-analysis-top-table td:nth-child(10)::before { content: "健康标签"; }
+    .material-analysis-top-table td:nth-child(11)::before { content: "方向"; }
+    .material-analysis-top-table td:nth-child(12)::before { content: "尺寸"; }
+    .material-analysis-top-table td:nth-child(13)::before { content: "建议动作"; }
 }
 
 @media (max-width: 560px) {

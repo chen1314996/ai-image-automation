@@ -16,7 +16,7 @@
                 }
                 if (infoBox) {
                     infoBox.className = 'info-box success';
-                    infoBox.textContent = `⏹️ 创意拓展已停止，可点击“继续任务”处理剩余 ${remainingIndexes.length} 组，或点击“新任务”重新开始。`;
+                    infoBox.textContent = `创意拓展已停止，可点击“继续任务”处理剩余 ${remainingIndexes.length} 组，或点击“新任务”重新开始。`;
                 }
                 return;
             }
@@ -27,7 +27,7 @@
             }
             if (infoBox) {
                 infoBox.className = 'info-box success';
-                infoBox.textContent = '⏹️ 创意拓展已停止，可以点击“新任务”重新开始。';
+                infoBox.textContent = '创意拓展已停止，可以点击“新任务”重新开始。';
             }
         }
 
@@ -138,6 +138,7 @@
                         prompts: selectedPrompts,
                         tableFileName: config.creativeTableFileName || '',
                         browserMode: config.creativeBrowserMode,
+                        creativePromptStyle: config.creativePromptStyle || 'cinematic_photo',
                         generationSettings: config.creativeLegilGeneration,
                         resumeMode: options.resumeMode === true,
                         resumeRunId: options.resumeRunId || ''
@@ -206,7 +207,7 @@
                 }
 
                 showToast('已发送停止指令');
-                addLog('⏹️ 已发送停止创意拓展任务指令', 'system');
+                addLog('已发送停止创意拓展任务指令', 'system');
                 if (infoBox) {
                     infoBox.className = 'info-box loading';
                     infoBox.textContent = '已发送停止指令，当前步骤结束后可继续剩余任务或开启新任务。';

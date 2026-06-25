@@ -15,10 +15,14 @@ const {
 const {
     extractSourceBusinessName
 } = require('../output-naming/source-business-name');
+const {
+    readImageDimensions
+} = require('../image-renamer');
 
 const DELIVERY_TARGET_SIZES = ['800x800', '1280x720', '1080x1920'];
 const DELIVERY_IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.bmp']);
 const STORE_VERSION = 1;
+const SOURCE_RATIO_TOLERANCE = 0.02;
 
 function ensureDir(dirPath) {
     fs.mkdirSync(dirPath, { recursive: true });
@@ -142,14 +146,76 @@ function normalizeProcessMode(value) {
     return value === 'legil-only' ? 'legil-only' : 'full-delivery';
 }
 
+function parseTargetSize(size) {
+    const match = String(size || '').match(/^(\d+)x(\d+)$/i);
+    if (!match) {
+        return null;
+    }
+    const width = Number(match[1]);
+    const height = Number(match[2]);
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+        return null;
+    }
+    return { width, height };
+}
+
+function calculateRatioDifference(actualRatio, targetRatio) {
+    if (!Number.isFinite(actualRatio) || !Number.isFinite(targetRatio) || targetRatio <= 0) {
+        return Infinity;
+    }
+    return Math.abs(actualRatio - targetRatio) / targetRatio;
+}
+
+function detectSourceReuseTargetSize(dimensions, targetSizes = DELIVERY_TARGET_SIZES) {
+    if (!dimensions || !Number(dimensions.width) || !Number(dimensions.height)) {
+        return null;
+    }
+
+    const actualRatio = Number(dimensions.width) / Number(dimensions.height);
+    let bestMatch = null;
+
+    normalizeTargetSizes(targetSizes).forEach(size => {
+        const target = parseTargetSize(size);
+        if (!target) {
+            return;
+        }
+        const targetRatio = target.width / target.height;
+        const ratioDifference = calculateRatioDifference(actualRatio, targetRatio);
+        if (ratioDifference > SOURCE_RATIO_TOLERANCE) {
+            return;
+        }
+        if (!bestMatch || ratioDifference < bestMatch.ratioDifference) {
+            bestMatch = {
+                size,
+                ratioDifference
+            };
+        }
+    });
+
+    return bestMatch ? bestMatch.size : null;
+}
+
+function safeReadImageDimensions(filePath) {
+    try {
+        return readImageDimensions(filePath);
+    } catch (error) {
+        return null;
+    }
+}
+
 function createPendingTarget(size, candidateCount, existingTarget = {}) {
     const source = existingTarget && typeof existingTarget === 'object' ? existingTarget : {};
     const existingCandidates = Array.isArray(source.candidates) ? source.candidates : [];
+    const isSourceReuse = source.generationMode === 'source-reuse' || source.reuseSource === true;
     return {
         size,
         aspectRatio: source.aspectRatio || DELIVERY_TARGET_ASPECT_RATIOS[size] || '',
+        generationMode: source.generationMode || 'legil',
+        reuseSource: source.reuseSource === true,
+        sourceRatioMatched: source.sourceRatioMatched === true,
+        sourceDimensions: source.sourceDimensions || '',
         status: source.status || (existingCandidates.length ? 'candidates_ready' : 'pending'),
-        candidateCount,
+        candidateCount: isSourceReuse ? 1 : candidateCount,
         candidates: existingCandidates,
         selectedCandidateId: source.selectedCandidateId || '',
         adaptedPath: source.adaptedPath || '',
@@ -163,6 +229,50 @@ function createPendingTarget(size, candidateCount, existingTarget = {}) {
         finalized: source.finalized || null,
         error: source.error || '',
         updatedAt: source.updatedAt || ''
+    };
+}
+
+function createSourceReuseTarget(size, image, dimensions, existingTarget = {}, now = new Date().toISOString()) {
+    const source = existingTarget && typeof existingTarget === 'object' ? existingTarget : {};
+    const sourceDimensions = dimensions && dimensions.text
+        ? dimensions.text
+        : (dimensions && dimensions.width && dimensions.height ? `${dimensions.width}x${dimensions.height}` : '');
+    const candidateId = `source_reuse_${size}`;
+    const sourceCandidate = {
+        candidateId,
+        filePath: image.filePath,
+        fileName: image.fileName,
+        targetSize: size,
+        aspectRatio: DELIVERY_TARGET_ASPECT_RATIOS[size] || '',
+        selected: true,
+        source: 'source-reuse',
+        generatedAt: now
+    };
+
+    return {
+        size,
+        aspectRatio: source.aspectRatio || DELIVERY_TARGET_ASPECT_RATIOS[size] || '',
+        generationMode: 'source-reuse',
+        reuseSource: true,
+        sourceRatioMatched: true,
+        sourceDimensions,
+        status: ['standardized', 'logo_applied', 'finalized'].includes(String(source.status || ''))
+            ? source.status
+            : 'candidate_selected',
+        candidateCount: 1,
+        candidates: [sourceCandidate],
+        selectedCandidateId: candidateId,
+        adaptedPath: source.adaptedPath || '',
+        standardizedPath: source.standardizedPath || '',
+        standardizedCandidates: Array.isArray(source.standardizedCandidates) ? source.standardizedCandidates : [],
+        standardized: source.standardized || null,
+        logoPath: source.logoPath || '',
+        finalPath: source.finalPath || '',
+        logoApplied: source.logoApplied === true,
+        finalizedCandidates: Array.isArray(source.finalizedCandidates) ? source.finalizedCandidates : [],
+        finalized: source.finalized || null,
+        error: source.error || '',
+        updatedAt: now
     };
 }
 
@@ -275,13 +385,17 @@ function createDeliveryPostprocessStore(options = {}) {
             .map(entry => {
                 const filePath = path.join(inputFolder, entry.name);
                 const stat = fs.statSync(filePath);
+                const dimensions = safeReadImageDimensions(filePath);
                 return {
                     filePath,
                     fileName: entry.name,
                     extension: path.extname(entry.name).toLowerCase(),
                     fileSize: stat.size,
                     mtimeMs: stat.mtimeMs,
-                    sourceKey: normalizePathKey(filePath)
+                    sourceKey: normalizePathKey(filePath),
+                    width: dimensions && dimensions.width || null,
+                    height: dimensions && dimensions.height || null,
+                    dimensions: dimensions && dimensions.text || ''
                 };
             })
             .sort((a, b) => naturalCompareByName(a.fileName, b.fileName));
@@ -334,6 +448,8 @@ function createDeliveryPostprocessStore(options = {}) {
 
         let reusedJobCount = 0;
         let newJobCount = 0;
+        let sourceReuseTargetCount = 0;
+        let legilTargetCount = 0;
         const images = listOkImages(inputFolder);
         const jobs = images.map((image, index) => {
             const existingJob = existingJobs.get(image.sourceKey);
@@ -343,13 +459,24 @@ function createDeliveryPostprocessStore(options = {}) {
             const sourceBusinessName = extractSourceBusinessName(image.fileName);
             const baseName = buildBaseName(namingRule, index, image);
             const targets = {};
+            const sourceDimensions = image.width && image.height
+                ? { width: image.width, height: image.height, text: image.dimensions || `${image.width}x${image.height}` }
+                : null;
+            const sourceReuseTargetSize = detectSourceReuseTargetSize(sourceDimensions, targetSizes);
 
             targetSizes.forEach(size => {
-                targets[size] = createPendingTarget(
-                    size,
-                    candidateCountsBySize[size],
-                    existingJob && existingJob.targets ? existingJob.targets[size] : null
-                );
+                const existingTarget = existingJob && existingJob.targets ? existingJob.targets[size] : null;
+                if (sourceReuseTargetSize === size) {
+                    targets[size] = createSourceReuseTarget(size, image, sourceDimensions, existingTarget, now);
+                    sourceReuseTargetCount += 1;
+                    return;
+                }
+                targets[size] = createPendingTarget(size, candidateCountsBySize[size], existingTarget);
+                targets[size].generationMode = 'legil';
+                targets[size].reuseSource = false;
+                targets[size].sourceRatioMatched = false;
+                targets[size].sourceDimensions = sourceDimensions && sourceDimensions.text || targets[size].sourceDimensions || '';
+                legilTargetCount += 1;
             });
 
             if (existingJob) {
@@ -399,6 +526,10 @@ function createDeliveryPostprocessStore(options = {}) {
             jobs,
             scan: {
                 sourceImageCount: images.length,
+                targetCount: images.length * targetSizes.length,
+                sourceReuseTargetCount,
+                legilTargetCount,
+                estimatedSavedTargetCount: sourceReuseTargetCount,
                 reusedJobCount,
                 newJobCount,
                 removedJobCount: existingRun && Array.isArray(existingRun.jobs)

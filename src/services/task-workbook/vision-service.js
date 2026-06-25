@@ -79,6 +79,14 @@ function isFatalError(error) {
     return Boolean(error && error.fatal);
 }
 
+function isCancelledError(error) {
+    return Boolean(error && (
+        error.code === 'ERR_CANCELED' ||
+        error.name === 'CanceledError' ||
+        error.name === 'AbortError'
+    ));
+}
+
 class TaskDirectionVisionService {
     constructor(options = {}) {
         this.rootDir = options.ROOT_DIR || options.rootDir || process.cwd();
@@ -147,6 +155,13 @@ class TaskDirectionVisionService {
         const summary = this.store.readSummary(importId);
         if (!summary) return { success: false, status: emptyStatus(importId), message: '任务表导入记录不存在' };
         const stored = this.store.readVisionStatus(importId);
+        if (stored && stored.running) {
+            const status = this.reconcileStaleRunningStatus(importId, stored);
+            return {
+                success: true,
+                status
+            };
+        }
         return {
             success: true,
             status: stored || emptyStatus(importId, summary.taskDirectionCount || 0)
@@ -179,6 +194,21 @@ class TaskDirectionVisionService {
             pendingCount,
             updatedAt: new Date().toISOString()
         };
+    }
+
+    reconcileStaleRunningStatus(importId, stored = {}) {
+        const results = this.store.readVisionResults(importId);
+        const status = this.summarize(importId, results, {
+            ...stored,
+            state: 'paused',
+            running: false,
+            finishedAt: stored.finishedAt || new Date().toISOString(),
+            currentTaskDirectionId: '',
+            currentSourcePath: '',
+            message: '检测到上次视觉整理未正常收尾，已转为暂停，可点击继续处理剩余行'
+        });
+        this.store.writeVisionStatus(importId, status);
+        return status;
     }
 
     initialResults(importId, targetDirections, options = {}) {
@@ -282,6 +312,7 @@ class TaskDirectionVisionService {
             status,
             concurrency: clampInteger(options.concurrency, DEFAULT_CONCURRENCY, 1, MAX_CONCURRENCY),
             maxAttempts: clampInteger(options.maxRetriesPerRow || options.maxAttempts, DEFAULT_MAX_ATTEMPTS, 1, DEFAULT_MAX_ATTEMPTS),
+            abortController: typeof AbortController === 'function' ? new AbortController() : null,
             cancelled: false,
             paused: false,
             forceRefresh: options.forceRefresh === true
@@ -325,6 +356,9 @@ class TaskDirectionVisionService {
         task.status.message = '正在暂停，当前行完成后停止';
         task.status.updatedAt = new Date().toISOString();
         this.store.writeVisionStatus(importId, task.status);
+        if (task.abortController && !task.abortController.signal.aborted) {
+            task.abortController.abort();
+        }
         return {
             success: true,
             status: task.status,
@@ -486,7 +520,8 @@ class TaskDirectionVisionService {
         for (let attempt = 1; attempt <= task.maxAttempts; attempt += 1) {
             try {
                 const response = await this.client.analyzeTaskDirection({
-                    taskDirection: direction
+                    taskDirection: direction,
+                    signal: task.abortController ? task.abortController.signal : undefined
                 });
                 if (task.cancelled || task.paused) return;
                 const finishedAt = new Date().toISOString();
@@ -513,6 +548,7 @@ class TaskDirectionVisionService {
                 return;
             } catch (error) {
                 lastError = error;
+                if (task.cancelled || task.paused || isCancelledError(error)) return;
                 if (isFatalError(error)) break;
                 if (attempt < task.maxAttempts) await sleep(800 + attempt * 700);
             }

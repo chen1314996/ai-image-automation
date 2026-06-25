@@ -10,6 +10,7 @@ module.exports = function registerConfigRoutes(app, context) {
         DEFAULT_RESIZE_CONFIG,
         doubaoAutomation,
         fs,
+        getCreativePromptStyleOptions,
         legilAutomation,
         normalizeCreativeConfigPayload,
         normalizeInputPath,
@@ -314,6 +315,9 @@ module.exports = function registerConfigRoutes(app, context) {
     app.get('/api/config/resize', (req, res) => {
         const legilConfig = legilAutomation.getConfig();
         appConfig.resize = normalizeResizeConfigPayload(appConfig.resize);
+        const resizeGenerationOptions = typeof legilAutomation.getGenerationOptionsForModel === 'function'
+            ? legilAutomation.getGenerationOptionsForModel(appConfig.resize.generationSettings.imageModel)
+            : (legilConfig.options || {});
 
         res.json({
             success: true,
@@ -326,8 +330,9 @@ module.exports = function registerConfigRoutes(app, context) {
                     ...DEFAULT_RESIZE_CONFIG.generationSettings
                 },
                 generationOptions: {
-                    ...(legilConfig.options || {})
-                }
+                    ...resizeGenerationOptions
+                },
+                modelParameterProfiles: legilConfig.modelParameterProfiles || {}
             },
             message: '获取改尺寸配置成功'
         });
@@ -339,6 +344,10 @@ module.exports = function registerConfigRoutes(app, context) {
         try {
             appConfig.resize = normalizeResizeConfigPayload(req.body || {});
             persistRuntimeConfig({ resize: appConfig.resize });
+            const legilConfig = legilAutomation.getConfig();
+            const resizeGenerationOptions = typeof legilAutomation.getGenerationOptionsForModel === 'function'
+                ? legilAutomation.getGenerationOptionsForModel(appConfig.resize.generationSettings.imageModel)
+                : (legilConfig.options || {});
 
             res.json({
                 success: true,
@@ -346,7 +355,11 @@ module.exports = function registerConfigRoutes(app, context) {
                     ...appConfig.resize,
                     generationSettings: {
                         ...appConfig.resize.generationSettings
-                    }
+                    },
+                    generationOptions: {
+                        ...resizeGenerationOptions
+                    },
+                    modelParameterProfiles: legilConfig.modelParameterProfiles || {}
                 },
                 message: '改尺寸配置已保存'
             });
@@ -363,6 +376,9 @@ module.exports = function registerConfigRoutes(app, context) {
     app.get('/api/config/creative', (req, res) => {
         const legilConfig = legilAutomation.getConfig();
         appConfig.creative = normalizeCreativeConfigPayload(appConfig.creative);
+        const creativeGenerationOptions = typeof legilAutomation.getGenerationOptionsForModel === 'function'
+            ? legilAutomation.getGenerationOptionsForModel(appConfig.creative.generationSettings.imageModel)
+            : (legilConfig.options || {});
 
         res.json({
             success: true,
@@ -374,9 +390,11 @@ module.exports = function registerConfigRoutes(app, context) {
                 defaultGenerationSettings: {
                     ...DEFAULT_CREATIVE_CONFIG.generationSettings
                 },
+                creativePromptStyleOptions: getCreativePromptStyleOptions(),
                 generationOptions: {
-                    ...(legilConfig.options || {})
-                }
+                    ...creativeGenerationOptions
+                },
+                modelParameterProfiles: legilConfig.modelParameterProfiles || {}
             },
             message: '获取创意拓展配置成功'
         });
@@ -388,6 +406,10 @@ module.exports = function registerConfigRoutes(app, context) {
         try {
             appConfig.creative = normalizeCreativeConfigPayload(req.body || {});
             persistRuntimeConfig({ creative: appConfig.creative });
+            const legilConfig = legilAutomation.getConfig();
+            const creativeGenerationOptions = typeof legilAutomation.getGenerationOptionsForModel === 'function'
+                ? legilAutomation.getGenerationOptionsForModel(appConfig.creative.generationSettings.imageModel)
+                : (legilConfig.options || {});
 
             res.json({
                 success: true,
@@ -395,7 +417,12 @@ module.exports = function registerConfigRoutes(app, context) {
                     ...appConfig.creative,
                     generationSettings: {
                         ...appConfig.creative.generationSettings
-                    }
+                    },
+                    creativePromptStyleOptions: getCreativePromptStyleOptions(),
+                    generationOptions: {
+                        ...creativeGenerationOptions
+                    },
+                    modelParameterProfiles: legilConfig.modelParameterProfiles || {}
                 },
                 message: '创意拓展配置已保存'
             });

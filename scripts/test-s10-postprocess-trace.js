@@ -50,6 +50,8 @@ async function main() {
     assert(parsedTwoLevel.businessName === '题材_探索发现', 'generated Legil name should allow only primary and secondary tags');
     const parsedOld = extractSourceBusinessName('GOFCNIM13535_DR_题材_探索发现_微缩世界垃圾桶_800x800.jpg');
     assert(parsedOld.businessName === '题材_探索发现_微缩世界垃圾桶', 'old GOFCNIM name should drop old prefix and size');
+    const parsedRealGofcnim = extractSourceBusinessName('GOFCNIM31309_BJ_广点通_代言人_林子聪城镇建造_1280x720.jpg');
+    assert(parsedRealGofcnim.businessName === '代言人_林子聪城镇建造', 'real GOFCNIM delivery name should keep business parts and drop prefix/channel/size');
 
     fs.writeFileSync(path.join(DATA_DIR, 'assets.json'), JSON.stringify({
         version: 1,

@@ -17,6 +17,9 @@ const {
     sanitizeFileNamePart,
     sortNaturallyByName
 } = require('../../../file-utils');
+const {
+    readImageDimensions
+} = require('../image-renamer');
 
 const constants = require('./constants');
 const helpers = require('./helpers');
@@ -55,6 +58,7 @@ const deps = {
     padNumber,
     sanitizeFileNamePart,
     sortNaturallyByName,
+    readImageDimensions,
     ...helpers,
     ...constants
 };

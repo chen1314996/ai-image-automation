@@ -195,15 +195,62 @@
 
         function getLegilImageModelLabel(value, options) {
             const option = (options || []).find(item => item.value === value);
-            return option ? option.label : (value || 'Nano Banana 2');
+            const fallback = {
+                'seedream-4.5': 'Seedream 4.5',
+                'gpt-image-2': 'GPT-Image-2',
+                'gpt-image-1': 'GPT-Image-1',
+                'nano-banana-2': 'Nano Banana 2',
+                'nano-banana-pro': 'Nano Banana Pro',
+                'nano-banana': 'Nano Banana',
+                'imagen-3': 'Imagen-3'
+            };
+            return option ? option.label : (fallback[value] || value || 'Nano Banana 2');
         }
 
         function setLegilGenerationValue(key, value) {
-            config.legilGeneration[key] = key === 'outputQuantity' ? Number(value) : value;
-            document.querySelectorAll(`[data-legil-setting="${key}"]`).forEach(button => {
+            const next = {
+                ...config.legilGeneration,
+                [key]: key === 'outputQuantity' ? Number(value) : value
+            };
+            config.legilGeneration = normalizeLegilSettingsForModel(next);
+            if (key === 'imageModel') {
+                renderLegilModelSpecificSettingOptions();
+            }
+            updateLegilGenerationActiveStates();
+            refreshLegilGenerationSummary();
+            if (typeof refreshTablePromptStats === 'function') {
+                refreshTablePromptStats();
+            }
+        }
+
+        function updateLegilGenerationActiveStates() {
+            document.querySelectorAll('[data-legil-setting]').forEach(button => {
+                const key = button.dataset.legilSetting;
                 button.classList.toggle('active', String(button.dataset.value) === String(config.legilGeneration[key]));
             });
-            refreshLegilGenerationSummary();
+        }
+
+        function getUniqueElements(elements) {
+            return Array.from(new Set((elements || []).filter(Boolean)));
+        }
+
+        function getLegilImageModelContainers() {
+            return getUniqueElements([
+                document.getElementById('legilImageModelOptions'),
+                ...document.querySelectorAll('[data-legil-model-options]')
+            ]);
+        }
+
+        function getLegilSettingContainers(key) {
+            const idMap = {
+                aspectRatio: 'legilAspectRatioOptions',
+                resolution: 'legilResolutionOptions',
+                outputQuantity: 'legilOutputQuantityOptions'
+            };
+            return getUniqueElements([
+                document.getElementById(idMap[key]),
+                ...document.querySelectorAll(`[data-legil-options="${key}"]`)
+            ]);
         }
 
         function renderLegilImageModelOptions(options) {
@@ -219,80 +266,86 @@
                     { value: 'imagen-3', label: 'Imagen-3' }
                 ];
 
-            const container = document.getElementById('legilImageModelOptions');
-            if (!container) return;
-            container.textContent = '';
+            getLegilImageModelContainers().forEach(container => {
+                container.textContent = '';
 
-            safeOptions.forEach(option => {
-                const button = document.createElement('button');
-                button.type = 'button';
-                button.className = 'model-option';
-                button.dataset.legilSetting = 'imageModel';
-                button.dataset.value = option.value;
-                button.onclick = () => setLegilGenerationValue('imageModel', option.value);
+                safeOptions.forEach(option => {
+                    const button = document.createElement('button');
+                    button.type = 'button';
+                    button.className = 'model-option';
+                    button.dataset.legilSetting = 'imageModel';
+                    button.dataset.value = option.value;
+                    button.onclick = () => setLegilGenerationValue('imageModel', option.value);
 
-                const title = document.createElement('span');
-                title.className = 'model-option-title';
-                title.textContent = option.label || option.value;
+                    const title = document.createElement('span');
+                    title.className = 'model-option-title';
+                    title.textContent = option.label || option.value;
 
-                const desc = document.createElement('span');
-                desc.className = 'model-option-desc';
-                desc.textContent = option.description || '';
+                    const desc = document.createElement('span');
+                    desc.className = 'model-option-desc';
+                    desc.textContent = option.description || '';
 
-                button.appendChild(title);
-                button.appendChild(desc);
-                container.appendChild(button);
+                    button.appendChild(title);
+                    button.appendChild(desc);
+                    container.appendChild(button);
+                });
             });
 
-            setLegilGenerationValue('imageModel', config.legilGeneration.imageModel);
+            updateLegilGenerationActiveStates();
         }
 
         function renderLegilSettingOptions(key, values) {
-            const idMap = {
-                aspectRatio: 'legilAspectRatioOptions',
-                resolution: 'legilResolutionOptions',
-                outputQuantity: 'legilOutputQuantityOptions'
-            };
-            const container = document.getElementById(idMap[key]);
-            if (!container) return;
-            container.textContent = '';
+            getLegilSettingContainers(key).forEach(container => {
+                container.textContent = '';
 
-            (values || []).forEach(value => {
-                const button = document.createElement('button');
-                button.type = 'button';
-                button.className = 'setting-option';
-                button.dataset.legilSetting = key;
-                button.dataset.value = value;
-                button.textContent = value;
-                button.onclick = () => setLegilGenerationValue(key, value);
-                container.appendChild(button);
+                (values || []).forEach(value => {
+                    const button = document.createElement('button');
+                    button.type = 'button';
+                    button.className = 'setting-option';
+                    button.dataset.legilSetting = key;
+                    button.dataset.value = value;
+                    button.textContent = value;
+                    button.onclick = () => setLegilGenerationValue(key, value);
+                    container.appendChild(button);
+                });
             });
 
-            setLegilGenerationValue(key, config.legilGeneration[key]);
+            updateLegilGenerationActiveStates();
+        }
+
+        function renderLegilModelSpecificSettingOptions() {
+            const profile = getLegilModelParameterProfile(config.legilGeneration.imageModel);
+            renderLegilSettingOptions('aspectRatio', profile.aspectRatios || []);
+            renderLegilSettingOptions('resolution', profile.resolutions || []);
+            renderLegilSettingOptions('outputQuantity', profile.outputQuantities || []);
         }
 
         function renderLegilGenerationConfig(dataConfig) {
             const settings = dataConfig.settings || {};
             const options = dataConfig.options || {};
-            config.legilGeneration = {
+            config.legilModelParameterProfiles = dataConfig.modelParameterProfiles || config.legilModelParameterProfiles || {};
+            config.legilGeneration = normalizeLegilSettingsForModel({
                 imageModel: settings.imageModel || 'nano-banana-2',
                 aspectRatio: settings.aspectRatio || '1:1',
                 resolution: settings.resolution || '2K',
                 outputQuantity: Number(settings.outputQuantity) || 1
-            };
+            });
 
             renderLegilImageModelOptions(options.imageModels || []);
-            renderLegilSettingOptions('aspectRatio', options.aspectRatios || []);
-            renderLegilSettingOptions('resolution', options.resolutions || []);
-            renderLegilSettingOptions('outputQuantity', options.outputQuantities || []);
+            renderLegilModelSpecificSettingOptions();
+            updateLegilGenerationActiveStates();
             refreshLegilGenerationSummary(options.imageModels);
         }
 
         function setLegilGenerationInfo(className, text) {
-            const infoBox = document.getElementById('legilGenerationConfigInfo');
-            if (!infoBox) return;
-            infoBox.className = className;
-            infoBox.textContent = text;
+            const infoBoxes = getUniqueElements([
+                document.getElementById('legilGenerationConfigInfo'),
+                ...document.querySelectorAll('[data-legil-generation-info]')
+            ]);
+            infoBoxes.forEach(infoBox => {
+                infoBox.className = className;
+                infoBox.textContent = text;
+            });
         }
 
         function refreshLegilGenerationSummary(imageModelOptions) {
@@ -301,6 +354,9 @@
                 'info-box success',
                 `✅ 量产 Legil参数：${getBrowserModeLabel(config.workflowBrowserMode)} / ${modelLabel} / ${config.legilGeneration.aspectRatio} / ${config.legilGeneration.resolution} / ${config.legilGeneration.outputQuantity}张`
             );
+            if (typeof updateMassParameterSummary === 'function') {
+                updateMassParameterSummary();
+            }
         }
 
         async function loadLegilGenerationConfig() {
@@ -345,6 +401,49 @@
             } catch (e) {
                 setLegilGenerationInfo('info-box error', '❌ ' + e.message);
                 if (!silent) showToast(e.message || 'Legil参数保存失败', 'error');
+                return false;
+            }
+        }
+
+        async function saveMassGenerationConfig(options = {}) {
+            const silent = options.silent === true;
+            setLegilGenerationInfo('info-box loading', '正在保存产图参数...');
+
+            try {
+                if (typeof savePromptGenerationConfig === 'function') {
+                    const promptSaved = await savePromptGenerationConfig({ silent: true });
+                    if (!promptSaved) {
+                        throw new Error('提示词生成要求保存失败');
+                    }
+                }
+
+                const legilSaved = await saveLegilGenerationConfig({ silent: true });
+                if (!legilSaved) {
+                    throw new Error('Legil生成参数保存失败');
+                }
+
+                if (typeof saveWorkflowConfig === 'function') {
+                    const workflowSaved = await saveWorkflowConfig({ silent: true });
+                    if (!workflowSaved) {
+                        throw new Error('量产工作流参数保存失败');
+                    }
+                }
+
+                if (typeof updatePromptGenerationInfo === 'function') {
+                    updatePromptGenerationInfo();
+                }
+                if (typeof refreshLegilGenerationSummary === 'function') {
+                    refreshLegilGenerationSummary();
+                }
+
+                if (!silent) {
+                    showToast('产图参数已保存');
+                    addLog('✅ 产图参数已保存：提示词生成要求与 Legil 参数已同步', 'success');
+                }
+                return true;
+            } catch (e) {
+                setLegilGenerationInfo('info-box error', '❌ ' + (e.message || '产图参数保存失败'));
+                if (!silent) showToast(e.message || '产图参数保存失败', 'error');
                 return false;
             }
         }

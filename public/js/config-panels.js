@@ -193,6 +193,44 @@
             return Boolean(lumos.apiKeyConfigured && getSelectedLumosModel());
         }
 
+        function setSystemHealthText(ids, text, state = '') {
+            ids.forEach(id => {
+                const el = document.getElementById(id);
+                if (!el) return;
+                el.textContent = text;
+                el.className = state ? `system-health-value ${state}` : 'system-health-value';
+            });
+        }
+
+        function updateSystemConfigHealth() {
+            const lumos = config.workflowPromptGeneration?.lumos || {};
+            const modelReady = getSelectedPromptProviderReady();
+            const notifications = config.notifications || {};
+            const watchdogBox = document.getElementById('watchdogStatusInfo');
+            const watchdogClass = watchdogBox?.className || '';
+
+            setSystemHealthText(
+                ['configModelHealth', 'configCardModelHealth'],
+                modelReady ? '可用' : '待配置',
+                modelReady ? 'is-success' : 'is-error'
+            );
+            setSystemHealthText(
+                ['configSecretHealth', 'configTopSecretHealth'],
+                lumos.apiKeyConfigured ? '已配置' : '未配置',
+                lumos.apiKeyConfigured ? 'is-success' : 'is-error'
+            );
+            setSystemHealthText(
+                ['configNotifyHealth', 'configCardNotifyHealth'],
+                notifications.feishuEnabled === false ? '未开启' : '已开启',
+                notifications.feishuEnabled === false ? 'is-warning' : 'is-success'
+            );
+            setSystemHealthText(
+                ['configMonitorHealth', 'configCardMonitorHealth'],
+                watchdogClass.includes('success') ? '运行中' : (watchdogClass.includes('error') ? '异常' : '待确认'),
+                watchdogClass.includes('success') ? 'is-success' : (watchdogClass.includes('error') ? 'is-error' : 'is-warning')
+            );
+        }
+
         function updatePromptGenerationInfo() {
             const infoBox = document.getElementById('doubaoConfigInfo');
             const provider = normalizePromptProvider(config.workflowPromptGeneration?.provider);
@@ -207,6 +245,7 @@
                     ? `✅ 当前提示词模型：Lumos Winky，模型：${model}`
                     : '❌ 当前选择 Lumos Winky，请确认后端密钥已配置，并从下拉列表选择模型';
             }
+            updateSystemConfigHealth();
         }
 
         function setPromptProvider(provider) {
@@ -241,6 +280,14 @@
                 const res = await fetch('/api/config/workflow');
                 const data = await readJsonResponse(res, '读取量产配置失败，请重启服务器后刷新页面');
                 if (!data.success || !data.config) return;
+                config.referenceFolder = data.config.inputFolder || data.config.referenceFolder || config.referenceFolder;
+                config.saveFolder = data.config.outputFolder || data.config.saveFolder || config.saveFolder;
+                const referenceInput = document.getElementById('referenceFolder');
+                const saveInput = document.getElementById('saveFolder');
+                if (referenceInput) referenceInput.value = config.referenceFolder;
+                if (saveInput) saveInput.value = config.saveFolder;
+                addFolderHistory('referenceFolder', config.referenceFolder);
+                if (config.saveFolder) addFolderHistory('saveFolder', config.saveFolder);
                 config.workflowBrowserMode = normalizeBrowserMode(data.config.browserMode || config.workflowBrowserMode, 'headless');
                 renderPromptGenerationConfig(data.config.promptGeneration || {});
                 updateWorkflowBrowserModeActiveState();
@@ -263,6 +310,8 @@
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
+                        inputFolder: document.getElementById('referenceFolder')?.value.trim() || config.referenceFolder,
+                        outputFolder: document.getElementById('saveFolder')?.value.trim() || config.saveFolder,
                         browserMode: config.workflowBrowserMode,
                         promptGeneration: getWorkflowPromptGenerationFromForm(),
                         generationSettings: config.legilGeneration
@@ -272,12 +321,62 @@
                 if (!data.success || !data.config) {
                     throw new Error(data.message || '保存失败');
                 }
+                config.referenceFolder = data.config.inputFolder || config.referenceFolder;
+                config.saveFolder = data.config.outputFolder || config.saveFolder;
+                const referenceInput = document.getElementById('referenceFolder');
+                const saveInput = document.getElementById('saveFolder');
+                if (referenceInput) referenceInput.value = config.referenceFolder;
+                if (saveInput) saveInput.value = config.saveFolder;
                 config.workflowBrowserMode = normalizeBrowserMode(data.config.browserMode || config.workflowBrowserMode, 'headless');
                 renderPromptGenerationConfig(data.config.promptGeneration || {});
                 updateWorkflowBrowserModeActiveState();
                 return true;
             } catch (e) {
                 if (!silent) showToast(e.message || '保存量产配置失败', 'error');
+                return false;
+            }
+        }
+
+        async function saveStoredLumosSecretConfig(options = {}) {
+            const silent = options.silent === true;
+            const apiKeyInput = document.getElementById('lumosPromptApiKey');
+            const apiKey = apiKeyInput?.value.trim() || '';
+            const model = getSelectedLumosModel();
+            const baseUrl = document.getElementById('lumosPromptApiUrl')?.value.trim() || '';
+            const provider = document.getElementById('lumosPromptProvider')?.value.trim() || '';
+            const updates = {};
+
+            if (apiKey) updates.apiKey = apiKey;
+            if (model) updates.modelId = model;
+            if (baseUrl) updates.baseUrl = baseUrl;
+            if (provider) updates.provider = provider;
+
+            if (Object.keys(updates).length === 0) {
+                return true;
+            }
+
+            try {
+                const res = await fetch('/api/config/doubao', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(updates)
+                });
+                const data = await readJsonResponse(res, '保存 Lumos Winky 密钥配置失败，请重启服务器后刷新页面');
+                if (!data.success) {
+                    throw new Error(data.message || '保存 Lumos Winky 密钥配置失败');
+                }
+                if (apiKeyInput && apiKey) {
+                    apiKeyInput.value = '';
+                    apiKeyInput.placeholder = '已保存，重新填写可替换';
+                }
+                return true;
+            } catch (e) {
+                if (!silent) showToast(e.message || '保存 Lumos Winky 密钥配置失败', 'error');
+                const infoBox = document.getElementById('doubaoConfigInfo');
+                if (infoBox) {
+                    infoBox.className = 'info-box error';
+                    infoBox.textContent = '❌' + (e.message || '保存 Lumos Winky 密钥配置失败');
+                }
                 return false;
             }
         }
@@ -312,6 +411,11 @@
                     if (!silent) showToast('请先选择 Lumos Winky 模型', 'error');
                     return false;
                 }
+            }
+
+            const secretSaved = await saveStoredLumosSecretConfig({ silent });
+            if (!secretSaved) {
+                return false;
             }
 
             const saved = await saveWorkflowConfig({ silent: true });
@@ -444,7 +548,7 @@
                 taskCompletionEnabled: readChecked('notifyTaskCompletionEnabled', true),
                 serverStartupEnabled: readChecked('notifyServerStartupEnabled', true),
                 staleProgressEnabled: readChecked('notifyStaleProgressEnabled', true),
-                staleThresholdMinutes: readNumber('notifyStaleThresholdMinutes', 15, 1, 1440),
+                staleThresholdMinutes: readNumber('notifyStaleThresholdMinutes', 30, 1, 1440),
                 notificationCooldownMinutes: readNumber('notifyCooldownMinutes', 10, 0, 1440),
                 legilScreenshotEnabled: readChecked('notifyLegilScreenshotEnabled', true),
                 autoRecoveryEnabled: readChecked('notifyAutoRecoveryEnabled', true),
@@ -476,9 +580,10 @@
             const stale = document.getElementById('notifyStaleThresholdMinutes');
             const cooldown = document.getElementById('notifyCooldownMinutes');
             const failures = document.getElementById('notifyFailureThreshold');
-            if (stale) stale.value = config.notifications.staleThresholdMinutes || 15;
+            if (stale) stale.value = config.notifications.staleThresholdMinutes || 30;
             if (cooldown) cooldown.value = config.notifications.notificationCooldownMinutes ?? 10;
             if (failures) failures.value = config.notifications.consecutiveFailureThreshold || 3;
+            updateSystemConfigHealth();
         }
 
         async function loadNotificationConfig() {
@@ -511,7 +616,7 @@
                 renderNotificationConfig(data.config);
                 if (infoBox && !silent) {
                     infoBox.className = 'info-box success';
-                    infoBox.textContent = `✅ 通知配置已保存：无进展 ${data.config.staleThresholdMinutes} 分钟，冷却 ${data.config.notificationCooldownMinutes} 分钟`;
+                    infoBox.textContent = `✅ 通知配置已保存：队列完成后提醒，无进展 ${data.config.staleThresholdMinutes} 分钟提醒，冷却 ${data.config.notificationCooldownMinutes} 分钟`;
                 }
                 await refreshWatchdogStatus();
                 if (!silent) showToast('通知配置已保存');
@@ -523,6 +628,46 @@
                 }
                 if (!silent) showToast(e.message || '保存通知配置失败', 'error');
                 return false;
+            }
+        }
+
+        async function refreshSystemConfigPage() {
+            await Promise.all([
+                refreshPromptGenerationConfig(),
+                loadNotificationConfig()
+            ]);
+            await refreshWatchdogStatus();
+            updateSystemConfigHealth();
+        }
+
+        async function saveSystemConfigPage() {
+            const button = document.getElementById('systemConfigSaveBtn');
+            const oldText = button?.textContent;
+            if (button) {
+                button.disabled = true;
+                button.textContent = '保存中';
+            }
+            try {
+                const [modelSaved, notificationSaved] = await Promise.all([
+                    savePromptGenerationConfig({ silent: true }),
+                    saveNotificationConfig({ silent: true })
+                ]);
+                await refreshWatchdogStatus();
+                updateSystemConfigHealth();
+                if (!modelSaved || !notificationSaved) {
+                    throw new Error('部分配置保存失败，请检查页面状态');
+                }
+                showToast('系统配置已保存');
+                addLog('✅ 系统配置已保存', 'success');
+                return true;
+            } catch (e) {
+                showToast(e.message || '系统配置保存失败', 'error');
+                return false;
+            } finally {
+                if (button) {
+                    button.disabled = false;
+                    button.textContent = oldText || '保存配置';
+                }
             }
         }
 
@@ -543,6 +688,7 @@
                         ? `✅ 运行中 PID ${watchdog.pid || '-'}，${downText}`
                         : `❌ 未运行：${watchdog.message || '未启动'}`;
                 }
+                updateSystemConfigHealth();
             } catch (e) {
                 if (infoBox) {
                     infoBox.className = 'info-box error';
@@ -681,6 +827,9 @@
                 window.localStorage.setItem(resizeProviderStorageKey, config.resizeProvider);
             } catch (e) {}
             applyResizeProviderFormState(config.resizeProvider);
+            if (legilConfig && typeof applyDeliveryRuntimeConfig === 'function') {
+                applyDeliveryRuntimeConfig(legilConfig, { fromLoad: true });
+            }
             updateResizeProviderActiveState();
             updateResizeProviderVisibility();
             updateResizePromptLabel();
@@ -746,6 +895,9 @@
             const providerState = syncResizeProviderFormState(provider);
             const isJimeng = provider === 'jimeng';
             const endpoint = isJimeng ? '/api/config/jimeng-resize' : '/api/config/resize';
+            const deliveryState = !isJimeng && typeof getDeliveryRuntimeConfigForResize === 'function'
+                ? getDeliveryRuntimeConfigForResize()
+                : {};
             const generationSettings = isJimeng
                 ? {
                     ...config.resizeJimengGeneration,
@@ -766,7 +918,8 @@
                         outputFolder: providerState.outputFolder,
                         browserMode: providerState.browserMode,
                         promptTemplate: providerState.promptTemplate,
-                        generationSettings
+                        generationSettings,
+                        ...deliveryState
                     })
                 });
                 const data = await readJsonResponse(res, '保存 Legil 适配配置失败，请重启服务器后刷新页面');
@@ -776,12 +929,17 @@
 
                 mergeResizeProviderFormState(provider, data.config);
                 applyResizeProviderFormState(provider);
+                if (!isJimeng && typeof applyDeliveryRuntimeConfig === 'function') {
+                    applyDeliveryRuntimeConfig(data.config, { fromSave: true });
+                }
                 if (data.config.generationSettings) {
                     if (isJimeng) {
                         config.resizeJimengGeneration = normalizeResizeJimengGenerationFromSettings(data.config.generationSettings);
                         updateResizeJimengGenerationActiveStates();
                     } else {
+                        config.legilModelParameterProfiles = data.config.modelParameterProfiles || config.legilModelParameterProfiles || {};
                         config.resizeLegilGeneration = normalizeResizeLegilGenerationFromSettings(data.config.generationSettings);
+                        renderResizeLegilModelSpecificSettingOptions();
                         updateResizeLegilGenerationActiveStates();
                     }
                 }
@@ -856,13 +1014,13 @@
                 settings,
                 settings.aspectRatio || config.resizeLegilGeneration.aspectRatio || '16:9'
             );
-            return {
+            return normalizeLegilSettingsForModel({
                 imageModel: settings.imageModel || config.resizeLegilGeneration.imageModel || 'nano-banana-2',
                 aspectRatio: aspectRatios[0],
                 aspectRatios,
                 resolution: settings.resolution || config.resizeLegilGeneration.resolution || '1K',
                 outputQuantity: Number(settings.outputQuantity) || Number(config.resizeLegilGeneration.outputQuantity) || 1
-            };
+            });
         }
 
         function normalizeResizeJimengGenerationFromSettings(settings = {}) {
@@ -882,13 +1040,23 @@
         }
 
         function setResizeLegilGenerationValue(key, value) {
-            if (key === 'aspectRatio') {
+            const deliveryFixedPromptMode = typeof isDeliveryLegilOnlyMode === 'function' &&
+                isDeliveryLegilOnlyMode() &&
+                document.getElementById('deliveryPage')?.classList.contains('active');
+            if (key === 'aspectRatio' && deliveryFixedPromptMode) {
+                config.resizeLegilGeneration.aspectRatio = String(value);
+                config.resizeLegilGeneration.aspectRatios = [String(value)];
+            } else if (key === 'aspectRatio') {
                 toggleResizeAspectRatio(config.resizeLegilGeneration, value, '[data-resize-legil-setting="aspectRatio"]');
             } else {
                 config.resizeLegilGeneration[key] = key === 'outputQuantity' ? Number(value) : value;
                 if (key === 'outputQuantity' && typeof setDeliverySelectedCandidateCount === 'function') {
                     setDeliverySelectedCandidateCount(Number(value));
                 }
+            }
+            config.resizeLegilGeneration = normalizeLegilSettingsForModel(config.resizeLegilGeneration);
+            if (key === 'imageModel') {
+                renderResizeLegilModelSpecificSettingOptions();
             }
             updateResizeLegilGenerationActiveStates();
             refreshResizeLegilGenerationSummary();
@@ -1016,6 +1184,13 @@
             });
         }
 
+        function renderResizeLegilModelSpecificSettingOptions() {
+            const profile = getLegilModelParameterProfile(config.resizeLegilGeneration.imageModel);
+            renderResizeLegilSettingOptions('aspectRatio', profile.aspectRatios || []);
+            renderResizeLegilSettingOptions('resolution', profile.resolutions || []);
+            renderResizeLegilSettingOptions('outputQuantity', profile.outputQuantities || []);
+        }
+
         function renderResizeJimengImageModelOptions(options) {
             const container = document.getElementById('resizeJimengImageModelOptions');
             if (!container) return;
@@ -1082,13 +1257,12 @@
         function renderResizeLegilGenerationConfig(dataConfig) {
             const settings = dataConfig.generationSettings || dataConfig.defaultGenerationSettings || {};
             const options = dataConfig.generationOptions || {};
+            config.legilModelParameterProfiles = dataConfig.modelParameterProfiles || config.legilModelParameterProfiles || {};
             mergeResizeProviderFormState('legil', dataConfig);
             config.resizeLegilGeneration = normalizeResizeLegilGenerationFromSettings(settings);
 
             renderResizeLegilImageModelOptions(options.imageModels || []);
-            renderResizeLegilSettingOptions('aspectRatio', options.aspectRatios || []);
-            renderResizeLegilSettingOptions('resolution', options.resolutions || []);
-            renderResizeLegilSettingOptions('outputQuantity', options.outputQuantities || []);
+            renderResizeLegilModelSpecificSettingOptions();
             updateResizeLegilGenerationActiveStates();
         }
 
@@ -1112,9 +1286,20 @@
 
         function refreshResizeLegilGenerationSummary() {
             const modelLabel = getResizeOptionLabel('[data-resize-legil-setting="imageModel"]', config.resizeLegilGeneration.imageModel, config.resizeLegilGeneration.imageModel);
+            const ratioText = getResizeAspectRatioSummary(config.resizeLegilGeneration);
+            const outputText = `${Number(config.resizeLegilGeneration.outputQuantity) || 1} 张`;
+            const browserLabel = getBrowserModeLabel(config.resizeBrowserMode);
+            const setText = (id, text) => {
+                const el = document.getElementById(id);
+                if (el) el.textContent = text;
+            };
+            setText('deliveryResizeSummaryModel', modelLabel);
+            setText('deliveryResizeSummaryRatio', ratioText);
+            setText('deliveryResizeSummaryOutput', outputText);
+            setText('deliveryResizeSummaryBrowserMode', browserLabel.replace('模式', ''));
             setResizeGenerationInfo(
                 'info-box success',
-                `✅ Legil AI 三尺寸适配参数：${getBrowserModeLabel(config.resizeBrowserMode)} / ${modelLabel} / ${getResizeAspectRatioSummary(config.resizeLegilGeneration)} / ${config.resizeLegilGeneration.resolution} / 每比例 ${config.resizeLegilGeneration.outputQuantity} 张`
+                `✅ Legil AI 尺寸适配参数：${browserLabel} / ${modelLabel} / ${ratioText} / ${config.resizeLegilGeneration.resolution} / 每比例 ${config.resizeLegilGeneration.outputQuantity} 张`
             );
         }
 
@@ -1190,10 +1375,44 @@
             return modelButton?.querySelector('.model-option-title')?.textContent || config.creativeLegilGeneration.imageModel;
         }
 
+        function getCreativePromptStyleFallbackOptions() {
+            return [
+                { value: 'cinematic_photo', label: '电影感真实摄影质感' },
+                { value: 'commercial_3d', label: '3D卡通商业广告海报' },
+                { value: 'style_free', label: '不限风格' }
+            ];
+        }
+
+        function normalizeCreativePromptStyleValue(value) {
+            const options = Array.isArray(config.creativePromptStyleOptions) && config.creativePromptStyleOptions.length
+                ? config.creativePromptStyleOptions
+                : getCreativePromptStyleFallbackOptions();
+            const text = String(value || '').trim();
+            return options.some(option => option.value === text) ? text : 'cinematic_photo';
+        }
+
+        function getCreativePromptStyleLabel() {
+            const options = Array.isArray(config.creativePromptStyleOptions) && config.creativePromptStyleOptions.length
+                ? config.creativePromptStyleOptions
+                : getCreativePromptStyleFallbackOptions();
+            const match = options.find(option => option.value === config.creativePromptStyle);
+            return match ? match.label : '电影感真实摄影质感';
+        }
+
         function refreshCreativeLegilGenerationSummary() {
+            const modelLabel = getCreativeCurrentModelLabel();
+            const browserLabel = getCreativeBrowserModeLabel(config.creativeBrowserMode);
+            const setText = (id, text) => {
+                const el = document.getElementById(id);
+                if (el) el.textContent = text;
+            };
+            setText('creativeSummaryModel', modelLabel);
+            setText('creativeSummaryRatio', config.creativeLegilGeneration.aspectRatio || '1:1');
+            setText('creativeSummaryOutput', `${Number(config.creativeLegilGeneration.outputQuantity) || 1} 张`);
+            setText('creativeSummaryBrowserMode', browserLabel.replace('模式', ''));
             setCreativeLegilGenerationInfo(
                 'info-box success',
-                `✅ 创意拓展参数：${getCreativeBrowserModeLabel(config.creativeBrowserMode)} / ${getCreativeCurrentModelLabel()} / ${config.creativeLegilGeneration.aspectRatio} / ${config.creativeLegilGeneration.resolution} / ${config.creativeLegilGeneration.outputQuantity}张`
+                `✅ 创意拓展参数：${browserLabel} / ${modelLabel} / ${config.creativeLegilGeneration.aspectRatio} / ${config.creativeLegilGeneration.resolution} / ${config.creativeLegilGeneration.outputQuantity}张`
             );
         }
 
@@ -1210,9 +1429,13 @@
         }
 
         function setCreativeLegilGenerationValue(key, value) {
-            config.creativeLegilGeneration[key] = key === 'outputQuantity' ? Number(value) : value;
-            if (key === 'aspectRatio') {
-                config.creativeLegilGeneration.aspectRatios = [String(value)];
+            config.creativeLegilGeneration = normalizeLegilSettingsForModel({
+                ...config.creativeLegilGeneration,
+                [key]: key === 'outputQuantity' ? Number(value) : value,
+                aspectRatios: key === 'aspectRatio' ? [String(value)] : config.creativeLegilGeneration.aspectRatios
+            });
+            if (key === 'imageModel') {
+                renderCreativeLegilModelSpecificSettingOptions();
             }
             updateCreativeLegilGenerationActiveStates();
             refreshCreativeLegilGenerationSummary();
@@ -1223,6 +1446,40 @@
                 const key = button.dataset.creativeLegilSetting;
                 button.classList.toggle('active', String(button.dataset.value) === String(config.creativeLegilGeneration[key]));
             });
+        }
+
+        function setCreativePromptStyle(value) {
+            config.creativePromptStyle = normalizeCreativePromptStyleValue(value);
+            updateCreativePromptStyleActiveStates();
+            refreshCreativeLegilGenerationSummary();
+        }
+
+        function updateCreativePromptStyleActiveStates() {
+            document.querySelectorAll('[data-creative-prompt-style]').forEach(button => {
+                button.classList.toggle('active', String(button.dataset.value) === String(config.creativePromptStyle));
+            });
+        }
+
+        function renderCreativePromptStyleOptions(options) {
+            const container = document.getElementById('creativePromptStyleOptions');
+            if (!container) return;
+            const safeOptions = Array.isArray(options) && options.length
+                ? options
+                : getCreativePromptStyleFallbackOptions();
+            config.creativePromptStyleOptions = safeOptions.slice();
+            config.creativePromptStyle = normalizeCreativePromptStyleValue(config.creativePromptStyle);
+            container.textContent = '';
+            safeOptions.forEach(option => {
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.className = 'setting-option';
+                button.dataset.creativePromptStyle = option.value;
+                button.dataset.value = option.value;
+                button.textContent = option.label || option.value;
+                button.onclick = () => setCreativePromptStyle(option.value);
+                container.appendChild(button);
+            });
+            updateCreativePromptStyleActiveStates();
         }
 
         function renderCreativeLegilImageModelOptions(options) {
@@ -1286,11 +1543,23 @@
             });
         }
 
+        function renderCreativeLegilModelSpecificSettingOptions() {
+            const profile = getLegilModelParameterProfile(config.creativeLegilGeneration.imageModel);
+            renderCreativeLegilSettingOptions('aspectRatio', profile.aspectRatios || []);
+            renderCreativeLegilSettingOptions('resolution', profile.resolutions || []);
+            renderCreativeLegilSettingOptions('outputQuantity', profile.outputQuantities || []);
+        }
+
         function renderCreativeLegilGenerationConfig(dataConfig) {
             const settings = dataConfig.generationSettings || dataConfig.defaultGenerationSettings || {};
             const options = dataConfig.generationOptions || {};
+            config.legilModelParameterProfiles = dataConfig.modelParameterProfiles || config.legilModelParameterProfiles || {};
             config.creativeBrowserMode = normalizeCreativeBrowserMode(dataConfig.browserMode || config.creativeBrowserMode);
-            config.creativeLegilGeneration = {
+            config.creativePromptStyleOptions = Array.isArray(dataConfig.creativePromptStyleOptions) && dataConfig.creativePromptStyleOptions.length
+                ? dataConfig.creativePromptStyleOptions
+                : (config.creativePromptStyleOptions || getCreativePromptStyleFallbackOptions());
+            config.creativePromptStyle = normalizeCreativePromptStyleValue(dataConfig.creativePromptStyle || config.creativePromptStyle);
+            config.creativeLegilGeneration = normalizeLegilSettingsForModel({
                 imageModel: settings.imageModel || 'nano-banana-2',
                 aspectRatio: settings.aspectRatio || '1:1',
                 aspectRatios: Array.isArray(settings.aspectRatios) && settings.aspectRatios.length
@@ -1298,14 +1567,14 @@
                     : [settings.aspectRatio || '1:1'],
                 resolution: settings.resolution || '2K',
                 outputQuantity: Number(settings.outputQuantity) || 4
-            };
+            });
 
             renderCreativeLegilImageModelOptions(options.imageModels || []);
-            renderCreativeLegilSettingOptions('aspectRatio', options.aspectRatios || []);
-            renderCreativeLegilSettingOptions('resolution', options.resolutions || []);
-            renderCreativeLegilSettingOptions('outputQuantity', options.outputQuantities || []);
+            renderCreativePromptStyleOptions(config.creativePromptStyleOptions);
+            renderCreativeLegilModelSpecificSettingOptions();
             updateCreativeBrowserModeActiveState();
             updateCreativeLegilGenerationActiveStates();
+            updateCreativePromptStyleActiveStates();
 
             refreshCreativeLegilGenerationSummary();
         }
@@ -1346,6 +1615,7 @@
                         outputFolder,
                         referenceFolder,
                         browserMode: config.creativeBrowserMode,
+                        creativePromptStyle: config.creativePromptStyle,
                         generationSettings: config.creativeLegilGeneration
                     })
                 });
@@ -1357,9 +1627,15 @@
                 config.creativeOutputFolder = data.config.outputFolder;
                 config.creativeReferenceFolder = data.config.referenceFolder || '';
                 config.creativeBrowserMode = normalizeCreativeBrowserMode(data.config.browserMode || config.creativeBrowserMode);
+                config.creativePromptStyleOptions = Array.isArray(data.config.creativePromptStyleOptions) && data.config.creativePromptStyleOptions.length
+                    ? data.config.creativePromptStyleOptions
+                    : (config.creativePromptStyleOptions || getCreativePromptStyleFallbackOptions());
+                config.creativePromptStyle = normalizeCreativePromptStyleValue(data.config.creativePromptStyle || config.creativePromptStyle);
+                config.legilModelParameterProfiles = data.config.modelParameterProfiles || config.legilModelParameterProfiles || {};
                 updateCreativeBrowserModeActiveState();
+                renderCreativePromptStyleOptions(config.creativePromptStyleOptions);
                 if (data.config.generationSettings) {
-                    config.creativeLegilGeneration = {
+                    config.creativeLegilGeneration = normalizeLegilSettingsForModel({
                         imageModel: data.config.generationSettings.imageModel || config.creativeLegilGeneration.imageModel,
                         aspectRatio: data.config.generationSettings.aspectRatio || config.creativeLegilGeneration.aspectRatio,
                         aspectRatios: Array.isArray(data.config.generationSettings.aspectRatios) && data.config.generationSettings.aspectRatios.length
@@ -1367,7 +1643,8 @@
                             : [data.config.generationSettings.aspectRatio || config.creativeLegilGeneration.aspectRatio],
                         resolution: data.config.generationSettings.resolution || config.creativeLegilGeneration.resolution,
                         outputQuantity: Number(data.config.generationSettings.outputQuantity) || config.creativeLegilGeneration.outputQuantity
-                    };
+                    });
+                    renderCreativeLegilModelSpecificSettingOptions();
                     updateCreativeLegilGenerationActiveStates();
                 }
                 refreshCreativeLegilGenerationSummary();

@@ -16,6 +16,14 @@ function startRuntimeServices(deps) {
         setHealthMonitor
     } = deps;
 
+    const skipRuntimeServices = ['1', 'true', 'yes', 'on'].includes(
+        String(process.env.SKIP_RUNTIME_SERVICES || '').trim().toLowerCase()
+    );
+    if (skipRuntimeServices) {
+        logger.system('Runtime background services skipped by SKIP_RUNTIME_SERVICES.');
+        return null;
+    }
+
     const feishuCliConfigOnStart = readFeishuCliConfig();
     if (feishuCliConfigOnStart.enabled) {
         feishuCliBridge.start(feishuCliConfigOnStart).catch(error => {
@@ -35,7 +43,7 @@ function startRuntimeServices(deps) {
         notifier: feishuNotifier,
         intervalMs: Number(process.env.HEALTH_MONITOR_INTERVAL_MS) || 60 * 1000,
         staleWarningMs: Number(process.env.HEALTH_STALE_WARNING_MS) || appConfig.notifications.staleThresholdMinutes * 60 * 1000,
-        staleErrorMs: Number(process.env.HEALTH_STALE_ERROR_MS) || Math.max(appConfig.notifications.staleThresholdMinutes * 2 * 60 * 1000, appConfig.notifications.staleThresholdMinutes * 60 * 1000 + 60 * 1000),
+        staleErrorMs: Number(process.env.HEALTH_STALE_ERROR_MS) || appConfig.notifications.staleThresholdMinutes * 60 * 1000,
         shouldNotifyStale: () => Boolean(appConfig.notifications.feishuEnabled && appConfig.notifications.staleProgressEnabled)
     });
     setHealthMonitor(healthMonitor);

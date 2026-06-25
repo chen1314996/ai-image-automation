@@ -31,6 +31,33 @@ module.exports = function createGenerationFlowMethods(deps) {
         LEGIL_ERROR_SCREENSHOT_DIR
     } = deps;
 
+    function resolveGenerationWaitTimeMs(settings = {}, options = {}) {
+        const explicitMaxWaitTime = Number(options.maxWaitTime);
+        if (Number.isFinite(explicitMaxWaitTime) && explicitMaxWaitTime > 0) {
+            return Math.floor(explicitMaxWaitTime);
+        }
+
+        const imageModel = String(settings.imageModel || '').trim();
+        const resolution = String(settings.resolution || '').trim().toUpperCase();
+        const outputQuantity = Math.max(1, Math.min(4, Number(settings.outputQuantity) || 1));
+        const isSlowModel = /gpt-image|nano-banana-(2|pro)|seedream-4\.5/i.test(imageModel);
+        let waitTimeMs = isSlowModel ? 12 * 60 * 1000 : 7 * 60 * 1000;
+
+        waitTimeMs += Math.max(0, outputQuantity - 1) * 5 * 60 * 1000;
+
+        if (resolution === '2K') {
+            waitTimeMs += 2 * 60 * 1000;
+        } else if (resolution === '4K') {
+            waitTimeMs += 6 * 60 * 1000;
+        }
+
+        if (options.acceptStablePartialOutputs === true && outputQuantity > 1) {
+            waitTimeMs += 2 * 60 * 1000;
+        }
+
+        return Math.min(waitTimeMs, 35 * 60 * 1000);
+    }
+
     return {
     async generateImage(prompt, promptIndex = 1, options = {}) {
         const promptText = typeof prompt === 'string' ? prompt.trim() : '';
@@ -135,10 +162,12 @@ module.exports = function createGenerationFlowMethods(deps) {
             }
 
             // 第5步：等待图片生成完成
-            logger.info('[步骤5/6] 等待图片生成完成（约3-5分钟）...');
+            const maxWaitTime = resolveGenerationWaitTimeMs(appliedGenerationSettings, options);
+            logger.info(`[步骤5/6] 等待图片生成完成（最长约 ${Math.ceil(maxWaitTime / 60000)} 分钟）...`);
             const generateSuccess = await this.waitForGenerationComplete(page, beforeImageKeys, {
                 ...options,
-                expectedOutputCount: appliedGenerationSettings.outputQuantity
+                expectedOutputCount: appliedGenerationSettings.outputQuantity,
+                maxWaitTime
             });
             if (!generateSuccess) {
                 const timeoutError = new Error('等待图片生成超时');
@@ -165,10 +194,14 @@ module.exports = function createGenerationFlowMethods(deps) {
 
             // 第6步：保存生成的图片
             logger.info('[步骤6/6] 正在保存生成的图片...');
+            const outputProfile = this.getModelParameterProfile(appliedGenerationSettings.imageModel);
+            const strictOutputCount = options.strictOutputCount === true ||
+                (options.strictOutputCount !== false && outputProfile.outputQuantityControl === 'slider');
             const savePaths = await this.saveGeneratedImages(page, safePromptIndex, {
                 ...options,
                 beforeImageKeys,
-                expectedOutputCount: appliedGenerationSettings.outputQuantity
+                expectedOutputCount: appliedGenerationSettings.outputQuantity,
+                strictOutputCount
             });
             if (savePaths.length === 0) {
                 throw new Error('保存图片失败');

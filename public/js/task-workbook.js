@@ -25,6 +25,55 @@ function taskWorkbookEl(tagName, className = '', text = '') {
     return el;
 }
 
+function taskWorkbookSetText(id, value) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = String(value);
+}
+
+function updateTaskWorkbookProductionState() {
+    const shell = document.querySelector('.task-workbook-shell');
+    const hasImport = Boolean(taskWorkbookState.currentImportId);
+    if (shell) {
+        shell.classList.toggle('is-imported', hasImport);
+        shell.classList.toggle('is-unimported', !hasImport);
+    }
+
+    const total = taskWorkbookState.taskDirections.length;
+    const selected = taskWorkbookState.selectedIds.size;
+    const images = taskWorkbookState.taskDirections
+        .reduce((sum, direction) => sum + (Array.isArray(direction.referenceImages) ? direction.referenceImages.length : 0), 0);
+    const fieldCount = Array.isArray(taskWorkbookState.hierarchyDefinitions)
+        ? taskWorkbookState.hierarchyDefinitions.length
+        : 0;
+    const summary = taskWorkbookState.summary || {};
+    const fileName = summary.fileName || summary.sourceFileName || '';
+
+    taskWorkbookSetText('taskWorkbookSourceHint', hasImport
+        ? `来自方案迭代的 ${total} 个任务方向，可勾选后送入创意拓展。`
+        : '可承接素材分析的创意机会，也可直接导入人工方案表。');
+    taskWorkbookSetText('taskWorkbookImportStageText', hasImport
+        ? `已导入${fileName ? `：${fileName}` : '任务表'}`
+        : '等待导入 .xlsx 方案表');
+    taskWorkbookSetText('taskWorkbookFieldDetectStatus', hasImport
+        ? `已识别 ${total} 行任务方向`
+        : '未识别');
+    taskWorkbookSetText('taskWorkbookFieldDetectMeta', hasImport
+        ? `标签层级 ${fieldCount || '--'} 个，参考图 ${images} 张，保留人工字段用于方向整理`
+        : '导入后识别标签、迭代描述和参考图字段');
+    taskWorkbookSetText('taskWorkbookDirectionPoolStageText', hasImport
+        ? `方向池 ${total} 个，当前已选择 ${selected} 个`
+        : '导入后生成可筛选方向池');
+    taskWorkbookSetText('taskWorkbookCreativeStageText', selected
+        ? `已选择 ${selected} 个方向，可送入创意拓展`
+        : '勾选方向后进入创意拓展');
+
+    const stageCards = document.querySelectorAll('.task-workbook-stage-grid .production-stage-card');
+    stageCards.forEach((card, index) => {
+        const currentIndex = !hasImport ? 0 : (selected ? 3 : 2);
+        card.classList.toggle('is-current', index === currentIndex);
+    });
+}
+
 function taskWorkbookSetInfo(type, text) {
     const box = document.getElementById('taskWorkbookImportInfo');
     if (!box) return;
@@ -63,20 +112,16 @@ function taskWorkbookReadResponse(response, fallbackMessage) {
         });
 }
 
-function taskWorkbookReadFileAsBase64(file) {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onerror = () => reject(new Error('读取任务表文件失败'));
-        reader.onload = () => {
-            const result = String(reader.result || '');
-            const comma = result.indexOf(',');
-            resolve({
-                fileName: file.name,
-                fileContent: comma >= 0 ? result.slice(comma + 1) : result
-            });
-        };
-        reader.readAsDataURL(file);
-    });
+function buildTaskWorkbookImportRequest(file, localPath) {
+    if (file) {
+        const body = new FormData();
+        body.append('workbook', file, file.name);
+        return { body };
+    }
+    return {
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filePath: localPath })
+    };
 }
 
 function taskWorkbookResultMap() {
@@ -90,6 +135,25 @@ function taskWorkbookDirectionStatus(direction = {}, result = null) {
     if (actual && actual.status === 'failed') return 'risky';
     if (direction.status === 'missing-image') return 'missing-image';
     return 'pending';
+}
+
+function taskWorkbookIsSupportedWorkbookFile(file) {
+    return Boolean(file && /\.(xlsx|xls)$/i.test(file.name || ''));
+}
+
+function taskWorkbookPickDroppedWorkbookFile(files) {
+    return Array.from(files || []).find(taskWorkbookIsSupportedWorkbookFile) || null;
+}
+
+function taskWorkbookSetFileInputFile(input, file) {
+    if (!input || !file || typeof DataTransfer === 'undefined') return;
+    const transfer = new DataTransfer();
+    transfer.items.add(file);
+    input.files = transfer.files;
+}
+
+function taskWorkbookSetDropzoneActive(active) {
+    document.getElementById('taskWorkbookImportDropzone')?.classList.toggle('is-dragging-file', Boolean(active));
 }
 
 function activateTaskWorkbookDirection(taskDirectionId) {
@@ -221,14 +285,11 @@ function renderTaskWorkbookMetrics() {
         .length;
     const images = taskWorkbookState.taskDirections
         .reduce((sum, direction) => sum + (Array.isArray(direction.referenceImages) ? direction.referenceImages.length : 0), 0);
-    const setText = (id, value) => {
-        const el = document.getElementById(id);
-        if (el) el.textContent = String(value);
-    };
-    setText('taskWorkbookMetricDirections', taskWorkbookState.taskDirections.length);
-    setText('taskWorkbookMetricImages', images);
-    setText('taskWorkbookMetricReady', ready);
-    setText('taskWorkbookMetricSelected', taskWorkbookState.selectedIds.size);
+    taskWorkbookSetText('taskWorkbookMetricDirections', taskWorkbookState.taskDirections.length);
+    taskWorkbookSetText('taskWorkbookMetricImages', images);
+    taskWorkbookSetText('taskWorkbookMetricReady', ready);
+    taskWorkbookSetText('taskWorkbookMetricSelected', taskWorkbookState.selectedIds.size);
+    updateTaskWorkbookProductionState();
 }
 
 function renderTaskWorkbookVisionStatus(status = taskWorkbookState.visionStatus) {
@@ -540,11 +601,70 @@ function clearTaskWorkbookSelection() {
     renderTaskWorkbookPool();
 }
 
-async function importTaskWorkbookFile() {
+function taskWorkbookIsFileDrag(event) {
+    return Array.from(event.dataTransfer?.types || []).includes('Files');
+}
+
+function setupTaskWorkbookImportDropzone() {
+    const dropzone = document.getElementById('taskWorkbookImportDropzone');
+    if (!dropzone) return;
+
+    let dragDepth = 0;
+    const keepDropOnCard = event => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+    };
+
+    dropzone.addEventListener('dragenter', event => {
+        if (!taskWorkbookIsFileDrag(event)) return;
+        keepDropOnCard(event);
+        dragDepth += 1;
+        taskWorkbookSetDropzoneActive(true);
+    });
+
+    dropzone.addEventListener('dragover', event => {
+        if (!taskWorkbookIsFileDrag(event)) return;
+        keepDropOnCard(event);
+        taskWorkbookSetDropzoneActive(true);
+    });
+
+    dropzone.addEventListener('dragleave', event => {
+        if (!taskWorkbookIsFileDrag(event)) return;
+        keepDropOnCard(event);
+        dragDepth = Math.max(0, dragDepth - 1);
+        if (dragDepth === 0 || !dropzone.contains(event.relatedTarget)) {
+            taskWorkbookSetDropzoneActive(false);
+        }
+    });
+
+    dropzone.addEventListener('drop', event => {
+        if (!taskWorkbookIsFileDrag(event)) return;
+        keepDropOnCard(event);
+        dragDepth = 0;
+        taskWorkbookSetDropzoneActive(false);
+        const file = taskWorkbookPickDroppedWorkbookFile(event.dataTransfer?.files || []);
+        if (!file) {
+            showToast('请拖入 .xlsx 或 .xls 任务表文件', 'error');
+            return;
+        }
+        importTaskWorkbookFile({ file });
+    });
+}
+
+async function importTaskWorkbookFile(options = {}) {
+    if (taskWorkbookState.importing) {
+        showToast('任务表正在导入中，请稍候', 'warning');
+        return;
+    }
     const input = document.getElementById('taskWorkbookFileInput');
-    const file = input && input.files && input.files[0];
-    if (!file) {
-        showToast('请先选择自动化任务表', 'error');
+    const droppedFile = taskWorkbookIsSupportedWorkbookFile(options.file) ? options.file : null;
+    if (droppedFile) taskWorkbookSetFileInputFile(input, droppedFile);
+    const file = droppedFile || (input && input.files && input.files[0]);
+    const localPathInput = document.getElementById('taskWorkbookLocalPathInput');
+    const localPath = localPathInput ? localPathInput.value.trim() : '';
+    if (!file && !localPath) {
+        showToast('请先选择自动化任务表或填写本地任务表路径', 'error');
         return;
     }
     const button = document.getElementById('taskWorkbookImportBtn');
@@ -552,11 +672,10 @@ async function importTaskWorkbookFile() {
     taskWorkbookState.importing = true;
     taskWorkbookSetInfo('loading', '正在读取并导入任务表，包含嵌入图片时会稍慢...');
     try {
-        const filePayload = await taskWorkbookReadFileAsBase64(file);
+        const request = buildTaskWorkbookImportRequest(file, localPath);
         const response = await fetch('/api/task-workbooks/import', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(filePayload)
+            ...request
         });
         const data = await taskWorkbookReadResponse(response, '导入自动化任务表失败');
         taskWorkbookState.currentImportId = data.importId;
@@ -569,9 +688,8 @@ async function importTaskWorkbookFile() {
         taskWorkbookState.activeGroupKey = '';
         renderTaskWorkbookPool();
         await loadTaskWorkbookImports({ keepCurrent: true, silent: true });
-        taskWorkbookSetInfo('success', `导入完成：${data.summary?.taskDirectionCount || 0} 个任务方向，${data.summary?.taskReferenceImageCount || 0} 张参考图。正在尝试启动视觉整理...`);
+        taskWorkbookSetInfo('success', `导入完成：${data.summary?.taskDirectionCount || 0} 个任务方向，${data.summary?.taskReferenceImageCount || 0} 张参考图。可手动点击“开始整理全部行”启动视觉整理。`);
         showToast('任务表导入完成');
-        await startTaskWorkbookVision({ auto: true });
     } catch (error) {
         taskWorkbookSetInfo('error', error.message || '导入自动化任务表失败');
         showToast(error.message || '导入自动化任务表失败', 'error');
@@ -688,6 +806,9 @@ async function pauseTaskWorkbookVision() {
         const data = await taskWorkbookReadResponse(response, '暂停任务方向视觉整理失败');
         taskWorkbookState.visionStatus = data.status || taskWorkbookState.visionStatus;
         renderTaskWorkbookVisionStatus();
+        if (taskWorkbookState.visionStatus && taskWorkbookState.visionStatus.running) {
+            scheduleTaskWorkbookVisionPoll();
+        }
         showToast(data.message || '已发送暂停指令');
     } catch (error) {
         showToast(error.message || '暂停任务方向视觉整理失败', 'error');
@@ -861,6 +982,7 @@ let taskWorkbookInitialized = false;
 function initTaskWorkbookPage() {
     if (taskWorkbookInitialized) return;
     taskWorkbookInitialized = true;
+    setupTaskWorkbookImportDropzone();
     document.getElementById('taskWorkbookSearchInput')?.addEventListener('input', event => {
         taskWorkbookState.searchText = event.target.value || '';
         renderTaskWorkbookPool();

@@ -40,7 +40,13 @@ module.exports = function registerFeishuRoutes(app, context) {
                 events: '/api/feishu/events',
                 notify: '/api/feishu/notify'
             },
-            supportedCommands: ['创意状态', '创意进度', '生成Prompt', '小批量验证', '继续创意', '暂停创意', '停止工作流', '继续工作流', '重启工作流', '帮助']
+            supportedCommands: [
+                '控制面板', '生产面板', '交付面板', '系统面板',
+                '状态', '进度', '日志', '浏览器状态',
+                '继续任务', '停止全部', '重启服务器',
+                '继续创意', '暂停创意', '重试失败Prompt',
+                '继续交付', '停止交付', '帮助'
+            ]
         });
     });
 
@@ -115,7 +121,12 @@ module.exports = function registerFeishuRoutes(app, context) {
             configured: getSafeFeishuCliConfig(config),
             validation: validateFeishuCliConfig(config),
             bridge: feishuCliBridge.getStatus(),
-            commands: ['帮助', '创意状态', '创意进度', '生成Prompt', '小批量验证', '继续创意', '暂停创意', '日志', '浏览器状态', '开始量产', '停止工作流', '继续工作流', '重启工作流']
+            commands: [
+                '帮助', '控制面板', '生产面板', '交付面板', '系统面板',
+                '状态', '进度', '继续任务', '停止全部', '日志', '浏览器状态',
+                '重启服务器', '继续创意', '暂停创意', '重试失败Prompt',
+                '继续交付', '停止交付'
+            ]
         });
     });
 
@@ -230,6 +241,7 @@ module.exports = function registerFeishuRoutes(app, context) {
             const result = await controlService.executeControlAction(action);
             const success = result && result.success !== false;
             const message = result && result.message ? result.message : (success ? '已执行' : '执行失败');
+            const cardOptions = result && result.cardOptions && typeof result.cardOptions === 'object' ? result.cardOptions : {};
             const title = `按钮执行：${actionLabel}`;
 
             await feishuCliBridge.sendControlCard({
@@ -237,7 +249,8 @@ module.exports = function registerFeishuRoutes(app, context) {
                 title,
                 summary: message,
                 template: success ? 'green' : 'red',
-                footer: `来自卡片按钮：${actionLabel}`
+                footer: `来自卡片按钮：${actionLabel}`,
+                ...cardOptions
             }).catch(error => {
                 logger.warn('发送飞书按钮结果卡片失败: ' + error.message);
             });
@@ -310,10 +323,10 @@ module.exports = function registerFeishuRoutes(app, context) {
     app.post('/api/feishu-cli/send-card', async (req, res) => {
         const title = typeof req.body?.title === 'string' && req.body.title.trim()
             ? req.body.title.trim()
-            : 'AI生图控制面板';
+            : 'AI图片生产远程控制台';
         const summary = typeof req.body?.summary === 'string' && req.body.summary.trim()
             ? req.body.summary.trim()
-            : '常用按钮已精简，其他操作继续发送文字指令。';
+            : '远程值班面板：查看状态、进度、日志，必要时继续、停止或进入系统面板重启服务器。';
         const chatId = typeof req.body?.chatId === 'string' ? req.body.chatId.trim() : '';
 
         try {
