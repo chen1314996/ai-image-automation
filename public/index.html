@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI生图自动化平台</title>
     <link rel="icon" type="image/png" href="/assets/app-icon.png">
-    <link rel="stylesheet" href="/css/app.css?v=20260618-mass-buttons">
+    <link rel="stylesheet" href="/css/app.css?v=20260625-batch-retouch-layout">
     <link rel="stylesheet" href="/css/task-workbook.css?v=20260617-task-compact">
 </head>
 <body class="run-center-mode">
@@ -222,6 +222,7 @@
                     <div class="mass-mode-tabs" role="tablist" aria-label="批量产图模式">
                         <button type="button" class="mass-mode-tab active" data-mass-mode="reference" onclick="switchMassMode('reference')">参考图自动产图</button>
                         <button type="button" class="mass-mode-tab" data-mass-mode="table" onclick="switchMassMode('table')">表格提示词产图</button>
+                        <button type="button" class="mass-mode-tab" data-mass-mode="retouch" onclick="switchMassMode('retouch')">批量修图</button>
                     </div>
                 </div>
 
@@ -407,6 +408,165 @@
                             <div id="statsGenerated">0</div>
                         </div>
                     </div>
+                </div>
+
+                <div class="mass-mode-panel" id="massModeRetouch" data-mass-mode-panel="retouch">
+                    <div class="mass-primary-surface product-task-surface">
+                        <div class="mass-primary-intro">
+                            <div>
+                                <span class="mass-eyebrow">二次提质</span>
+                                <h3>批量修图</h3>
+                                <p>读取筛选后的输入图，上传当前输入图与最多 10 张风格参考图，直接提交 Legil 进行二次生图提质。</p>
+                            </div>
+                            <div class="mass-mini-status" id="batchRetouchMiniStatus" data-state="idle">
+                                <span class="mass-mini-dot" aria-hidden="true"></span>
+                                <span>任务状态</span>
+                                <strong id="batchRetouchMiniStage">待启动</strong>
+                                <span id="batchRetouchMiniCurrentImage">未扫描输入图</span>
+                                <span id="batchRetouchMiniProgress">0 / 0</span>
+                            </div>
+                        </div>
+
+                        <div class="mass-primary-grid">
+                            <div class="mass-folder-panel">
+                                <div class="form-group folder-field product-folder-field">
+                                    <div class="folder-field-heading">
+                                        <label for="batchRetouchInputFolder">输入文件夹</label>
+                                        <span class="folder-desc">放入筛选好的待修图图片，任务会按文件名顺序逐张处理</span>
+                                    </div>
+                                    <div class="folder-path-row">
+                                        <div class="folder-input-combo">
+                                            <input type="text" id="batchRetouchInputFolder" placeholder="默认：D:\工作\自动化工作流1\批量产图\修图\输入" value="D:\工作\自动化工作流1\批量产图\修图\输入">
+                                            <button type="button" class="folder-history-button" id="batchRetouchInputFolderHistoryButton" onclick="toggleFolderHistory('batchRetouchInputFolder')"><span class="history-caret">▼</span>历史</button>
+                                            <div class="folder-history-menu" id="batchRetouchInputFolderHistoryMenu"></div>
+                                        </div>
+                                        <button class="btn btn-secondary btn-folder-browse" onclick="browseFolder('batchRetouchInputFolder')">浏览</button>
+                                    </div>
+                                    <div class="info-box" id="batchRetouchInputInfo"></div>
+                                </div>
+
+                                <div class="form-group folder-field product-folder-field">
+                                    <div class="folder-field-heading">
+                                        <label for="batchRetouchReferenceFolder">风格参考图文件夹</label>
+                                        <span class="folder-desc">每轮上传前 10 张参考图，作为图二到图十一的风格依据</span>
+                                    </div>
+                                    <div class="folder-path-row">
+                                        <div class="folder-input-combo">
+                                            <input type="text" id="batchRetouchReferenceFolder" placeholder="默认：D:\工作\自动化工作流1\批量产图\修图\参考图" value="D:\工作\自动化工作流1\批量产图\修图\参考图">
+                                            <button type="button" class="folder-history-button" id="batchRetouchReferenceFolderHistoryButton" onclick="toggleFolderHistory('batchRetouchReferenceFolder')"><span class="history-caret">▼</span>历史</button>
+                                            <div class="folder-history-menu" id="batchRetouchReferenceFolderHistoryMenu"></div>
+                                        </div>
+                                        <button class="btn btn-secondary btn-folder-browse" onclick="browseFolder('batchRetouchReferenceFolder')">浏览</button>
+                                    </div>
+                                    <div class="info-box" id="batchRetouchReferenceInfo"></div>
+                                </div>
+
+                                <div class="form-group folder-field product-folder-field">
+                                    <div class="folder-field-heading">
+                                        <label for="batchRetouchOutputFolder">输出文件夹</label>
+                                        <span class="folder-desc">修图结果按现有 Legil 图片保存命名逻辑保存到这里</span>
+                                    </div>
+                                    <div class="folder-path-row">
+                                        <div class="folder-input-combo">
+                                            <input type="text" id="batchRetouchOutputFolder" placeholder="默认：D:\工作\自动化工作流1\批量产图\修图\输出" value="D:\工作\自动化工作流1\批量产图\修图\输出">
+                                            <button type="button" class="folder-history-button" id="batchRetouchOutputFolderHistoryButton" onclick="toggleFolderHistory('batchRetouchOutputFolder')"><span class="history-caret">▼</span>历史</button>
+                                            <div class="folder-history-menu" id="batchRetouchOutputFolderHistoryMenu"></div>
+                                        </div>
+                                        <button class="btn btn-secondary btn-folder-browse" onclick="browseFolder('batchRetouchOutputFolder')">浏览</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="table-prompts-stats batch-retouch-stats" id="batchRetouchStats">
+                            <div><span>输入图</span><strong id="batchRetouchInputCount">0</strong></div>
+                            <div><span>风格参考图</span><strong id="batchRetouchStyleCount">0 / 10</strong></div>
+                            <div><span>预计产图</span><strong id="batchRetouchExpectedCount">0</strong></div>
+                            <div><span>已保存</span><strong id="batchRetouchSavedCount">0</strong></div>
+                        </div>
+
+                        <div class="mass-primary-actions product-action-row">
+                            <button type="button" class="btn btn-primary" id="batchRetouchScanBtn" onclick="scanBatchRetouchFolders()">扫描图片</button>
+                            <button type="button" class="btn btn-primary" id="batchRetouchStartBtn" onclick="startBatchRetouchWithConfirm()">开始批量修图</button>
+                            <button type="button" class="btn btn-secondary" id="batchRetouchStopBtn" onclick="stopBatchRetouch()" disabled>暂停任务</button>
+                            <button type="button" class="btn btn-success" id="batchRetouchResumeBtn" onclick="resumeBatchRetouch()" disabled>继续任务</button>
+                            <button type="button" class="btn btn-secondary" onclick="openSingleWebsite('legil')">打开生图平台</button>
+                        </div>
+                        <div class="info-box" id="batchRetouchInfo">等待扫描输入图和风格参考图。</div>
+                    </div>
+
+                    <details class="mass-legil-panel" id="batchRetouchGenerationConfigCard" aria-label="批量修图参数">
+                        <summary class="mass-legil-summary">
+                            <span>批量修图参数</span>
+                            <small>
+                                <strong id="batchRetouchSummaryModel">Nano Banana 2</strong>
+                                <em id="batchRetouchSummaryRatio">1:1</em>
+                                <em id="batchRetouchSummaryResolution">2K</em>
+                                <em id="batchRetouchSummaryOutput">1 张</em>
+                                <em id="batchRetouchSummaryBrowserMode">无头</em>
+                            </small>
+                            <b class="mass-legil-toggle-label" aria-hidden="true"></b>
+                        </summary>
+
+                        <div class="mass-legil-body">
+                            <div class="mass-legil-heading">
+                                <span>生成设置</span>
+                                <button type="button" class="mass-text-button" onclick="saveBatchRetouchConfig()">保存修图参数</button>
+                            </div>
+
+                            <div class="mass-prompt-card mass-legil-prompt-card">
+                                <div class="workflow-prompt-box">
+                                    <div class="workflow-prompt-heading">
+                                        <div class="workflow-prompt-title">
+                                            <label for="batchRetouchPrompt">Legil 修图提示词</label>
+                                            <span class="workflow-prompt-provider">直接发送 Legil</span>
+                                        </div>
+                                        <span class="workflow-prompt-count" id="batchRetouchPromptCount">0 字</span>
+                                    </div>
+                                    <textarea id="batchRetouchPrompt" rows="5" placeholder="输入直接发送给 Legil 的修图提示词">图一变成后几张图片风格，高质量3D卡通渲染风格，保持图一色调</textarea>
+                                    <div class="workflow-prompt-meta">每轮都会先上传当前输入图，再上传最多 10 张风格参考图；这段提示词会直接发送给 Legil，不经过 Lumos Winky。</div>
+                                </div>
+                            </div>
+
+                            <div class="setting-group mass-legil-side-group">
+                                <label>运行模式</label>
+                                <div class="model-options workflow-browser-mode-options" id="batchRetouchBrowserModeOptions">
+                                    <button type="button" class="model-option" data-batch-retouch-browser-mode="headless" onclick="setBatchRetouchBrowserMode('headless')">
+                                        <span class="model-option-title">无头模式</span>
+                                        <span class="model-option-desc">后台运行不显示窗口</span>
+                                    </button>
+                                    <button type="button" class="model-option" data-batch-retouch-browser-mode="headed" onclick="setBatchRetouchBrowserMode('headed')">
+                                        <span class="model-option-title">有头模式</span>
+                                        <span class="model-option-desc">显示浏览器窗口</span>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div class="setting-group mass-legil-model-group">
+                                <label>图生图模型</label>
+                                <div class="model-options" id="batchRetouchImageModelOptions"></div>
+                            </div>
+
+                            <div class="mass-legil-compact-grid">
+                                <div class="setting-group">
+                                    <label>宽高比</label>
+                                    <div class="setting-options" id="batchRetouchAspectRatioOptions"></div>
+                                </div>
+
+                                <div class="setting-group">
+                                    <label>分辨率</label>
+                                    <div class="setting-options" id="batchRetouchResolutionOptions"></div>
+                                </div>
+
+                                <div class="setting-group">
+                                    <label>输出数量</label>
+                                    <div class="setting-options" id="batchRetouchOutputQuantityOptions"></div>
+                                </div>
+                            </div>
+
+                            <div class="info-box" id="batchRetouchConfigInfo"></div>
+                        </div>
+                    </details>
                 </div>
 
                 <div class="mass-mode-panel" id="massModeTable" data-mass-mode-panel="table">
@@ -2546,6 +2706,7 @@
     <script src="/js/rename-images.js"></script>
     <script src="/js/vision-taxonomy-rename.js?v=20260604-vtr4"></script>
     <script src="/js/table-prompt-batch.js"></script>
+    <script src="/js/batch-retouch.js"></script>
     <script src="/js/mass-page.js"></script>
     <script src="/js/workflow.js"></script>
     <script src="/js/prompt-management.js"></script>

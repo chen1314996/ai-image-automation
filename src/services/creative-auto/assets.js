@@ -17,7 +17,12 @@ const NAMING_CONTEXT_FIELDS = [
     'newDirectionName',
     'promptTitle',
     'contentTitle',
+    'contentName',
+    'finalContentTitle',
+    'automationContentTitle',
     'outputNameBase',
+    'matchedDirectionId',
+    'matchedDirectionPath',
     'namingSource',
     'tagConfidence'
 ];
@@ -212,7 +217,12 @@ function buildNamingContext({ file = {}, prompt = {}, direction = {} } = {}) {
         newDirectionName: firstText(file.newDirectionName, prompt.newDirectionName, prompt.direction),
         promptTitle: firstText(file.promptTitle, prompt.promptTitle),
         contentTitle: firstText(file.contentTitle, prompt.contentTitle, prompt.newDirectionName, prompt.direction),
+        contentName: firstText(file.contentName, prompt.contentName),
+        finalContentTitle: firstText(file.finalContentTitle, prompt.finalContentTitle),
+        automationContentTitle: firstText(file.automationContentTitle, prompt.automationContentTitle),
         outputNameBase: firstText(file.outputNameBase, prompt.outputNameBase),
+        matchedDirectionId: firstText(file.matchedDirectionId, prompt.matchedDirectionId),
+        matchedDirectionPath: firstText(file.matchedDirectionPath, prompt.matchedDirectionPath),
         namingSource: firstText(file.namingSource, prompt.namingSource),
         tagConfidence: firstText(file.tagConfidence, prompt.tagConfidence)
     };
@@ -399,7 +409,12 @@ function buildAsset({ run, progress, file, fileIndex, outputFolder }) {
         newDirectionName: namingContext.newDirectionName,
         promptTitle: namingContext.promptTitle,
         contentTitle: namingContext.contentTitle,
+        contentName: namingContext.contentName,
+        finalContentTitle: namingContext.finalContentTitle,
+        automationContentTitle: namingContext.automationContentTitle,
         outputNameBase: namingContext.outputNameBase,
+        matchedDirectionId: namingContext.matchedDirectionId,
+        matchedDirectionPath: namingContext.matchedDirectionPath,
         namingSource: namingContext.namingSource,
         tagConfidence: namingContext.tagConfidence,
         promptIndex: file.promptListIndex || prompt.index || fileIndex + 1,

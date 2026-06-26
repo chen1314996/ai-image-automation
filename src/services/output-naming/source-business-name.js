@@ -4,6 +4,7 @@ const CJK_RE = /[\u3400-\u9fff\uf900-\ufaff]/u;
 const DIMENSION_RE = /^\d{2,5}x\d{2,5}(?:[-_].*)?$/i;
 const GOFCNIM_RE = /^GOFCNIM\d+$/i;
 const VERSION_RE = /^v\d{1,4}$/i;
+const YEAR_RE = /^20\d{2}$/;
 const DATE_RE = /^\d{8}$/;
 const TIME_RE = /^\d{6}$/;
 const SEQUENCE_RE = /^\d{4,}$/;
@@ -64,7 +65,8 @@ function cleanBusinessParts(parts) {
         .map(part => sanitizeNamePart(part))
         .filter(Boolean)
         .filter(part => !DIMENSION_RE.test(part))
-        .filter(part => !VERSION_RE.test(part));
+        .filter(part => !VERSION_RE.test(part))
+        .filter(part => !YEAR_RE.test(part));
 
     while (cleaned.length >= 2 && DATE_RE.test(cleaned[cleaned.length - 2]) && TIME_RE.test(cleaned[cleaned.length - 1])) {
         cleaned.splice(cleaned.length - 2, 2);
@@ -101,12 +103,16 @@ function parseGeneratedLegilName(fileName) {
     const last = parts[parts.length - 1];
     const secondLast = parts[parts.length - 2];
     const thirdLast = parts[parts.length - 3];
-    const hasGeneratedSuffix = TIME_RE.test(last) && DATE_RE.test(secondLast) && VERSION_RE.test(thirdLast);
-    if (!hasGeneratedSuffix) {
+    const fourthLast = parts[parts.length - 4];
+    const hasStandardSuffix = TIME_RE.test(last) && DATE_RE.test(secondLast) && VERSION_RE.test(thirdLast);
+    const hasYearSuffix = TIME_RE.test(last) && DATE_RE.test(secondLast) && YEAR_RE.test(thirdLast) && VERSION_RE.test(fourthLast);
+    if (!hasStandardSuffix && !hasYearSuffix) {
         return null;
     }
 
-    const coreParts = parts.slice(0, -3);
+    const suffixLength = hasYearSuffix ? 4 : 3;
+    const versionPart = hasYearSuffix ? fourthLast : thirdLast;
+    const coreParts = parts.slice(0, -suffixLength);
     const sequenceCandidates = [];
     coreParts.forEach((part, index) => {
         if (SEQUENCE_RE.test(part) && index < coreParts.length - 1) {
@@ -133,8 +139,8 @@ function parseGeneratedLegilName(fileName) {
     return buildResult(coreParts.slice(sequenceIndex + 1), 'generated-legil', {
         runId: coreParts.slice(0, sequenceIndex).join('_'),
         sequence: coreParts[sequenceIndex],
-        variant: thirdLast.replace(/^v/i, ''),
-        savedAt: `${secondLast}_${last}`
+        variant: versionPart.replace(/^v/i, ''),
+        savedAt: hasYearSuffix ? `${thirdLast}_${secondLast}_${last}` : `${secondLast}_${last}`
     });
 }
 
@@ -160,12 +166,23 @@ function parseGofcnimName(fileName) {
 }
 
 function extractSourceBusinessName(fileName) {
-    return parseGeneratedLegilName(fileName) || parseGofcnimName(fileName) || null;
+    return parseGeneratedLegilName(fileName) || parseGofcnimName(fileName) || parseTaggedBusinessName(fileName) || null;
+}
+
+function parseTaggedBusinessName(fileName) {
+    const parts = splitStem(fileName);
+    const primaryIndex = parts.findIndex(part => KNOWN_PRIMARY_TAGS.has(part));
+    if (primaryIndex < 0) {
+        return null;
+    }
+
+    return buildResult(parts.slice(primaryIndex), 'tagged-business-name');
 }
 
 module.exports = {
     extractSourceBusinessName,
     parseGeneratedLegilName,
     parseGofcnimName,
+    parseTaggedBusinessName,
     sanitizeNamePart
 };

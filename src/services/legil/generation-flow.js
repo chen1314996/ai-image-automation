@@ -115,6 +115,10 @@ module.exports = function createGenerationFlowMethods(deps) {
             }
 
             await this.ensureLegilImageToImagePage(page, options);
+            if (options.refreshBeforeUpload === true) {
+                logger.info('批量任务要求刷新 Legil 页面，正在清理上一轮上传状态...');
+                await this.refreshLegilPageOnce(page, options);
+            }
             await browserController.applyLegilWindowFit(page).catch(error => {
                 logger.warn(`Legil 窗口自适应设置失败: ${error.message}`);
             });
@@ -125,17 +129,25 @@ module.exports = function createGenerationFlowMethods(deps) {
             // 第2步：上传参考图。改尺寸批处理会传入 referenceImagePath，量产流程继续使用原参考图文件夹。
             // 创意拓展页面只使用表格中的提示词时，会显式传入 skipReferenceUpload 跳过上传。
             const hasDirectReferenceImage = typeof options.referenceImagePath === 'string' && options.referenceImagePath.trim();
+            const hasMultipleReferenceImages = Array.isArray(options.referenceImagePaths) && options.referenceImagePaths.length > 0;
+            const hasRetouchReferenceImages = options.uploadMode === 'retouch-sequential-slots' &&
+                typeof options.retouchInputImagePath === 'string' &&
+                options.retouchInputImagePath.trim();
             const shouldSkipReferenceUpload = options.skipReferenceUpload === true;
-            if (!shouldSkipReferenceUpload && (hasDirectReferenceImage || this.referenceImages.length > 0 || fs.existsSync(this.referenceFolder))) {
+            if (!shouldSkipReferenceUpload && (hasRetouchReferenceImages || hasMultipleReferenceImages || hasDirectReferenceImage || this.referenceImages.length > 0 || fs.existsSync(this.referenceFolder))) {
                 logger.info('[步骤2/6] 正在上传参考图...');
-                const uploadSuccess = await this.uploadReferenceImage(page, options);
+                const uploadSuccess = hasRetouchReferenceImages
+                    ? await this.uploadRetouchReferenceImages(page, options.retouchInputImagePath, options.styleReferenceImagePaths, options)
+                    : (hasMultipleReferenceImages
+                        ? await this.uploadReferenceImages(page, options.referenceImagePaths, options)
+                        : await this.uploadReferenceImage(page, options));
                 if (uploadSuccess) {
                     logger.info('✅ 参考图上传成功');
                     // 等待图片上传完成并生效
                     await interruptibleSleep(3000, options);
                 } else {
-                    if (hasDirectReferenceImage) {
-                        throw new Error('上传改尺寸输入图失败，请确认 Legil 图生图页面已登录且上传入口可用');
+                    if (hasDirectReferenceImage || hasMultipleReferenceImages || hasRetouchReferenceImages) {
+                        throw new Error('上传参考图失败，请确认 Legil 图生图页面已登录且上传入口可用');
                     }
                     logger.warn('⚠️ 参考图上传失败，继续生成流程');
                 }

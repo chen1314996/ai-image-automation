@@ -713,10 +713,29 @@ module.exports = function createGenerationSettingsMethods(deps) {
             for (const label of labels) {
                 let current = label;
                 for (let depth = 0; depth < 7 && current; depth += 1) {
-                    const text = normalizeText(current.innerText || current.textContent || '');
-                    const values = text.match(/\b[1-4]\b/g);
-                    if (values && values.length) {
-                        return Number(values[values.length - 1]);
+                    const optionCandidates = Array.from(current.querySelectorAll('button, [role="button"], [aria-pressed], [aria-selected], [data-state], div, span'))
+                        .filter(isVisible)
+                        .map(el => {
+                            const text = normalizeText(el.innerText || el.textContent || '');
+                            if (!/^[1-4]$/.test(text)) return null;
+                            const clickable = el.closest('button, [role="button"], [aria-pressed], [aria-selected], [data-state]') || el;
+                            const state = String(clickable.getAttribute('data-state') || '').toLowerCase();
+                            const ariaPressed = String(clickable.getAttribute('aria-pressed') || '').toLowerCase();
+                            const ariaSelected = String(clickable.getAttribute('aria-selected') || '').toLowerCase();
+                            const ariaChecked = String(clickable.getAttribute('aria-checked') || '').toLowerCase();
+                            const className = String(clickable.className || '').toLowerCase();
+                            const selected = state === 'on' ||
+                                state === 'checked' ||
+                                state === 'active' ||
+                                ariaPressed === 'true' ||
+                                ariaSelected === 'true' ||
+                                ariaChecked === 'true' ||
+                                /\b(active|selected|checked|is-selected)\b/.test(className);
+                            return selected ? Number(text) : null;
+                        })
+                        .filter(value => Number.isFinite(value) && value >= 1 && value <= 4);
+                    if (optionCandidates.length) {
+                        return optionCandidates[0];
                     }
                     current = current.parentElement;
                 }
@@ -773,6 +792,7 @@ module.exports = function createGenerationSettingsMethods(deps) {
             const target = labels[0] || leftPanel.querySelector('input[type="range"], [role="slider"]');
             if (target) {
                 target.scrollIntoView({ block: 'center', inline: 'nearest' });
+                leftPanel.scrollTop = Math.min(leftPanel.scrollHeight - leftPanel.clientHeight, leftPanel.scrollTop + 160);
                 return true;
             }
 
@@ -1009,6 +1029,165 @@ module.exports = function createGenerationSettingsMethods(deps) {
         return (await this.detectOutputQuantityValue(page)) === target;
     },
 
+    async clickOutputQuantityButton(page, outputQuantity, options = {}) {
+        const target = Math.max(1, Math.min(4, Number(outputQuantity) || 1));
+        await this.scrollOutputQuantityIntoView(page, options);
+
+        const optionHandle = await page.evaluateHandle((targetValue) => {
+            const targetText = String(targetValue);
+            const normalizeText = value => String(value || '').replace(/\s+/g, ' ').trim();
+            const isVisible = (el) => {
+                if (!el || !(el instanceof Element)) return false;
+                const rect = el.getBoundingClientRect();
+                const style = window.getComputedStyle(el);
+                return rect.width > 0 &&
+                    rect.height > 0 &&
+                    style.visibility !== 'hidden' &&
+                    style.display !== 'none' &&
+                    style.opacity !== '0';
+            };
+            const clickableFor = (el) => {
+                return el.closest('button, [role="button"], [data-state], [aria-pressed], [aria-selected], [class*="option"], [class*="Option"], [class*="item"], [class*="Item"]') || el;
+            };
+            const findOutputRoot = () => {
+                const labelPattern = /输出数量|output\s*quantity/i;
+                const labels = Array.from(document.querySelectorAll('div, span, p, label'))
+                    .filter(isVisible)
+                    .filter(el => labelPattern.test(normalizeText(el.innerText || el.textContent || '')))
+                    .sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top);
+
+                for (const label of labels) {
+                    let current = label;
+                    for (let depth = 0; depth < 8 && current; depth += 1) {
+                        const options = Array.from(current.querySelectorAll('button, [role="button"], div, span'))
+                            .filter(isVisible)
+                            .filter(el => /^[1-4]$/.test(normalizeText(el.innerText || el.textContent || '')));
+                        if (options.length >= 2) {
+                            return current;
+                        }
+                        current = current.parentElement;
+                    }
+                }
+                return null;
+            };
+
+            const root = findOutputRoot();
+            if (!root) return null;
+
+            const candidates = Array.from(root.querySelectorAll('button, [role="button"], div, span'))
+                .filter(isVisible)
+                .map(el => {
+                    const text = normalizeText(el.innerText || el.textContent || '');
+                    if (text !== targetText) return null;
+                    const clickable = clickableFor(el);
+                    if (!isVisible(clickable)) return null;
+                    const rect = clickable.getBoundingClientRect();
+                    if (rect.width < 28 || rect.height < 24 || rect.width > 180 || rect.height > 96) return null;
+                    return {
+                        el: clickable,
+                        top: rect.top,
+                        left: rect.left,
+                        area: rect.width * rect.height
+                    };
+                })
+                .filter(Boolean)
+                .sort((a, b) => {
+                    if (Math.abs(a.top - b.top) > 4) return a.top - b.top;
+                    if (Math.abs(a.left - b.left) > 4) return a.left - b.left;
+                    return a.area - b.area;
+                });
+
+            return candidates[0]?.el || null;
+        }, target).catch(() => null);
+
+        const optionElement = optionHandle ? optionHandle.asElement() : null;
+        let clicked = false;
+        if (optionElement) {
+            clicked = await this.clickLegilElementWithFallback(page, optionElement, `Legil output quantity ${target}`, options);
+        }
+        if (!clicked) {
+            const clickPoint = await page.evaluate((targetValue) => {
+                const targetText = String(targetValue);
+                const normalizeText = value => String(value || '').replace(/\s+/g, ' ').trim();
+                const isVisible = (el) => {
+                    if (!el || !(el instanceof Element)) return false;
+                    const rect = el.getBoundingClientRect();
+                    const style = window.getComputedStyle(el);
+                    return rect.width > 0 &&
+                        rect.height > 0 &&
+                        style.visibility !== 'hidden' &&
+                        style.display !== 'none' &&
+                        style.opacity !== '0';
+                };
+                const leftPanel = Array.from(document.querySelectorAll('div, aside, section, main'))
+                    .filter(isVisible)
+                    .filter(el => {
+                        const rect = el.getBoundingClientRect();
+                        const style = window.getComputedStyle(el);
+                        return rect.left >= 180 &&
+                            rect.left <= 620 &&
+                            rect.width >= 220 &&
+                            rect.width <= 420 &&
+                            rect.height >= 360 &&
+                            (el.scrollHeight - el.clientHeight > 40 || ['auto', 'scroll'].includes(style.overflowY));
+                    })
+                    .sort((a, b) => b.scrollHeight - a.scrollHeight)[0] || document.body;
+
+                const labelPattern = /输出数量|output\s*quantity/i;
+                const labels = Array.from(leftPanel.querySelectorAll('div, span, p, label'))
+                    .filter(isVisible)
+                    .filter(el => labelPattern.test(normalizeText(el.innerText || el.textContent || '')))
+                    .sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top);
+                let root = leftPanel;
+                if (labels[0]) {
+                    let current = labels[0];
+                    for (let depth = 0; depth < 8 && current; depth += 1) {
+                        const exactOptions = Array.from(current.querySelectorAll('button, [role="button"], div, span'))
+                            .filter(isVisible)
+                            .filter(el => /^[1-4]$/.test(normalizeText(el.innerText || el.textContent || '')));
+                        if (exactOptions.length >= 2) {
+                            root = current;
+                            break;
+                        }
+                        current = current.parentElement;
+                    }
+                }
+
+                const candidates = Array.from(root.querySelectorAll('button, [role="button"], div, span'))
+                    .filter(isVisible)
+                    .map(el => {
+                        if (normalizeText(el.innerText || el.textContent || '') !== targetText) return null;
+                        const clickable = el.closest('button, [role="button"], [data-state], [aria-pressed], [aria-selected]') || el;
+                        const rect = clickable.getBoundingClientRect();
+                        if (rect.width < 18 || rect.height < 18 || rect.width > 220 || rect.height > 120) return null;
+                        if (rect.left < 180 || rect.left > 620) return null;
+                        return {
+                            x: rect.left + rect.width / 2,
+                            y: rect.top + rect.height / 2,
+                            top: rect.top,
+                            left: rect.left,
+                            area: rect.width * rect.height
+                        };
+                    })
+                    .filter(Boolean)
+                    .sort((a, b) => {
+                        if (Math.abs(b.top - a.top) > 4) return b.top - a.top;
+                        return a.left - b.left;
+                    });
+
+                return candidates[0] || null;
+            }, target).catch(() => null);
+
+            if (!clickPoint || !Number.isFinite(clickPoint.x) || !Number.isFinite(clickPoint.y)) {
+                return false;
+            }
+            await page.mouse.click(clickPoint.x, clickPoint.y).catch(() => {});
+            clicked = true;
+        }
+        await interruptibleSleep(500, options);
+        return true;
+    },
+
     async ensureOutputQuantity(page, outputQuantity, profile = {}, options = {}) {
         const target = Math.max(1, Math.min(4, Number(outputQuantity) || 1));
 
@@ -1018,11 +1197,20 @@ module.exports = function createGenerationSettingsMethods(deps) {
                 return true;
             }
 
-            const clicked = await this.clickLegilSettingOption(page, String(target), options);
-            if (clicked) {
-                return true;
+            const clicked = await this.clickOutputQuantityButton(page, target, options);
+            if (!clicked) {
+                return false;
             }
-            return false;
+
+            const detected = await this.detectOutputQuantityValue(page);
+            if (detected && detected !== target) {
+                logger.warn(`Legil 输出数量点击后检测为 ${detected}，期望 ${target}`);
+                return false;
+            }
+            if (!detected) {
+                logger.warn(`已点击 Legil 输出数量 ${target}，但页面未暴露可确认的选中值，将在产图保存阶段继续强校验`);
+            }
+            return true;
         }
 
         const sliderSet = await this.setOutputQuantityWithSlider(page, target, options);
@@ -1072,7 +1260,7 @@ module.exports = function createGenerationSettingsMethods(deps) {
                 }
             } else {
                 if (task.label === '输出数量') {
-                    if (profile.outputQuantityControl === 'slider') {
+                    if (profile.outputQuantityControl === 'slider' || options.strictGenerationSettings === true) {
                         throw new Error(`未能确认 Legil ${task.label} ${task.value}，已停止以避免静默降级为1张`);
                     }
                     logger.warn(`未能确认 Legil ${task.label} ${task.value}，继续使用页面当前值以兼容非滑杆模型`);

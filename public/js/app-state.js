@@ -8,6 +8,11 @@
             legilReferenceFolder: 'D:\\工作\\自动化工作流1\\批量产图\\参考图',
             tablePromptReferenceFolder: 'D:\\工作\\自动化工作流1\\批量产图\\参考图',
             tablePromptOutputFolder: 'D:\\工作\\自动化工作流1\\批量产图\\输出',
+            batchRetouchInputFolder: 'D:\\工作\\自动化工作流1\\批量产图\\修图\\输入',
+            batchRetouchOutputFolder: 'D:\\工作\\自动化工作流1\\批量产图\\修图\\输出',
+            batchRetouchReferenceFolder: 'D:\\工作\\自动化工作流1\\批量产图\\修图\\参考图',
+            batchRetouchPrompt: '图一变成后几张图片风格，高质量3D卡通渲染风格，保持图一色调',
+            batchRetouchBrowserMode: 'headless',
             workflowBrowserMode: 'headless',
             resizeInputFolder: 'D:\\工作\\自动化工作流1\\改尺寸交付\\源图输入',
             resizeOutputFolder: 'D:\\工作\\自动化工作流1\\改尺寸交付\\输出',
@@ -72,6 +77,12 @@
                 }
             },
             legilGeneration: {
+                imageModel: 'nano-banana-2',
+                aspectRatio: '1:1',
+                resolution: '2K',
+                outputQuantity: 1
+            },
+            batchRetouchGeneration: {
                 imageModel: 'nano-banana-2',
                 aspectRatio: '1:1',
                 resolution: '2K',
@@ -201,6 +212,9 @@
             saveFolder: 'D:\\工作\\自动化工作流1\\批量产图\\输出',
             tablePromptReferenceFolder: 'D:\\工作\\自动化工作流1\\批量产图\\参考图',
             tablePromptOutputFolder: 'D:\\工作\\自动化工作流1\\批量产图\\输出',
+            batchRetouchInputFolder: 'D:\\工作\\自动化工作流1\\批量产图\\修图\\输入',
+            batchRetouchOutputFolder: 'D:\\工作\\自动化工作流1\\批量产图\\修图\\输出',
+            batchRetouchReferenceFolder: 'D:\\工作\\自动化工作流1\\批量产图\\修图\\参考图',
             resizeInputFolder: 'D:\\工作\\自动化工作流1\\改尺寸交付\\源图输入',
             resizeOutputFolder: 'D:\\工作\\自动化工作流1\\改尺寸交付\\输出',
             creativeOutputFolder: 'D:\\工作\\自动化工作流1\\创意拓展\\输出',
@@ -256,6 +270,9 @@
             }
             if (typeof initTablePromptBatch === 'function') {
                 initTablePromptBatch();
+            }
+            if (typeof initBatchRetouch === 'function') {
+                initBatchRetouch();
             }
             refreshWorkflowResumeControls();
             const promptTextarea = document.getElementById('doubaoPromptTemplate');

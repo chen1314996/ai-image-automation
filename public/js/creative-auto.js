@@ -2478,7 +2478,37 @@ let creativeAutoCurrentRunId = '';
 
         window.loadCreativeAutoStatus = loadCreativeAutoStatus;
 
-        async function startCreativeAutoRun() {
+        function buildCreativeAutoStartConfirmation(settings = getCreativeAutoRunSettings()) {
+            const queueTargets = getCreativeAutoTargetQueueTargets();
+            const queueLine = queueTargets.length
+                ? `待拓展方向：${queueTargets.length} 个，将按队列逐个拓展并生图，预计 ${getCreativeAutoTargetQueueExpectedPromptCount()} 条提示词\n`
+                : '';
+            const expectedLine = settings.agentOnly
+                ? '本次不会调用生图平台，也不会消耗图片额度；提示词质检接受多少就保留多少。'
+                : (settings.unlimitedPrompts
+                    ? '本次不会按数量截断，提示词质检接受多少提示词就持续提交多少。'
+                    : `本次最多 ${settings.maxPrompts} 条提示词，预计最多 ${settings.expectedImages} 张图。`);
+            return (
+                '确认启动“开始创意拓展产图”：\n\n' +
+                `模式：${settings.label}\n` +
+                `目标：${getCreativeAutoEffectiveTargetLabel()}\n` +
+                queueLine +
+                `${expectedLine}\n` +
+                `${settings.confirmNote}\n\n` +
+                '点击“确定”开始。'
+            );
+        }
+
+        function confirmCreativeAutoRunStart(settings = getCreativeAutoRunSettings()) {
+            const confirmed = confirm(buildCreativeAutoStartConfirmation(settings));
+            if (!confirmed) return false;
+            if (settings.mode === 'full') {
+                return confirm('持续生图不会按 25 条或每日图片额度截断。请确认已经准备好让生图平台持续执行。');
+            }
+            return true;
+        }
+
+        async function startCreativeAutoRun(options = {}) {
             const settings = getCreativeAutoRunSettings();
             const directionDefaults = getCreativeAutoTargetQueueDefaults();
             const manualDirection = getCreativeAutoManualDirectionSelection();
@@ -2513,28 +2543,8 @@ let creativeAutoCurrentRunId = '';
                         directionIds: target.directionIds
                     }))
                 } : null);
-            const queueTargets = getCreativeAutoTargetQueueTargets();
-            const queueLine = queueTargets.length
-                ? `待拓展方向：${queueTargets.length} 个，将按队列逐个拓展并生图，预计 ${getCreativeAutoTargetQueueExpectedPromptCount()} 条提示词\n`
-                : '';
-            const expectedLine = settings.agentOnly
-                ? '本次不会调用生图平台，也不会消耗图片额度；提示词质检接受多少就保留多少。'
-                : (settings.unlimitedPrompts
-                    ? '本次不会按数量截断，提示词质检接受多少提示词就持续提交多少。'
-                    : `本次最多 ${maxPrompts} 条提示词，预计最多 ${settings.expectedImages} 张图。`);
-            const confirmed = confirm(
-                '确认启动“开始创意拓展产图”：\n\n' +
-                `模式：${settings.label}\n` +
-                `目标：${getCreativeAutoEffectiveTargetLabel()}\n` +
-                queueLine +
-                `${expectedLine}\n` +
-                `${settings.confirmNote}\n\n` +
-                '点击“确定”开始。'
-            );
-            if (!confirmed) return;
-            if (settings.mode === 'full') {
-                const fullConfirmed = confirm('持续生图不会按 25 条或每日图片额度截断。请确认已经准备好让生图平台持续执行。');
-                if (!fullConfirmed) return;
+            if (options.confirmed !== true) {
+                if (!confirmCreativeAutoRunStart(settings)) return;
             }
 
             setCreativeAutoRunning(true);
@@ -2818,12 +2828,50 @@ let creativeAutoCurrentRunId = '';
             }
         }
 
+        async function loadCreativeAutoNewTaskGuardStatus() {
+            try {
+                const data = window.ApiClient && typeof window.ApiClient.fetchJson === 'function'
+                    ? await window.ApiClient.fetchJson('/api/run-state/summary', {
+                        timeoutMs: 8000,
+                        fallbackMessage: '读取运行状态失败',
+                        toastOnError: false
+                    })
+                    : await (async () => {
+                        const res = await fetch('/api/run-state/summary');
+                        return await readJsonResponse(res, '读取运行状态失败');
+                    })();
+                const runs = Array.isArray(data && data.runs) ? data.runs : [];
+                const activeRun = data && data.activeRun && data.activeRun.runType === 'creative-auto'
+                    ? data.activeRun
+                    : runs.find(run => run && run.runType === 'creative-auto' && run.status === 'running') || null;
+                return {
+                    activeRun: activeRun && activeRun.status === 'running' ? activeRun : null,
+                    targetQueue: activeRun ? (activeRun.targetQueueProgress || activeRun.targetQueue || null) : null
+                };
+            } catch (error) {
+                const statusData = await loadCreativeAutoStatus({ silent: true });
+                return {
+                    activeRun: statusData && statusData.activeRun ? statusData.activeRun : null,
+                    targetQueue: statusData && statusData.targetQueue ? statusData.targetQueue : null
+                };
+            }
+        }
+
         async function startNewCreativeAutoTask() {
             if (creativeAutoLastRun && creativeAutoLastRun.status === 'running') {
                 showToast('当前任务还在运行，请先停止后再开始新任务', 'error');
                 return;
             }
-            const statusData = await loadCreativeAutoStatus({ silent: true });
+            const targetValidationMessage = validateCreativeAutoTargetQueueForRun();
+            if (targetValidationMessage) {
+                setCreativeAutoInfo('info-box error', targetValidationMessage);
+                showToast(targetValidationMessage, 'error');
+                return;
+            }
+            if (!confirmCreativeAutoRunStart(getCreativeAutoRunSettings())) return;
+
+            setCreativeAutoInfo('info-box loading', '正在确认当前是否有运行中的自动创意任务...');
+            const statusData = await loadCreativeAutoNewTaskGuardStatus();
             const activeRun = statusData && statusData.activeRun ? statusData.activeRun : null;
             const targetQueue = statusData && statusData.targetQueue ? statusData.targetQueue : null;
             const queueRunning = targetQueue && String(targetQueue.status || targetQueue.queueStatus || '') === 'running';
@@ -2851,7 +2899,7 @@ let creativeAutoCurrentRunId = '';
             setCreativeAutoRunning(false, null);
             updateCreativeS3Flow(null, creativeAutoLastStatus);
             setCreativeAutoInfo('info-box loading', '准备开始一个新的自动创意任务...');
-            await startCreativeAutoRun();
+            await startCreativeAutoRun({ confirmed: true });
         }
 
         async function openCreativeReviewForRun(runId = '') {

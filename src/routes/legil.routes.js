@@ -4,7 +4,7 @@
 module.exports = function registerLegilRoutes(app, context) {
     const __dirname = context.rootDir;
     const {
-        buildCreativeOutputNamingContext
+        buildManagedOutputNamingContext
     } = require('../services/output-naming/creative-output-naming');
     const { CreativeKnowledgeStore } = require('../services/creative-knowledge/store');
     const { registerRunAssets } = require('../services/creative-auto/assets');
@@ -121,6 +121,8 @@ module.exports = function registerLegilRoutes(app, context) {
             `Secondary tag: ${promptItem.secondaryTag || ''}`,
             `Tertiary tag: ${promptItem.tertiaryTag || ''}`,
             `Content name: ${promptItem.contentName || promptItem.contentTitle || ''}`,
+            `Final content title: ${promptItem.finalContentTitle || ''}`,
+            `Automation content title: ${promptItem.automationContentTitle || ''}`,
             `Output name base: ${promptItem.outputNameBase || ''}`,
             '',
             'Output images:',
@@ -350,6 +352,9 @@ module.exports = function registerLegilRoutes(app, context) {
                     prompt,
                     title,
                     contentTitle: pickText(item, ['contentTitle']) || title,
+                    contentName: pickText(item, ['contentName']),
+                    finalContentTitle: pickText(item, ['finalContentTitle']),
+                    automationContentTitle: pickText(item, ['automationContentTitle']),
                     newDirectionName: pickText(item, ['newDirectionName']),
                     promptTitle: pickText(item, ['promptTitle', 'promptName']),
                     fallbackName: pickText(item, ['fallbackName', 'name']),
@@ -369,7 +374,9 @@ module.exports = function registerLegilRoutes(app, context) {
                     ]) || defaultReferenceFolderPath,
                     outputNameBase: pickText(item, ['outputNameBase']),
                     namingSource: pickText(item, ['namingSource']),
-                    tagConfidence: pickText(item, ['tagConfidence'])
+                    tagConfidence: pickText(item, ['tagConfidence']),
+                    visualHook: pickText(item, ['visualHook']),
+                    extensionName: pickText(item, ['extensionName'])
                 };
             })
             .filter(item => item && item.prompt);
@@ -401,15 +408,12 @@ module.exports = function registerLegilRoutes(app, context) {
         if (!item || typeof item !== 'object') {
             return '';
         }
-        if (!hasBatchOutputNamingClue(item)) {
-            return '';
-        }
-
-        const namingContext = buildCreativeOutputNamingContext({
+        const namingContext = buildManagedOutputNamingContext({
             ...item,
-            contentTitle: item.contentTitle || item.title || item.newDirectionName || item.outputNameBase,
-            fallbackName: item.fallbackName || item.title || item.contentTitle || item.newDirectionName || item.outputNameBase || item.sourceRawName,
+            contentTitle: item.contentTitle || item.contentName || item.title || item.newDirectionName || item.outputNameBase,
+            fallbackName: item.fallbackName || item.title || item.contentTitle || item.contentName || item.newDirectionName || item.outputNameBase || item.sourceRawName,
             directionLibrary,
+            mode: 'batch-generate',
             strictLibraryTags: true
         });
 
@@ -615,10 +619,15 @@ module.exports = function registerLegilRoutes(app, context) {
                                 newDirectionName: promptItem.newDirectionName || '',
                                 outputNameBase: outputNameBase || '',
                                 contentTitle: promptItem.contentTitle || promptItem.title || '',
+                                contentName: promptItem.contentName || '',
+                                finalContentTitle: promptItem.finalContentTitle || '',
+                                automationContentTitle: promptItem.automationContentTitle || '',
                                 standardLabelPath: promptItem.standardLabelPath || [],
                                 primaryTag: promptItem.primaryTag || '',
                                 secondaryTag: promptItem.secondaryTag || '',
                                 tertiaryTag: promptItem.tertiaryTag || '',
+                                matchedDirectionId: promptItem.matchedDirectionId || '',
+                                matchedDirectionPath: promptItem.matchedDirectionPath || '',
                                 namingSource: promptItem.namingSource || '',
                                 tagConfidence: promptItem.tagConfidence || '',
                                 savedAt: promptFileSavedAt
@@ -637,10 +646,15 @@ module.exports = function registerLegilRoutes(app, context) {
                                 newDirectionName: promptItem.newDirectionName || '',
                                 outputNameBase: outputNameBase || '',
                                 contentTitle: promptItem.contentTitle || promptItem.title || '',
+                                contentName: promptItem.contentName || '',
+                                finalContentTitle: promptItem.finalContentTitle || '',
+                                automationContentTitle: promptItem.automationContentTitle || '',
                                 standardLabelPath: promptItem.standardLabelPath || [],
                                 primaryTag: promptItem.primaryTag || '',
                                 secondaryTag: promptItem.secondaryTag || '',
                                 tertiaryTag: promptItem.tertiaryTag || '',
+                                matchedDirectionId: promptItem.matchedDirectionId || '',
+                                matchedDirectionPath: promptItem.matchedDirectionPath || '',
                                 namingSource: promptItem.namingSource || '',
                                 tagConfidence: promptItem.tagConfidence || '',
                                 promptFilePath,
@@ -1496,10 +1510,15 @@ module.exports = function registerLegilRoutes(app, context) {
                     finalPrompt: enrichedPromptItem.finalPrompt || '',
                     prompt: enrichedPromptItem.prompt || '',
                     contentTitle: enrichedPromptItem.contentTitle || '',
+                    contentName: enrichedPromptItem.contentName || '',
+                    finalContentTitle: enrichedPromptItem.finalContentTitle || '',
+                    automationContentTitle: enrichedPromptItem.automationContentTitle || '',
                     standardLabelPath: enrichedPromptItem.standardLabelPath || [],
                     primaryTag: enrichedPromptItem.primaryTag || '',
                     secondaryTag: enrichedPromptItem.secondaryTag || '',
                     tertiaryTag: enrichedPromptItem.tertiaryTag || '',
+                    matchedDirectionId: enrichedPromptItem.matchedDirectionId || '',
+                    matchedDirectionPath: enrichedPromptItem.matchedDirectionPath || '',
                     namingSource: enrichedPromptItem.namingSource || '',
                     tagConfidence: enrichedPromptItem.tagConfidence || '',
                     message: meta.message || '',
@@ -1516,13 +1535,14 @@ module.exports = function registerLegilRoutes(app, context) {
                         }
 
                         const promptItem = normalizedPrompts[i];
-                        const namingContext = buildCreativeOutputNamingContext({
+                        const namingContext = buildManagedOutputNamingContext({
                             ...promptItem,
                             sourceDirectionPath: promptItem.sourceDirectionPath || promptItem.direction,
-                            contentTitle: promptItem.contentTitle || promptItem.newDirectionName || promptItem.direction || promptItem.outputNameBase,
+                            contentTitle: promptItem.contentTitle || promptItem.contentName || promptItem.newDirectionName || promptItem.direction || promptItem.outputNameBase,
                             fallbackName: promptItem.newDirectionName || promptItem.direction || promptItem.outputNameBase || `表格第${promptItem.sourceRow}行`,
                             directionLibrary,
-                            strictLibraryTags: false
+                            mode: 'creative-batch',
+                            strictLibraryTags: true
                         });
                         const outputNameBase = namingContext.outputNameBase || promptItem.outputNameBase || promptItem.newDirectionName || promptItem.direction || `表格第${promptItem.sourceRow}行`;
                         const enrichedPromptItem = {
@@ -1628,10 +1648,15 @@ module.exports = function registerLegilRoutes(app, context) {
                                     newDirectionName: enrichedPromptItem.newDirectionName || '',
                                     outputNameBase,
                                     contentTitle: enrichedPromptItem.contentTitle || '',
+                                    contentName: enrichedPromptItem.contentName || '',
+                                    finalContentTitle: enrichedPromptItem.finalContentTitle || '',
+                                    automationContentTitle: enrichedPromptItem.automationContentTitle || '',
                                     standardLabelPath: enrichedPromptItem.standardLabelPath || [],
                                     primaryTag: enrichedPromptItem.primaryTag || '',
                                     secondaryTag: enrichedPromptItem.secondaryTag || '',
                                     tertiaryTag: enrichedPromptItem.tertiaryTag || '',
+                                    matchedDirectionId: enrichedPromptItem.matchedDirectionId || '',
+                                    matchedDirectionPath: enrichedPromptItem.matchedDirectionPath || '',
                                     namingSource: enrichedPromptItem.namingSource || '',
                                     tagConfidence: enrichedPromptItem.tagConfidence || '',
                                     savedAt: promptFileSavedAt
@@ -1653,10 +1678,15 @@ module.exports = function registerLegilRoutes(app, context) {
                                     newDirectionName: enrichedPromptItem.newDirectionName || '',
                                     outputNameBase,
                                     contentTitle: enrichedPromptItem.contentTitle || '',
+                                    contentName: enrichedPromptItem.contentName || '',
+                                    finalContentTitle: enrichedPromptItem.finalContentTitle || '',
+                                    automationContentTitle: enrichedPromptItem.automationContentTitle || '',
                                     standardLabelPath: enrichedPromptItem.standardLabelPath || [],
                                     primaryTag: enrichedPromptItem.primaryTag || '',
                                     secondaryTag: enrichedPromptItem.secondaryTag || '',
                                     tertiaryTag: enrichedPromptItem.tertiaryTag || '',
+                                    matchedDirectionId: enrichedPromptItem.matchedDirectionId || '',
+                                    matchedDirectionPath: enrichedPromptItem.matchedDirectionPath || '',
                                     namingSource: enrichedPromptItem.namingSource || '',
                                     tagConfidence: enrichedPromptItem.tagConfidence || '',
                                     promptFilePath,

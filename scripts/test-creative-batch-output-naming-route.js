@@ -146,7 +146,7 @@ async function main() {
     assert.strictEqual(promptFiles.length, 1, `expected one prompt txt, got ${promptFiles.join(', ')}`);
 
     assert(
-        pngFiles[0].includes('_题材_探索发现_末世文字_冰墙标语守夜_'),
+        pngFiles[0].includes('_题材_探索发现_末世文字_自动化冰墙标语守夜_'),
         `png file should include labels: ${pngFiles[0]}`
     );
     assert(
@@ -158,7 +158,7 @@ async function main() {
     assert(promptText.includes('Primary tag: 题材'), 'prompt txt should include primary tag');
     assert(promptText.includes('Secondary tag: 探索发现'), 'prompt txt should include secondary tag');
     assert(promptText.includes('Tertiary tag: 末世文字'), 'prompt txt should include tertiary tag');
-    assert(promptText.includes('Output name base: 题材_探索发现_末世文字_冰墙标语守夜'), 'prompt txt should include labeled outputNameBase');
+    assert(promptText.includes('Output name base: 题材_探索发现_末世文字_自动化冰墙标语守夜'), 'prompt txt should include labeled automation outputNameBase');
     assert(promptText.includes(pngFiles[0]), 'prompt txt should point at the labeled image file');
 
     console.log(JSON.stringify({

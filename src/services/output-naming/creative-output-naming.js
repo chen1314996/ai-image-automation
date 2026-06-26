@@ -3,6 +3,54 @@ const path = require('path');
 const DEFAULT_MAX_LEVEL = 3;
 const DEFAULT_PART_MAX_LENGTH = 40;
 const DEFAULT_BASE_MAX_LENGTH = 160;
+const AUTOMATION_CONTENT_PREFIX = '自动化';
+const FINAL_CONTENT_MIN_CHARS = 4;
+const FINAL_CONTENT_MAX_CHARS = 8;
+const GENERIC_CONTENT_WORDS = [
+    AUTOMATION_CONTENT_PREFIX,
+    '新方向',
+    '创意方向',
+    '方向',
+    '拓展',
+    '扩展',
+    '延展',
+    '优化',
+    '变体',
+    '版本',
+    '提示词',
+    'Prompt',
+    'prompt',
+    '图片',
+    '图像',
+    '生成',
+    '画面',
+    '场景',
+    '素材',
+    '内容',
+    '设计',
+    '方案',
+    '效果'
+];
+const TRAILING_CONTENT_WORDS = [
+    '画面',
+    '场景',
+    '内容',
+    '方向',
+    '拓展',
+    '扩展',
+    '延展',
+    '发现',
+    '展示',
+    '呈现',
+    '生成',
+    '设计',
+    '版本',
+    '变体',
+    '效果',
+    '主题',
+    '海报',
+    '素材'
+];
 
 function normalizeText(value) {
     return String(value || '').trim();
@@ -214,6 +262,356 @@ function normalizeMaxLevel(maxLevel) {
         return DEFAULT_MAX_LEVEL;
     }
     return Math.max(1, Math.floor(value));
+}
+
+function escapeRegExp(value) {
+    return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function chineseChars(value) {
+    return String(value || '').match(/[\u3400-\u9fff\uf900-\ufaff]/gu) || [];
+}
+
+function chineseLength(value) {
+    return chineseChars(value).length;
+}
+
+function stripAutomationPrefix(value) {
+    return normalizeText(value).replace(new RegExp(escapeRegExp(AUTOMATION_CONTENT_PREFIX), 'g'), '');
+}
+
+function stripGenericContentWords(value) {
+    let text = stripAutomationPrefix(value);
+    GENERIC_CONTENT_WORDS
+        .slice()
+        .sort((a, b) => b.length - a.length)
+        .forEach(word => {
+            text = text.replace(new RegExp(escapeRegExp(word), 'gi'), '');
+        });
+    return text;
+}
+
+function stripKnownLabelWords(value, standardLabelPath = []) {
+    let text = normalizeText(value);
+    const labels = uniqueParts(standardLabelPath)
+        .filter(part => chineseLength(part) >= 2)
+        .sort((a, b) => b.length - a.length);
+
+    labels.forEach(label => {
+        const next = text.replace(new RegExp(escapeRegExp(label), 'g'), '');
+        if (chineseLength(next) >= 3) {
+            text = next;
+        }
+    });
+
+    return text;
+}
+
+function firstChineseSegment(value) {
+    const segments = String(value || '')
+        .replace(/\r/g, '\n')
+        .split(/[\n，,。；;：:！!？?、|/\\]+/g)
+        .map(part => part.trim())
+        .filter(Boolean);
+    const usable = segments.find(part => chineseLength(part) >= 2);
+    if (usable) {
+        return usable;
+    }
+    const runs = chineseChars(value).join('');
+    return runs || normalizeText(value);
+}
+
+function cleanContentTitleCandidate(value, standardLabelPath = []) {
+    let text = firstChineseSegment(value)
+        .replace(/\.(png|jpe?g|webp|bmp|gif)$/i, '')
+        .replace(/^[\s"'“”‘’《》【】\[\]（）()]+|[\s"'“”‘’《》【】\[\]（）()]+$/g, '')
+        .replace(/^(标题|主题|方向|创意方向|画面标题|场景标题|内容|主体)\s*[:：]\s*/i, '')
+        .replace(/[<>:"/\\|?*\x00-\x1F]/g, '')
+        .replace(/[\s_\-]+/g, '')
+        .trim();
+
+    text = stripGenericContentWords(text);
+    text = stripKnownLabelWords(text, standardLabelPath);
+    text = (text.match(/[\u3400-\u9fff\uf900-\ufaff]+/gu) || []).join('');
+
+    return text;
+}
+
+function fitFinalContentTitle(value, standardLabelPath = [], minChars = FINAL_CONTENT_MIN_CHARS, maxChars = FINAL_CONTENT_MAX_CHARS) {
+    let text = cleanContentTitleCandidate(value, standardLabelPath);
+    if (!text) {
+        return '';
+    }
+
+    TRAILING_CONTENT_WORDS
+        .slice()
+        .sort((a, b) => b.length - a.length)
+        .forEach(word => {
+            while (chineseLength(text) > maxChars && text.endsWith(word)) {
+                text = text.slice(0, -word.length);
+            }
+        });
+
+    const chars = chineseChars(text);
+    if (chars.length > maxChars) {
+        text = chars.slice(0, maxChars).join('');
+    }
+
+    if (chineseLength(text) < minChars) {
+        return '';
+    }
+
+    return text;
+}
+
+function titleCandidatesForInput(input = {}) {
+    const mode = normalizeText(input.namingMode || input.mode || input.source || input.taskType).toLowerCase();
+    const commonTail = [
+        input.visualHook,
+        input.extensionName,
+        input.promptTitle,
+        input.title,
+        input.sourceContentTitle,
+        input.sourceRawName,
+        input.prompt,
+        input.finalPrompt,
+        input.fallbackName
+    ];
+
+    if (/creative|auto|agent|material|direction/.test(mode)) {
+        return [
+            input.finalContentTitle,
+            input.contentTitle,
+            input.contentName,
+            input.newDirectionName,
+            input.direction,
+            ...commonTail
+        ];
+    }
+
+    if (/batch|table|prompt/.test(mode)) {
+        return [
+            input.finalContentTitle,
+            input.contentTitle,
+            input.contentName,
+            input.outputTitle,
+            input.title,
+            input.promptTitle,
+            input.newDirectionName,
+            input.direction,
+            ...commonTail
+        ];
+    }
+
+    return [
+        input.finalContentTitle,
+        input.contentTitle,
+        input.contentName,
+        input.newDirectionName,
+        input.direction,
+        input.outputTitle,
+        ...commonTail
+    ];
+}
+
+function buildFinalContentTitle(input = {}, standardLabelPath = []) {
+    for (const candidate of titleCandidatesForInput(input)) {
+        const title = fitFinalContentTitle(candidate, standardLabelPath);
+        if (title) {
+            return title;
+        }
+    }
+
+    return '素材内容';
+}
+
+function buildAutomationContentTitle(finalContentTitle) {
+    const title = fitFinalContentTitle(finalContentTitle, []) || '素材内容';
+    return `${AUTOMATION_CONTENT_PREFIX}${stripAutomationPrefix(title)}`;
+}
+
+function flattenTextParts(value) {
+    if (Array.isArray(value)) {
+        return value.flatMap(flattenTextParts);
+    }
+    if (value && typeof value === 'object') {
+        return Object.values(value).flatMap(flattenTextParts);
+    }
+    const text = normalizeText(value);
+    return text ? [text] : [];
+}
+
+function collectBestFitTexts(input = {}) {
+    return flattenTextParts([
+        input.sourceDirectionPath,
+        input.directionPath,
+        input.directionLabelPath,
+        input.sourceLabelPath,
+        input.labelPath,
+        input.standardLabelPath,
+        input.primaryTag || input.primary,
+        input.secondaryTag || input.secondary,
+        input.tertiaryTag || input.tertiary,
+        input.direction,
+        input.matchedDirectionName,
+        input.matchedDirectionPath,
+        input.newDirectionName,
+        input.contentTitle,
+        input.contentName,
+        input.finalContentTitle,
+        input.promptTitle,
+        input.title,
+        input.visualHook,
+        input.extensionName,
+        input.sourceRawName,
+        input.sourceContentTitle,
+        input.referenceFolderPath,
+        input.prompt,
+        input.finalPrompt
+    ]).filter(Boolean);
+}
+
+function chineseNgrams(value, min = 2, max = 4, limit = 120) {
+    const text = chineseChars(value).join('');
+    const result = [];
+    for (let size = min; size <= max; size++) {
+        for (let i = 0; i <= text.length - size; i++) {
+            result.push(text.slice(i, i + size));
+            if (result.length >= limit) {
+                return result;
+            }
+        }
+    }
+    return result;
+}
+
+function scoreBestFitEntry(entry, texts = []) {
+    const compactTexts = texts.map(compactText).filter(Boolean);
+    const allText = compactText(texts.join(''));
+    const pathKey = compactText((entry.path || []).join(''));
+    let score = 0;
+    let matchedParts = 0;
+
+    if (pathKey && allText.includes(pathKey)) {
+        score += 700 + entry.path.length * 40;
+    }
+
+    for (const part of entry.path || []) {
+        const partKey = compactText(part);
+        if (!partKey) continue;
+        const matchedIndex = compactTexts.findIndex(text => text.includes(partKey));
+        if (matchedIndex >= 0) {
+            matchedParts += 1;
+            score += Math.max(25, 120 - matchedIndex * 8) + partKey.length * 2;
+        }
+    }
+
+    const aliases = Array.isArray(entry.aliases) ? entry.aliases : [];
+    aliases.forEach(alias => {
+        if (alias && allText.includes(alias)) {
+            score += 45;
+        }
+    });
+
+    const raw = entry.raw && typeof entry.raw === 'object' ? entry.raw : {};
+    const rawText = compactText([
+        entry.path,
+        raw.name,
+        raw.directionName,
+        raw.description,
+        raw.visualHook,
+        raw.note,
+        raw.alias,
+        raw.aliases
+    ].flatMap(flattenTextParts).join(''));
+    chineseNgrams(texts.join('')).forEach(token => {
+        const tokenKey = compactText(token);
+        if (tokenKey && rawText.includes(tokenKey)) {
+            score += Math.min(16, tokenKey.length * 3);
+        }
+    });
+
+    if (matchedParts === entry.path.length && matchedParts > 0) {
+        score += 160 + entry.path.length * 30;
+    } else if (matchedParts > 0) {
+        score += matchedParts * 25;
+    }
+
+    if (matchedParts > 0) {
+        score += (entry.path || []).length * 3;
+    }
+    return {
+        score,
+        matchedParts
+    };
+}
+
+function resolveBestFitStandardLabelPath(input = {}, entries = [], maxLevel = DEFAULT_MAX_LEVEL) {
+    const availableEntries = (Array.isArray(entries) ? entries : []).filter(entry => entry && Array.isArray(entry.path) && entry.path.length);
+    if (!availableEntries.length) {
+        return normalizeResolvedResult({
+            standardLabelPath: [],
+            sourceParsedParts: collectBestFitTexts(input).flatMap(parseLabelCandidatesFromName),
+            sourceContentTitle: '',
+            droppedLabelParts: [],
+            matchType: 'none',
+            namingSource: 'none',
+            tagConfidence: 'missing'
+        }, maxLevel);
+    }
+
+    const texts = collectBestFitTexts(input);
+    let best = null;
+    for (const entry of availableEntries) {
+        const current = scoreBestFitEntry(entry, texts);
+        const candidate = {
+            entry,
+            ...current
+        };
+        if (!best ||
+            candidate.score > best.score ||
+            (candidate.score === best.score && candidate.matchedParts > 0 && candidate.entry.path.length > best.entry.path.length) ||
+            (candidate.score === best.score && candidate.matchedParts === 0 && best.matchedParts === 0 && candidate.entry.path.length < best.entry.path.length) ||
+            (candidate.score === best.score && candidate.entry.path.length === best.entry.path.length && !candidate.entry.inferredAncestor && best.entry.inferredAncestor)) {
+            best = candidate;
+        }
+    }
+
+    const selected = best && best.score > 0
+        ? best
+        : {
+            entry: availableEntries
+                .filter(entry => !entry.inferredAncestor)
+                .sort((a, b) => (a.index || 0) - (b.index || 0))[0] || availableEntries[0],
+            score: 0,
+            matchedParts: 0
+        };
+
+    return normalizeResolvedResult({
+        entry: selected.entry,
+        standardLabelPath: selected.entry.path.slice(0, maxLevel),
+        sourceParsedParts: texts.flatMap(parseLabelCandidatesFromName),
+        sourceContentTitle: '',
+        droppedLabelParts: [],
+        matchType: selected.score > 0 ? 'best-fit' : 'best-fit-default',
+        namingSource: selected.score > 0 ? 'direction-library-best-fit' : 'direction-library-best-fit-default',
+        tagConfidence: selected.score >= 260 ? 'medium' : 'low'
+    }, maxLevel);
+}
+
+function resolveManagedStandardLabelPath(input = {}) {
+    const maxLevel = normalizeMaxLevel(input.maxLevel);
+    const entries = normalizeDirectionLibrary(input.directionLibrary, maxLevel);
+    const resolved = resolveStandardLabelPath({
+        ...input,
+        strictLibraryTags: input.strictLibraryTags !== false
+    });
+
+    if (resolved.standardLabelPath && resolved.standardLabelPath.length) {
+        return resolved;
+    }
+
+    return resolveBestFitStandardLabelPath(input, entries, maxLevel);
 }
 
 function sameLabel(a, b) {
@@ -566,11 +964,54 @@ function buildCreativeOutputNamingContext(input = {}) {
     };
 }
 
+function buildManagedOutputNamingContext(input = {}) {
+    const resolved = resolveManagedStandardLabelPath(input);
+    const finalContentTitle = buildFinalContentTitle(input, resolved.standardLabelPath);
+    const automationContentTitle = buildAutomationContentTitle(finalContentTitle);
+    const outputNameBase = buildOutputNameBase({
+        standardLabelPath: resolved.standardLabelPath,
+        contentTitle: automationContentTitle,
+        fallbackName: automationContentTitle || input.fallbackName || resolved.sourceContentTitle || input.sourceRawName || ''
+    });
+
+    return {
+        primaryTag: resolved.primaryTag,
+        secondaryTag: resolved.secondaryTag,
+        tertiaryTag: resolved.tertiaryTag,
+        standardLabelPath: resolved.standardLabelPath,
+        sourceDirectionId: normalizeText(input.sourceDirectionId),
+        sourceDirectionPath: normalizeText(input.sourceDirectionPath),
+        sourceRawName: normalizeText(input.sourceRawName),
+        referenceFolderPath: normalizeText(input.referenceFolderPath),
+        sourceParsedParts: resolved.sourceParsedParts,
+        sourceContentTitle: resolved.sourceContentTitle || normalizeText(input.sourceContentTitle),
+        droppedLabelParts: resolved.droppedLabelParts && resolved.droppedLabelParts.length
+            ? resolved.droppedLabelParts
+            : splitLabelPath(input.droppedLabelParts),
+        newDirectionName: normalizeText(input.newDirectionName),
+        promptTitle: normalizeText(input.promptTitle),
+        contentTitle: finalContentTitle,
+        contentName: finalContentTitle,
+        finalContentTitle,
+        automationContentTitle,
+        outputNameBase,
+        namingSource: resolved.namingSource,
+        tagConfidence: resolved.tagConfidence,
+        matchedDirectionId: resolved.matchedDirectionId,
+        matchedDirectionPath: resolved.standardLabelPath.join('/'),
+        matchType: resolved.matchType
+    };
+}
+
 module.exports = {
     resolveStandardLabelPath,
+    resolveManagedStandardLabelPath,
     buildOutputNameBase,
     sanitizeFileNamePart,
     parseLabelCandidatesFromName,
     buildCreativeOutputNamingContext,
+    buildManagedOutputNamingContext,
+    buildFinalContentTitle,
+    buildAutomationContentTitle,
     normalizeDirectionLibrary
 };

@@ -148,6 +148,19 @@ const DEFAULT_CREATIVE_CONFIG = {
         outputQuantity: 4
     }
 };
+const DEFAULT_BATCH_RETOUCH_CONFIG = {
+    inputFolder: 'D:\\工作\\自动化工作流1\\批量产图\\修图\\输入',
+    outputFolder: 'D:\\工作\\自动化工作流1\\批量产图\\修图\\输出',
+    referenceFolder: 'D:\\工作\\自动化工作流1\\批量产图\\修图\\参考图',
+    prompt: '图一变成后几张图片风格，高质量3D卡通渲染风格，保持图一色调',
+    browserMode: 'headless',
+    generationSettings: {
+        imageModel: 'nano-banana-2',
+        aspectRatio: '1:1',
+        resolution: '2K',
+        outputQuantity: 1
+    }
+};
 
 function normalizeNotificationConfig(payload = {}) {
     const source = payload && typeof payload === 'object' ? payload : {};
@@ -208,6 +221,10 @@ const appConfig = {
     creative: {
         ...DEFAULT_CREATIVE_CONFIG,
         ...(persistedConfig.creative && typeof persistedConfig.creative === 'object' ? persistedConfig.creative : {})
+    },
+    batchRetouch: {
+        ...DEFAULT_BATCH_RETOUCH_CONFIG,
+        ...(persistedConfig.batchRetouch && typeof persistedConfig.batchRetouch === 'object' ? persistedConfig.batchRetouch : {})
     }
 };
 
@@ -335,10 +352,17 @@ function normalizeCreativeBatchPromptItems(promptItems = [], creativePromptStyle
                 sourceRawName: String(item && item.sourceRawName || item && item.sourceMaterialName || '').trim(),
                 sourceContentTitle: String(item && item.sourceContentTitle || '').trim(),
                 newDirectionName: String(item && item.newDirectionName || '').trim(),
-                contentTitle: String(item && item.contentTitle || item && item.newDirectionName || '').trim(),
+                contentTitle: String(item && item.contentTitle || item && item.contentName || item && item.newDirectionName || '').trim(),
+                contentName: String(item && item.contentName || '').trim(),
+                finalContentTitle: String(item && item.finalContentTitle || '').trim(),
+                automationContentTitle: String(item && item.automationContentTitle || '').trim(),
                 outputNameBase: String(item && item.outputNameBase || '').trim(),
+                matchedDirectionId: String(item && item.matchedDirectionId || '').trim(),
+                matchedDirectionPath: String(item && item.matchedDirectionPath || '').trim(),
                 namingSource: String(item && item.namingSource || '').trim(),
                 tagConfidence: String(item && item.tagConfidence || '').trim(),
+                visualHook: String(item && item.visualHook || '').trim(),
+                extensionName: String(item && item.extensionName || '').trim(),
                 promptHash: String(item && item.promptHash || '').trim(),
                 sourcePromptHash: String(item && item.sourcePromptHash || '').trim(),
                 promptSchemaVersion: String(item && item.promptSchemaVersion || '').trim(),
@@ -1591,7 +1615,7 @@ function requestLegilTaskStop() {
         };
     }
 
-    if (!['resize-batch', 'creative-batch'].includes(automationState.legilTaskType)) {
+    if (!['resize-batch', 'creative-batch', 'batch-retouch'].includes(automationState.legilTaskType)) {
         return {
             success: false,
             message: '当前运行的任务不能从这里停止，请在对应功能区停止'
@@ -1599,7 +1623,9 @@ function requestLegilTaskStop() {
     }
 
     automationState.legilStopRequested = true;
-    const taskLabel = automationState.legilTaskType === 'creative-batch' ? '创意拓展' : '改尺寸';
+    const taskLabel = automationState.legilTaskType === 'creative-batch'
+        ? '创意拓展'
+        : (automationState.legilTaskType === 'batch-retouch' ? '批量修图' : '改尺寸');
     if (automationState.legilTaskProgress) {
         automationState.legilTaskProgress = {
             ...automationState.legilTaskProgress,
@@ -1749,6 +1775,9 @@ function persistRuntimeConfig(extra = {}) {
         },
         creative: {
             ...appConfig.creative
+        },
+        batchRetouch: {
+            ...appConfig.batchRetouch
         },
         doubao: {
             promptTemplate: doubaoConfig.promptTemplate,
@@ -2012,7 +2041,9 @@ function notifyLegilResult(taskType, result = {}) {
         ? '创意拓展产图'
         : (taskType === 'resize-batch'
             ? '批量改尺寸'
-            : (taskType === 'delivery-candidates' ? '三尺寸候选生成' : 'Legil批量生成'));
+            : (taskType === 'batch-retouch'
+                ? '批量修图'
+                : (taskType === 'delivery-candidates' ? '三尺寸候选生成' : 'Legil批量生成')));
 
     notifyTaskEvent({
         level: completed ? 'info' : (stopped ? 'warning' : 'error'),
@@ -2688,6 +2719,7 @@ function createRouteContext() {
         DEFAULT_WORKFLOW_CONFIG,
         DEFAULT_NOTIFICATION_CONFIG,
         DEFAULT_CREATIVE_CONFIG,
+        DEFAULT_BATCH_RETOUCH_CONFIG,
         getCreativePromptStyleOptions,
         normalizeCreativePromptStyle,
         getJimengGenerationOptions,

@@ -258,6 +258,7 @@ function extractPromptsFromRows({
             const naming = buildTablePromptNaming({
                 direction: directionName,
                 prompt,
+                promptTitle: column.header,
                 visualHook,
                 extensionText,
                 sourceMaterial
@@ -301,6 +302,10 @@ function extractPromptsFromRows({
                 directionLibraryMatched: naming.directionLibraryMatched,
                 contentName: naming.contentName,
                 contentNameSource: naming.contentNameSource,
+                finalContentTitle: naming.finalContentTitle,
+                automationContentTitle: naming.automationContentTitle,
+                namingSource: naming.namingSource,
+                tagConfidence: naming.tagConfidence,
                 originalStandardLabelPath: standardLabelPath,
                 visualHook,
                 priority,

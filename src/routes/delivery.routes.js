@@ -25,6 +25,9 @@ const {
     buildFinalImagePath
 } = require('../services/delivery-postprocess/finalize');
 const {
+    organizeFinalPackageByTaxonomy
+} = require('../services/delivery-postprocess/taxonomy-package');
+const {
     readImageDimensions
 } = require('../services/image-renamer');
 
@@ -66,6 +69,8 @@ function publicRun(run) {
         outputFolder: run.outputFolder,
         logoTemplateFolder: run.logoTemplateFolder || '',
         finalPackageRoot: run.finalPackageRoot || '',
+        taxonomyPackageRoot: run.taxonomyPackageRoot || '',
+        taxonomyPackage: run.taxonomyPackage || null,
         processMode: run.processMode,
         targetSizes: run.targetSizes,
         candidateCountPerSize: run.candidateCountPerSize,
@@ -701,6 +706,36 @@ module.exports = function registerDeliveryRoutes(app, context) {
             onProgress: updatedRun => store.saveRun(updatedRun)
         });
         store.saveRun(result.run);
+        if (result.finalizedCount > 0) {
+            try {
+                const taxonomyResult = organizeFinalPackageByTaxonomy(result.run);
+                result.run.taxonomyPackageRoot = taxonomyResult.taxonomyPackageRoot;
+                result.run.taxonomyPackage = {
+                    organized: true,
+                    packageCount: taxonomyResult.classifiedPackages,
+                    exactMatchedCount: taxonomyResult.exactMatchedCount,
+                    bestFitCount: taxonomyResult.bestFitCount,
+                    reviewRequiredCount: taxonomyResult.reviewRequiredCount,
+                    manifestPath: taxonomyResult.manifestPath,
+                    organizedAt: taxonomyResult.manifest.createdAt
+                };
+                result.taxonomyPackageRoot = taxonomyResult.taxonomyPackageRoot;
+                result.taxonomyManifestPath = taxonomyResult.manifestPath;
+                result.taxonomyPackage = result.run.taxonomyPackage;
+                store.saveRun(result.run);
+                logger.system(`标签分类交付包已生成: ${taxonomyResult.taxonomyPackageRoot}`);
+                logger.info(`标签分类交付包: ${taxonomyResult.classifiedPackages} 个素材包，精确匹配 ${taxonomyResult.exactMatchedCount} 个，自动匹配 ${taxonomyResult.bestFitCount} 个`);
+            } catch (taxonomyError) {
+                result.run.taxonomyPackage = {
+                    organized: false,
+                    error: taxonomyError.message,
+                    organizedAt: new Date().toISOString()
+                };
+                result.taxonomyPackage = result.run.taxonomyPackage;
+                store.saveRun(result.run);
+                logger.warn(`标签分类交付包生成失败，已保留最终交付包: ${taxonomyError.message}`);
+            }
+        }
         logger.system(result.failedCount
             ? 'S10 三尺寸最终交付包已部分生成'
             : 'S10 三尺寸最终交付包已生成');
@@ -1253,6 +1288,8 @@ module.exports = function registerDeliveryRoutes(app, context) {
                 saved: state.savedTotal,
                 finalizedCount: state.finalizedCount,
                 finalPackageRoot: run.finalPackageRoot || state.finalPackageRoot,
+                taxonomyPackageRoot: run.taxonomyPackageRoot || '',
+                taxonomyPackage: run.taxonomyPackage || null,
                 currentAction: stopped
                     ? `Closed-loop delivery stopped after ${state.completedTargets}/${state.totalLegilTargets} Legil target(s)`
                     : `Closed-loop full delivery completed: ${state.finalizedCount} final image(s)`
@@ -1306,7 +1343,9 @@ module.exports = function registerDeliveryRoutes(app, context) {
             generatedTargets: state.generatedTargets,
             failedTargets: state.failedTargets,
             finalizedCount: state.finalizedCount,
-            finalPackageRoot: run.finalPackageRoot || state.finalPackageRoot
+            finalPackageRoot: run.finalPackageRoot || state.finalPackageRoot,
+            taxonomyPackageRoot: run.taxonomyPackageRoot || '',
+            taxonomyPackage: run.taxonomyPackage || null
         };
     }
 
@@ -1655,6 +1694,8 @@ module.exports = function registerDeliveryRoutes(app, context) {
                     saved: finalResult.finalizedCount,
                     finalizedCount: finalResult.finalizedCount,
                     finalPackageRoot: finalResult.finalPackageRoot,
+                    taxonomyPackageRoot: finalResult.taxonomyPackageRoot || '',
+                    taxonomyPackage: finalResult.taxonomyPackage || null,
                     currentAction: partialFinal
                         ? `最终交付包已部分生成：${finalResult.finalPackageRoot}；失败/跳过 ${Math.max(failedTargets, finalResult.failedCount || 0, standardizedResult.failedCount || 0)} 项`
                         : `最终交付包已生成：${finalResult.finalPackageRoot}`
@@ -1704,7 +1745,9 @@ module.exports = function registerDeliveryRoutes(app, context) {
             message: interruptedMessage || (stopped ? '任务已停止' : 'S10.3 三尺寸候选生成完成'),
             generatedTargets,
             failedTargets,
-            finalPackageRoot: run.finalPackageRoot || ''
+            finalPackageRoot: run.finalPackageRoot || '',
+            taxonomyPackageRoot: run.taxonomyPackageRoot || '',
+            taxonomyPackage: run.taxonomyPackage || null
         };
     }
 
@@ -1942,6 +1985,9 @@ module.exports = function registerDeliveryRoutes(app, context) {
                 logoTemplateFolder: result.logoTemplateFolder,
                 logoTemplates: result.logoTemplates,
                 finalPackageRoot: result.finalPackageRoot,
+                taxonomyPackageRoot: result.taxonomyPackageRoot || '',
+                taxonomyManifestPath: result.taxonomyManifestPath || '',
+                taxonomyPackage: result.taxonomyPackage || null,
                 finalized: result.finalized,
                 failed: result.failed,
                 finalizedCount: result.finalizedCount,

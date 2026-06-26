@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const {
+    buildManagedOutputNamingContext,
     sanitizeFileNamePart
 } = require('../output-naming/creative-output-naming');
 
@@ -258,6 +259,7 @@ function loadTablePromptNamingKnowledge(rootDir) {
     const directionIndex = buildDirectionIndex(directions);
     return {
         ...directionIndex,
+        directions,
         targetContentRecords: buildTargetContentRecords(rootDir),
         directionCount: directionIndex.entries.length
     };
@@ -476,8 +478,53 @@ function buildTablePromptNaming(input = {}, knowledge) {
     };
 }
 
+function buildManagedTablePromptNaming(input = {}, knowledge) {
+    const directionMatch = matchDirection(input.direction, knowledge);
+    const labels = directionMatch.matched ? directionMatch.labels : [];
+    const content = inferContentName(input, labels, knowledge);
+    const managed = buildManagedOutputNamingContext({
+        directionLibrary: knowledge && Array.isArray(knowledge.directions) ? knowledge.directions : [],
+        sourceDirectionId: directionMatch.directionId,
+        sourceDirectionPath: directionMatch.directionPath || input.direction,
+        standardLabelPath: labels,
+        direction: input.direction,
+        sourceRawName: input.sourceMaterial || input.direction,
+        sourceContentTitle: input.sourceMaterial,
+        contentTitle: content.contentName,
+        contentName: content.contentName,
+        newDirectionName: input.extensionText || input.visualHook || input.direction,
+        promptTitle: input.promptTitle,
+        prompt: input.prompt,
+        visualHook: input.visualHook,
+        extensionName: input.extensionText,
+        mode: 'table-batch',
+        strictLibraryTags: true
+    });
+    const managedLabels = Array.isArray(managed.standardLabelPath) ? managed.standardLabelPath : [];
+
+    return {
+        primaryTag: managed.primaryTag || managedLabels[0] || '',
+        secondaryTag: managed.secondaryTag || managedLabels[1] || '',
+        tertiaryTag: managed.tertiaryTag || managedLabels[2] || '',
+        standardLabelPath: managedLabels,
+        matchedDirectionId: managed.matchedDirectionId || directionMatch.directionId,
+        matchedDirectionName: directionMatch.directionName,
+        matchedDirectionPath: managed.matchedDirectionPath || directionMatch.directionPath,
+        directionMatchType: directionMatch.matchType,
+        directionMatchConfidence: directionMatch.matchConfidence,
+        directionLibraryMatched: directionMatch.matched || Boolean(managedLabels.length),
+        contentName: content.contentName,
+        contentNameSource: content.contentNameSource,
+        finalContentTitle: managed.finalContentTitle || content.contentName,
+        automationContentTitle: managed.automationContentTitle || '',
+        outputNameBase: managed.outputNameBase || '自动化素材内容',
+        namingSource: managed.namingSource || '',
+        tagConfidence: managed.tagConfidence || ''
+    };
+}
+
 module.exports = {
-    buildTablePromptNaming,
+    buildTablePromptNaming: buildManagedTablePromptNaming,
     loadTablePromptNamingKnowledge,
     splitPathParts,
     compactKey,

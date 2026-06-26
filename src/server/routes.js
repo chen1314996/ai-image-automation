@@ -16,6 +16,7 @@ const registerCreativeAutoRoutes = require('../routes/creative-auto.routes');
 const registerMaterialAnalysisRoutes = require('../routes/material-analysis.routes');
 const registerTaskWorkbookRoutes = require('../routes/task-workbook.routes');
 const registerTablePromptRoutes = require('../routes/table-prompts.routes');
+const registerBatchRetouchRoutes = require('../routes/batch-retouch.routes');
 const registerDeliveryRoutes = require('../routes/delivery.routes');
 const registerRenameRoutes = require('../routes/rename.routes');
 const registerVisionTaxonomyRenameRoutes = require('../routes/vision-taxonomy-rename.routes');
@@ -41,6 +42,7 @@ function registerRoutes(app, context) {
     registerMaterialAnalysisRoutes(app, context);
     registerTaskWorkbookRoutes(app, context);
     registerTablePromptRoutes(app, context);
+    registerBatchRetouchRoutes(app, context);
     registerDeliveryRoutes(app, context);
     registerRenameRoutes(app, context);
     registerVisionTaxonomyRenameRoutes(app, context);
