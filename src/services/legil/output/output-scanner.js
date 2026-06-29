@@ -175,6 +175,7 @@ module.exports = function createOutputScannerMethods(deps) {
             const collected = new Map();
             let targetRowTop = Number.isFinite(scanOptions.targetRowTop) ? scanOptions.targetRowTop : null;
             const rowTolerance = 150;
+            const allowUnanchoredCurrentRow = scanOptions.currentRowOnly && targetRowTop === null;
 
             const isInTargetRow = (top) => {
                 if (!scanOptions.currentRowOnly || targetRowTop === null) {
@@ -298,7 +299,7 @@ module.exports = function createOutputScannerMethods(deps) {
                         rect.top > 60 &&
                         rect.width > 160 &&
                         rect.height > 100 &&
-                        (!scanOptions.currentRowOnly || (
+                        (!scanOptions.currentRowOnly || allowUnanchoredCurrentRow || (
                             targetRowTop !== null &&
                             rect.height <= 420 &&
                             targetRowTop >= rect.top - rowTolerance &&
@@ -370,6 +371,7 @@ module.exports = function createOutputScannerMethods(deps) {
             const collected = new Map();
             const rowTolerance = 150;
             const targetRowTop = Number.isFinite(scanOptions.targetRowTop) ? scanOptions.targetRowTop : null;
+            const allowUnanchoredCurrentRow = scanOptions.currentRowOnly && targetRowTop === null && outputRows.length === 0;
 
             const isVisible = (el) => {
                 const rect = el.getBoundingClientRect();
@@ -401,9 +403,34 @@ module.exports = function createOutputScannerMethods(deps) {
                 };
             };
 
+            const compactFailureText = (value) => {
+                const text = String(value || '').replace(/\s+/g, ' ').trim();
+                if (!text) return '';
+
+                const reasonMatch = text.match(/失败原因[:：]\s*([\s\S]{1,500}?)(?=\s*(失败原因[:：]|重新编辑|重新生成|收藏|\d{4}-\d{2}-\d{2}|共\s*\d+|$))/);
+                if (reasonMatch && reasonMatch[1]) {
+                    return `失败原因: ${reasonMatch[1].trim().slice(0, 320)}`;
+                }
+
+                const catMatch = text.match(/图片已被[^，。；\s]*猫[^，。；\s]*咬坏/);
+                if (catMatch) {
+                    return catMatch[0];
+                }
+
+                const apiMatch = text.match(/API 请求失败[:：]\s*\d+\s*-\s*.{1,240}/);
+                if (apiMatch) {
+                    return apiMatch[0].trim();
+                }
+
+                return text.slice(0, 220);
+            };
+
             const belongsToCurrentOutputRow = (top) => {
                 if (scanOptions.currentRowOnly && targetRowTop !== null) {
                     return Math.abs(Number(targetRowTop) - Number(top)) <= rowTolerance;
+                }
+                if (allowUnanchoredCurrentRow) {
+                    return true;
                 }
                 if (!outputRows.length) {
                     return false;
@@ -419,13 +446,15 @@ module.exports = function createOutputScannerMethods(deps) {
                     if (!text || !failedPattern.test(text)) continue;
 
                     const { rect } = resolveSlotBox(el);
-                    if (rect.left <= 300 || rect.width < 80 || rect.height < 60) continue;
+                    if (rect.left <= 300 || rect.width < 80 || rect.height < 60 || rect.width > 720 || rect.height > 540) continue;
                     if (!belongsToCurrentOutputRow(rect.top)) continue;
+                    const failureText = compactFailureText(text);
+                    if (!failureText) continue;
 
-                    const key = `${Math.round(rect.top / 20)}:${Math.round(rect.left / 20)}:${text.slice(0, 24)}`;
+                    const key = `${Math.round(rect.top / 20)}:${Math.round(rect.left / 20)}:${failureText.slice(0, 24)}`;
                     if (!collected.has(key)) {
                         collected.set(key, {
-                            text,
+                            text: failureText,
                             left: rect.left,
                             top: rect.top,
                             width: rect.width,
@@ -437,13 +466,25 @@ module.exports = function createOutputScannerMethods(deps) {
 
             collectVisibleFailures();
 
-            const getFinalValues = () => Array.from(collected.values())
-                .sort((a, b) => {
+            const getFinalValues = () => {
+                let values = Array.from(collected.values());
+                if (allowUnanchoredCurrentRow && values.length > 0) {
+                    const firstRowTop = values
+                        .map(item => Number(item.top))
+                        .filter(value => Number.isFinite(value))
+                        .sort((a, b) => a - b)[0];
+                    if (Number.isFinite(firstRowTop)) {
+                        values = values.filter(item => Math.abs(Number(item.top) - firstRowTop) <= rowTolerance);
+                    }
+                }
+
+                return values.sort((a, b) => {
                     const topDiff = a.top - b.top;
                     if (Math.abs(topDiff) > 8) return topDiff;
                     return a.left - b.left;
                 })
                 .slice(0, safeLimit);
+            };
 
             if (!scanOptions.scanScroll) {
                 return getFinalValues();
@@ -458,7 +499,7 @@ module.exports = function createOutputScannerMethods(deps) {
                         rect.top > 60 &&
                         rect.width > 160 &&
                         rect.height > 100 &&
-                        (!scanOptions.currentRowOnly || (
+                        (!scanOptions.currentRowOnly || allowUnanchoredCurrentRow || (
                             targetRowTop !== null &&
                             rect.height <= 420 &&
                             targetRowTop >= rect.top - rowTolerance &&

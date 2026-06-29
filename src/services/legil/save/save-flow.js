@@ -80,6 +80,19 @@ module.exports = function createImageSaveFlowMethods(deps) {
             });
 
             if (imageInfos.length === 0) {
+                const outcome = options.generationOutcome && typeof options.generationOutcome === 'object'
+                    ? options.generationOutcome
+                    : null;
+                if (outcome && Number(outcome.failedSlotCount) > 0) {
+                    const expected = Number(outcome.expectedOutputCount) || expectedOutputCount;
+                    const valid = Math.max(0, Number(outcome.validCount) || 0);
+                    const failed = Math.max(0, Number(outcome.failedSlotCount) || 0);
+                    const failureTexts = Array.isArray(outcome.failureTexts)
+                        ? outcome.failureTexts.map(text => String(text || '').trim()).filter(Boolean)
+                        : [];
+                    const reason = failureTexts.length ? `，原因：${failureTexts.join('；')}` : '';
+                    throw new Error(`Legil 返回失败占位：${valid}/${expected} 有效图，${failed}/${expected} 失败槽位${reason}`);
+                }
                 throw new Error('未找到本次新生成的输出图');
             }
 

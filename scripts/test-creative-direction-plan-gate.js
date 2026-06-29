@@ -220,6 +220,179 @@ function runDirectionPlanParserAndGateTest() {
     assert.strictEqual(multiplierConfig.diversityMode, 'explore');
     assert.strictEqual(multiplierConfig.historyScope, 'all');
 
+    const visualDnaPreference = {
+        atmosphere: ['史诗壮阔'],
+        camera: ['俯瞰'],
+        event: ['发现'],
+        risks: ['英文文字', '过度科幻', '主体不清']
+    };
+    const dnaPreferred = {
+        extensionKey: 'dna-good',
+        extensionType: 'candidate',
+        name: '黎明废墟俯瞰发现巨型地标',
+        description: '幸存者从高处俯瞰城市废墟，第一次发现被暖光照亮的巨型地标入口。',
+        visualHook: '黎明暖光中的巨型地标入口',
+        dedupeReason: '用俯瞰发现和巨型地标区别于普通废墟远景。',
+        riskNote: '避免主体过小',
+        productionAdvice: '用前景人物和远景地标形成清晰尺度。',
+        dimensions: {
+            mood: '史诗壮阔',
+            perspective: '俯瞰',
+            narrative: '发现',
+            hook: '巨型地标'
+        }
+    };
+    const dnaRisky = {
+        extensionKey: 'dna-risk',
+        extensionType: 'candidate',
+        name: '未来科幻英文废墟展示',
+        description: '废墟里加入大量英文文字、过度科幻界面，主体关系不清。',
+        visualHook: '英文发光屏幕',
+        dedupeReason: '只是替换视觉包装。',
+        riskNote: '英文文字、过度科幻、主体不清',
+        productionAdvice: '保持画面完整。',
+        dimensions: {
+            mood: '神秘未知',
+            perspective: '平视'
+        }
+    };
+    const dnaPreferredScore = scoreDirectionExtension(dnaPreferred, {
+        visualDnaPreference,
+        seenDnaCombos: new Set(),
+        historyDnaCombos: new Set()
+    });
+    const dnaRiskyScore = scoreDirectionExtension(dnaRisky, {
+        visualDnaPreference,
+        seenDnaCombos: new Set(),
+        historyDnaCombos: new Set()
+    });
+    assert.ok(dnaPreferredScore.score > dnaRiskyScore.score);
+    assert.strictEqual(dnaPreferredScore.dnaAssessment.completeness, 4);
+    assert.ok(dnaPreferredScore.dnaAssessment.preferenceMatchCount >= 3);
+    assert.ok(dnaRiskyScore.dnaAssessment.riskHits.length >= 1);
+
+    const dnaGate = selectDirectionPlanExtensions({
+        directionPlans: [{
+            sourceDirectionPath: '题材/探索发现/城市废墟',
+            extensions: [dnaRisky, dnaPreferred]
+        }],
+        selected: {
+            direction: {
+                id: 'direction-dna',
+                path: '题材/探索发现/城市废墟'
+            },
+            visualDnaPreferenceContext: visualDnaPreference
+        },
+        payload: {
+            directionPlanning: {
+                selectedExtensionsPerSource: 1,
+                promptsPerExtension: 2,
+                minScore: 1
+            }
+        },
+        config: {}
+    });
+    assert.strictEqual(dnaGate.selectedExtensions[0].name, dnaPreferred.name);
+    assert.strictEqual(dnaGate.directionPlanReport.selectedExtensions[0].dnaAssessment.completeness, 4);
+
+    const highTagCandidate = {
+        extensionKey: 'tag-high',
+        extensionType: 'candidate',
+        name: '暖光补给箱交接',
+        description: '幸存者在风雪街道中交接发光补给箱，前景道具清晰。',
+        visualHook: '暖光补给箱和手部交接动作',
+        dedupeReason: '用交接动作区别于静态展示。',
+        riskNote: '',
+        productionAdvice: '让补给箱成为画面中心。',
+        directionTags: ['暖光目标', '物资补给', '风雪压迫'],
+        mainTags: ['暖光目标', '物资补给'],
+        extraTags: ['风雪压迫']
+    };
+    const gapTagCandidate = {
+        ...highTagCandidate,
+        extensionKey: 'tag-gap',
+        name: '低机位近景工具取回',
+        description: '低机位近景中幸存者从冰裂边缘取回关键工具。',
+        visualHook: '低机位近景工具和冰裂边缘',
+        directionTags: ['低机位', '近景物件', '冰裂危机'],
+        mainTags: ['低机位', '近景物件'],
+        extraTags: ['冰裂危机']
+    };
+    const tagPreference = {
+        highTags: ['暖光目标', '物资补给'],
+        gapTags: ['低机位', '近景物件'],
+        riskTags: ['文字干扰']
+    };
+    const stableHighScore = scoreDirectionExtension(highTagCandidate, {
+        directionTagPreference: tagPreference,
+        seenTagCombos: new Set(),
+        historyTagCombos: new Set(),
+        tagStrategy: 'stable'
+    });
+    const stableGapScore = scoreDirectionExtension(gapTagCandidate, {
+        directionTagPreference: tagPreference,
+        seenTagCombos: new Set(),
+        historyTagCombos: new Set(),
+        tagStrategy: 'stable'
+    });
+    assert.ok(stableHighScore.score > stableGapScore.score);
+    assert.ok(stableHighScore.tagAssessment.highTagMatches.length >= 2);
+
+    const exploreHighScore = scoreDirectionExtension(highTagCandidate, {
+        directionTagPreference: tagPreference,
+        seenTagCombos: new Set(),
+        historyTagCombos: new Set(),
+        tagStrategy: 'explore'
+    });
+    const exploreGapScore = scoreDirectionExtension(gapTagCandidate, {
+        directionTagPreference: tagPreference,
+        seenTagCombos: new Set(),
+        historyTagCombos: new Set(),
+        tagStrategy: 'explore'
+    });
+    assert.ok(exploreGapScore.score > exploreHighScore.score);
+    assert.ok(exploreGapScore.tagAssessment.gapTagMatches.length >= 1);
+
+    const riskyTagScore = scoreDirectionExtension({
+        ...highTagCandidate,
+        extensionKey: 'tag-risk',
+        riskTags: ['文字干扰'],
+        riskNote: '文字干扰'
+    }, {
+        directionTagPreference: tagPreference,
+        seenTagCombos: new Set(),
+        historyTagCombos: new Set(),
+        tagStrategy: 'stable'
+    });
+    assert.ok(riskyTagScore.score < stableHighScore.score);
+    assert.ok(riskyTagScore.tagScore.riskPenalty < 0);
+
+    const tagGate = selectDirectionPlanExtensions({
+        directionPlans: [{
+            sourceDirectionPath: '题材/探索发现/补给站',
+            extensions: [gapTagCandidate, highTagCandidate]
+        }],
+        selected: {
+            direction: {
+                id: 'direction-tags',
+                path: '题材/探索发现/补给站'
+            },
+            directionTagPreferenceContext: tagPreference
+        },
+        payload: {
+            directionPlanning: {
+                selectedExtensionsPerSource: 1,
+                promptsPerExtension: 1,
+                minScore: 1,
+                tagStrategy: 'stable'
+            }
+        },
+        config: {}
+    });
+    assert.strictEqual(tagGate.selectedExtensions[0].name, highTagCandidate.name);
+    assert.ok(tagGate.directionPlanReport.selectedExtensions[0].tagAssessment);
+    assert.ok(tagGate.directionPlanReport.selectedExtensions[0].tagScore);
+
     const defaultRepairConfig = buildDirectionPlanConfig({}, {});
     assert.strictEqual(defaultRepairConfig.maxRepairAttempts, 2);
 }

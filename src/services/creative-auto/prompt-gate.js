@@ -9,6 +9,10 @@ const {
     normalizeCreativePromptStyle,
     sanitizeLegilPromptText
 } = require('./prompt-style');
+const {
+    normalizeDirectionTagsForRecord,
+    splitTagValues
+} = require('../direction-tags');
 
 const DEFAULT_FORBIDDEN_TERMS = [
     '真实品牌',
@@ -282,6 +286,170 @@ function findForbiddenTerm(prompt, forbiddenTerms) {
         const normalizedTerm = normalizeText(term).toLowerCase();
         return normalizedTerm && normalizedPrompt.includes(normalizedTerm);
     }) || '';
+}
+
+function getObjectAliasValue(object = {}, aliases = []) {
+    if (!object || typeof object !== 'object') return '';
+    for (const alias of aliases) {
+        const value = object[alias];
+        if (Array.isArray(value)) {
+            const text = value.map(normalizeText).filter(Boolean).join('、');
+            if (text) return text;
+        } else {
+            const text = normalizeText(value && typeof value === 'object'
+                ? (value.value || value.label || value.name || value.text)
+                : value);
+            if (text) return text;
+        }
+    }
+    return '';
+}
+
+function dnaFieldValue(item = {}, field) {
+    const dimensions = item.dimensions && typeof item.dimensions === 'object' ? item.dimensions : {};
+    const visualDna = item.visualDna && typeof item.visualDna === 'object' ? item.visualDna : {};
+    if (field === 'visualHook') {
+        return firstNonEmpty(
+            item.visualHook,
+            item.hook,
+            getObjectAliasValue(visualDna, ['visualHook', 'hook', '钩子', '视觉钩子']),
+            getObjectAliasValue(dimensions, ['visualHook', 'hook', 'pictureHook', '钩子', '视觉钩子'])
+        );
+    }
+    if (field === 'event') {
+        return firstNonEmpty(
+            item.event,
+            getObjectAliasValue(visualDna, ['event', 'narrative', 'action', '事件', '叙事']),
+            getObjectAliasValue(dimensions, ['event', 'narrative', 'action', 'moment', '事件', '叙事'])
+        );
+    }
+    if (field === 'camera') {
+        return firstNonEmpty(
+            item.camera,
+            getObjectAliasValue(visualDna, ['camera', 'perspective', 'view', 'angle', '视角', '镜头']),
+            getObjectAliasValue(dimensions, ['camera', 'perspective', 'view', 'angle', 'shot', '视角', '镜头'])
+        );
+    }
+    return '';
+}
+
+function splitLandingTerms(value = '') {
+    return normalizeText(value)
+        .split(/[、，。；;,.!?！？|/：:\s]+/)
+        .map(item => item.replace(/^(避免|不要|禁止|必须|需要|体现|突出|使用)/, '').trim())
+        .filter(item => normalizeTitleKey(item).length >= 2)
+        .slice(0, 12);
+}
+
+function promptReflectsValue(prompt, value) {
+    const promptKey = normalizeTitleKey(prompt);
+    const valueKey = normalizeTitleKey(value);
+    if (!promptKey || !valueKey) return true;
+    if (promptKey.includes(valueKey)) return true;
+    return splitLandingTerms(value).some(term => {
+        const termKey = normalizeTitleKey(term);
+        return termKey && promptKey.includes(termKey);
+    });
+}
+
+const GENERIC_DIRECTION_TAGS = new Set([
+    '主体明确',
+    '近景主体',
+    '平视中景',
+    '温暖希望'
+]);
+
+const DIRECTION_TAG_SYNONYMS = new Map([
+    ['暖光目标', ['暖光', '灯光', '火光', '光源', '发光']],
+    ['物资补给', ['物资', '补给', '药包', '急救', '补给箱', '木箱']],
+    ['交易队列', ['队列', '排队', '交换', '交易']],
+    ['风雪压迫', ['风雪', '暴雪', '雪夜', '寒潮']],
+    ['信号线索', ['信号', '信号弹', '信号烟', '信号灯']],
+    ['地图线索', ['地图', '路线图', '路线']],
+    ['入口目标', ['入口', '门口', '铁门', '门缝']],
+    ['救援目标', ['救援', '求救', '抢救', '急救']],
+    ['撤离压力', ['撤离', '逃离', '倒计时']],
+    ['冰裂危机', ['冰裂', '裂冰', '裂缝', '断裂冰面']],
+    ['手部动作', ['手', '递过', '拉住', '交接']],
+    ['绳索攀爬', ['绳索', '攀爬', '爬上']],
+    ['低机位', ['低机位', '仰视']],
+    ['俯瞰', ['俯瞰', '鸟瞰', '高处']],
+    ['第一人称', ['第一人称', '主观', '手持']]
+]);
+
+function promptReflectsDirectionTag(prompt, tag) {
+    if (promptReflectsValue(prompt, tag)) return true;
+    const promptKey = normalizeTitleKey(prompt);
+    return safeArray(DIRECTION_TAG_SYNONYMS.get(tag)).some(term => {
+        const termKey = normalizeTitleKey(term);
+        return termKey && promptKey.includes(termKey);
+    });
+}
+
+function effectiveDirectionTags(item = {}) {
+    const explicit = splitTagValues([
+        item.mainTags,
+        item.directionTags,
+        item.extraTags
+    ]).filter(Boolean);
+    if (!explicit.length) return [];
+    return Array.from(new Set(explicit))
+        .filter(tag => tag && !GENERIC_DIRECTION_TAGS.has(tag))
+        .slice(0, 5);
+}
+
+function findMissingDirectionTagLanding(item = {}) {
+    const tags = effectiveDirectionTags(item);
+    if (!tags.length) return null;
+    const prompt = item.prompt || item.finalPrompt || '';
+    if (tags.some(tag => promptReflectsDirectionTag(prompt, tag))) return null;
+    return {
+        tags,
+        message: `Prompt 未体现候选方向主标签：${tags.slice(0, 4).join('、')}`
+    };
+}
+
+function riskTermsFromNote(riskNote = '') {
+    return splitForbiddenRule(riskNote)
+        .filter(isHardForbiddenTerm)
+        .filter(term => normalizeTitleKey(term).length >= 2)
+        .slice(0, 8);
+}
+
+function buildPromptDnaLandingWarnings(item = {}) {
+    const warnings = [];
+    const prompt = item.prompt || item.finalPrompt || '';
+    [
+        { field: 'visualHook', label: 'visualHook' },
+        { field: 'event', label: 'event' },
+        { field: 'camera', label: 'camera' }
+    ].forEach(check => {
+        const value = dnaFieldValue(item, check.field);
+        if (value && !promptReflectsValue(prompt, value)) {
+            warnings.push({
+                source: 'direction-dna-landing',
+                severity: 'warning',
+                index: Number(item.index) || 0,
+                field: check.field,
+                message: `Prompt 未明显体现入选方向的 ${check.label}：${value}`,
+                expected: value
+            });
+        }
+    });
+
+    const riskHits = riskTermsFromNote(item.riskNote || item.qualityRisk || item.duplicateRisk)
+        .filter(term => normalizeText(prompt).toLowerCase().includes(normalizeText(term).toLowerCase()));
+    riskHits.forEach(term => {
+        warnings.push({
+            source: 'direction-dna-landing',
+            severity: 'warning',
+            index: Number(item.index) || 0,
+            field: 'riskNote',
+            message: `Prompt 疑似命中方向风险规避项：${term}`,
+            matchedTerm: term
+        });
+    });
+    return warnings;
 }
 
 function compactPromptItem(item, reason, message) {
@@ -590,6 +758,7 @@ function applyPromptGate({ prompts, selected, quota, store, runId, payload = {},
         const qualityErrors = qualityErrorsByIndex.get(Number(item.index)) || [];
         const forbiddenTerm = findForbiddenTerm(item.prompt, forbiddenTerms);
         const memoryAvoidRule = findMemoryAvoidRule(item.prompt, memoryAvoidRules);
+        const missingDirectionTags = findMissingDirectionTagLanding(item);
         const directionNameKey = normalizeTitleKey(item.newDirectionName || item.direction || item.contentTitle);
         const matchedHistoryDirectionKey = directionNameKey
             ? candidateSourceDirectionKeys(item, selectedDirection || {}).find(sourceKey => (
@@ -621,6 +790,15 @@ function applyPromptGate({ prompts, selected, quota, store, runId, payload = {},
                 item,
                 'quality_error',
                 qualityErrors.map(issue => issue.message).join('；')
+            ));
+            return;
+        }
+
+        if (missingDirectionTags) {
+            rejectedPrompts.push(compactPromptItem(
+                item,
+                'missing_direction_tag_landing',
+                missingDirectionTags.message
             ));
             return;
         }
@@ -671,6 +849,8 @@ function applyPromptGate({ prompts, selected, quota, store, runId, payload = {},
             currentTitleKeys.set(titleKey, item.index);
         }
 
+        buildPromptDnaLandingWarnings(item).forEach(issue => warnings.push(issue));
+
         accepted.push({
             ...item,
             index: accepted.length + 1,
@@ -713,6 +893,7 @@ function applyPromptGate({ prompts, selected, quota, store, runId, payload = {},
         maxPromptsAllowed: unlimitedPrompts ? null : maxPromptsAllowed,
         unlimitedPrompts,
         unlimitedImages: Boolean(quota && quota.unlimitedImages),
+        dnaLandingWarningCount: warnings.filter(issue => issue.source === 'direction-dna-landing').length,
         rejectionSummary: summarizeRejections(rejectedPrompts),
         warnings,
         rejectedPrompts,

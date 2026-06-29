@@ -58,7 +58,129 @@ module.exports = function createGenerationFlowMethods(deps) {
         return Math.min(waitTimeMs, 35 * 60 * 1000);
     }
 
+    function normalizeGenerationOutcome(instance, waitResult, expectedOutputCount) {
+        const outcome = waitResult && typeof waitResult === 'object'
+            ? waitResult
+            : instance.lastGenerationOutcome;
+        if (!outcome || typeof outcome !== 'object') {
+            return null;
+        }
+
+        const expected = Number(outcome.expectedOutputCount) || Number(expectedOutputCount) || 1;
+        const validCount = Math.max(0, Number(outcome.validCount) || 0);
+        const failedSlotCount = Math.max(0, Number(outcome.failedSlotCount) || 0);
+        return {
+            ...outcome,
+            expectedOutputCount: expected,
+            validCount,
+            failedSlotCount,
+            allFailed: failedSlotCount >= expected && validCount === 0,
+            partial: validCount > 0 && validCount < expected
+        };
+    }
+
+    function formatPlaceholderFailureMessage(outcome) {
+        const expected = Number(outcome?.expectedOutputCount) || 1;
+        const valid = Math.max(0, Number(outcome?.validCount) || 0);
+        const failed = Math.max(0, Number(outcome?.failedSlotCount) || 0);
+        const failureTexts = Array.isArray(outcome?.failureTexts)
+            ? outcome.failureTexts.map(text => String(text || '').trim()).filter(Boolean)
+            : [];
+        const reason = failureTexts.length ? `，原因：${failureTexts.join('；')}` : '';
+        return `Legil 返回失败占位：${valid}/${expected} 有效图，${failed}/${expected} 失败槽位${reason}`;
+    }
+
     return {
+    async generateWithSingleOutputFallback(promptText, promptIndex, options = {}, appliedGenerationSettings = {}, outcome = {}) {
+        const targetCount = Math.max(1, Math.min(4, Number(appliedGenerationSettings.outputQuantity) || Number(outcome.expectedOutputCount) || 1));
+        const savePaths = [];
+        const failureMessages = [];
+        let lastScreenshotPath = '';
+
+        logger.warn(`${formatPlaceholderFailureMessage(outcome)}，将降级为单图模式重试 ${targetCount} 次`);
+
+        for (let attempt = 0; attempt < targetCount; attempt++) {
+            throwIfAborted(options);
+            const retryOptions = {
+                ...options,
+                generationSettings: {
+                    ...appliedGenerationSettings,
+                    outputQuantity: 1
+                },
+                outputSequence: Number(options.outputSequence) > 0
+                    ? Number(options.outputSequence) + savePaths.length
+                    : options.outputSequence,
+                outputTotal: options.outputTotal,
+                variantIndexBase: (Number(options.variantIndexBase) || 0) + savePaths.length,
+                acceptStablePartialOutputs: false,
+                singleOutputFallbackOnAllFailed: false,
+                _legilSingleOutputFallbackRetried: true,
+                _legilSingleOutputFallbackAttempt: attempt + 1
+            };
+
+            if (
+                !retryOptions.skipReferenceUpload &&
+                !retryOptions.referenceImagePath &&
+                (!Array.isArray(retryOptions.referenceImagePaths) || retryOptions.referenceImagePaths.length === 0)
+            ) {
+                if (Array.isArray(this.lastUploadedReferenceImagePaths) && this.lastUploadedReferenceImagePaths.length > 1) {
+                    retryOptions.referenceImagePaths = [...this.lastUploadedReferenceImagePaths];
+                } else if (this.lastUploadedReferenceImagePath) {
+                    retryOptions.referenceImagePath = this.lastUploadedReferenceImagePath;
+                }
+            }
+
+            logger.warn(`Legil 单图降级重试 ${attempt + 1}/${targetCount}`);
+            const retryResult = await this.generateImage(promptText, promptIndex, retryOptions);
+            if (retryResult && retryResult.success) {
+                const resultSavePaths = Array.isArray(retryResult.savePaths)
+                    ? retryResult.savePaths
+                    : (retryResult.savePath ? [retryResult.savePath] : []);
+                savePaths.push(...resultSavePaths);
+                if (savePaths.length >= targetCount) {
+                    break;
+                }
+            } else {
+                const message = retryResult && retryResult.message
+                    ? retryResult.message
+                    : 'Legil single-output retry failed';
+                failureMessages.push(message);
+                if (retryResult && retryResult.screenshotPath) {
+                    lastScreenshotPath = retryResult.screenshotPath;
+                }
+            }
+
+            if (attempt < targetCount - 1) {
+                await interruptibleSleep(3000, options);
+            }
+        }
+
+        if (savePaths.length > 0) {
+            return {
+                success: true,
+                savePath: savePaths[0],
+                savePaths,
+                savedCount: savePaths.length,
+                partialSuccess: savePaths.length < targetCount,
+                generationOutcome: outcome,
+                message: savePaths.length < targetCount
+                    ? `Legil 单图降级部分成功，已保存 ${savePaths.length}/${targetCount} 张`
+                    : `Legil 单图降级成功，已保存 ${savePaths.length} 张`
+            };
+        }
+
+        return {
+            success: false,
+            savePath: null,
+            savePaths: [],
+            savedCount: 0,
+            screenshotPath: lastScreenshotPath,
+            code: 'LEGIL_PLACEHOLDER_FAILED',
+            generationOutcome: outcome,
+            message: `${formatPlaceholderFailureMessage(outcome)}；单图降级重试仍失败${failureMessages.length ? `：${failureMessages.join('；')}` : ''}`
+        };
+    },
+
     async generateImage(prompt, promptIndex = 1, options = {}) {
         const promptText = typeof prompt === 'string' ? prompt.trim() : '';
         const safePromptIndex = Number.isFinite(Number(promptIndex)) ? Number(promptIndex) : 1;
@@ -181,8 +303,10 @@ module.exports = function createGenerationFlowMethods(deps) {
                 expectedOutputCount: appliedGenerationSettings.outputQuantity,
                 maxWaitTime
             });
+            const generationOutcome = normalizeGenerationOutcome(this, generateSuccess, appliedGenerationSettings.outputQuantity);
             if (!generateSuccess) {
                 const timeoutError = new Error('等待图片生成超时');
+                timeoutError.generationOutcome = generationOutcome;
                 const screenshotPath = await this.captureErrorScreenshot(page, timeoutError, {
                     ...options,
                     promptIndex: safePromptIndex,
@@ -206,6 +330,27 @@ module.exports = function createGenerationFlowMethods(deps) {
 
             // 第6步：保存生成的图片
             logger.info('[步骤6/6] 正在保存生成的图片...');
+            if (generationOutcome && generationOutcome.allFailed) {
+                if (
+                    appliedGenerationSettings.outputQuantity > 1 &&
+                    options.singleOutputFallbackOnAllFailed !== false &&
+                    options._legilSingleOutputFallbackRetried !== true
+                ) {
+                    return this.generateWithSingleOutputFallback(
+                        promptText,
+                        safePromptIndex,
+                        options,
+                        appliedGenerationSettings,
+                        generationOutcome
+                    );
+                }
+
+                const placeholderError = new Error(formatPlaceholderFailureMessage(generationOutcome));
+                placeholderError.code = 'LEGIL_PLACEHOLDER_FAILED';
+                placeholderError.generationOutcome = generationOutcome;
+                throw placeholderError;
+            }
+
             const outputProfile = this.getModelParameterProfile(appliedGenerationSettings.imageModel);
             const strictOutputCount = options.strictOutputCount === true ||
                 (options.strictOutputCount !== false && outputProfile.outputQuantityControl === 'slider');
@@ -213,7 +358,8 @@ module.exports = function createGenerationFlowMethods(deps) {
                 ...options,
                 beforeImageKeys,
                 expectedOutputCount: appliedGenerationSettings.outputQuantity,
-                strictOutputCount
+                strictOutputCount,
+                generationOutcome
             });
             if (savePaths.length === 0) {
                 throw new Error('保存图片失败');
@@ -229,6 +375,8 @@ module.exports = function createGenerationFlowMethods(deps) {
                 savePath: savePaths[0],
                 savePaths,
                 savedCount: savePaths.length,
+                partialSuccess: Boolean(generationOutcome && generationOutcome.partial),
+                generationOutcome,
                 message: `图片生成并保存成功（${savePaths.length}张）`
             };
 
@@ -243,6 +391,8 @@ module.exports = function createGenerationFlowMethods(deps) {
                 success: false,
                 savePath: null,
                 screenshotPath,
+                code: error.code || '',
+                generationOutcome: error.generationOutcome || this.lastGenerationOutcome || null,
                 message: error.message
             };
         }

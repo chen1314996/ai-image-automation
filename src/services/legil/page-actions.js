@@ -404,6 +404,9 @@ module.exports = function createPageActionsMethods(deps) {
                 return false;
             }
 
+            this.lastUploadedReferenceImagePath = paths[0] || '';
+            this.lastUploadedReferenceImagePaths = [...paths];
+
             const expectedTotal = paths.length;
             logger.info(`准备按 Legil 槽位逐张上传批量修图参考图：图一 1 张，风格参考图 ${Math.max(0, expectedTotal - 1)} 张`);
             paths.forEach((filePath, index) => {
@@ -461,6 +464,9 @@ module.exports = function createPageActionsMethods(deps) {
                 logger.warn('没有可上传的多图参考图');
                 return false;
             }
+
+            this.lastUploadedReferenceImagePath = paths[0] || '';
+            this.lastUploadedReferenceImagePaths = [...paths];
 
             if (options.uploadMode === 'retouch-sequential-slots') {
                 return this.uploadRetouchReferenceImages(page, paths[0], paths.slice(1), options);
@@ -668,6 +674,8 @@ module.exports = function createPageActionsMethods(deps) {
             }
 
             logger.info(`准备上传参考图: ${path.basename(imagePath)}`);
+            this.lastUploadedReferenceImagePath = imagePath;
+            this.lastUploadedReferenceImagePaths = [imagePath];
 
             // 等待页面完全加载
             await page.waitForLoadState('networkidle');

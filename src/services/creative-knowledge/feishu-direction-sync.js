@@ -654,22 +654,56 @@ function isAcceptedLocalDirection(direction = {}) {
         direction.source.includes('material');
 }
 
+function visualDnaValue(value) {
+    if (Array.isArray(value)) return value.map(normalizeText).filter(Boolean)[0] || '';
+    return normalizeText(value);
+}
+
+function directionHasCompleteVisualDna(direction = {}) {
+    const visualDna = direction.visualDna && typeof direction.visualDna === 'object' ? direction.visualDna : {};
+    const dimensions = direction.dimensions && typeof direction.dimensions === 'object' ? direction.dimensions : {};
+    const atmosphere = visualDnaValue(visualDna.atmosphere || dimensions.atmosphere || dimensions.mood);
+    const camera = visualDnaValue(visualDna.camera || dimensions.camera || dimensions.perspective || dimensions.view);
+    const event = visualDnaValue(visualDna.event || dimensions.event || dimensions.narrative || dimensions.action);
+    const hook = visualDnaValue(visualDna.visualHook || dimensions.visualHook || dimensions.hook || direction.visualHook);
+    return Boolean(direction.name && direction.path && direction.description && atmosphere && camera && event && hook);
+}
+
+function buildAcceptedDraftMap(store) {
+    const draftData = store.read('direction-drafts.json', { drafts: [] });
+    const byDirectionId = new Map();
+    safeArray(draftData.drafts).forEach(draft => {
+        if (!draft || normalizeText(draft.status) !== 'accepted' || !draft.acceptedDirectionId) return;
+        byDirectionId.set(draft.acceptedDirectionId, draft);
+    });
+    return byDirectionId;
+}
+
 function buildWritebackCandidates(store) {
     const directionData = store.read('directions.json', { directions: [] });
     const state = readWritebackState(store);
     const syncedIds = new Set(safeArray(state.records).map(record => record.directionId).filter(Boolean));
+    const acceptedDrafts = buildAcceptedDraftMap(store);
     return safeArray(directionData.directions)
         .filter(isAcceptedLocalDirection)
         .filter(direction => !syncedIds.has(direction.id))
-        .map(direction => ({
-            id: direction.id,
-            path: direction.path,
-            name: direction.name,
-            description: direction.description || '',
-            source: direction.source || '',
-            rowValues: buildRowValues(direction),
-            direction
-        }));
+        .map(direction => {
+            const draft = acceptedDrafts.get(direction.id);
+            const priorityWriteback = Boolean(draft) && directionHasCompleteVisualDna(direction);
+            return {
+                id: direction.id,
+                path: direction.path,
+                name: direction.name,
+                description: direction.description || '',
+                source: direction.source || '',
+                sourceDraftId: direction.sourceDraftId || (draft && draft.id) || '',
+                priorityWriteback,
+                priorityReason: priorityWriteback ? 'accepted_draft_complete_visual_dna' : '',
+                rowValues: buildRowValues(direction),
+                direction
+            };
+        })
+        .sort((a, b) => Number(b.priorityWriteback === true) - Number(a.priorityWriteback === true));
 }
 
 function findInsertAfterRow(remoteDirections = [], rowValues = []) {
@@ -1012,12 +1046,16 @@ function createFeishuDirectionSyncService(options = {}) {
                 success: true,
                 message: candidates.length ? `有 ${candidates.length} 条已采纳方向待同步飞书` : '暂无待同步飞书的新方向',
                 pendingCount: candidates.length,
+                priorityCount: candidates.filter(candidate => candidate.priorityWriteback === true).length,
                 candidates: candidates.map(candidate => ({
                     id: candidate.id,
                     path: candidate.path,
                     name: candidate.name,
                     description: candidate.description,
-                    source: candidate.source
+                    source: candidate.source,
+                    sourceDraftId: candidate.sourceDraftId,
+                    priorityWriteback: candidate.priorityWriteback,
+                    priorityReason: candidate.priorityReason
                 })),
                 placements,
                 warnings
@@ -1058,6 +1096,9 @@ function createFeishuDirectionSyncService(options = {}) {
                     directionId: candidate.id,
                     path: candidate.path,
                     name: candidate.name,
+                    sourceDraftId: candidate.sourceDraftId,
+                    priorityWriteback: candidate.priorityWriteback,
+                    priorityReason: candidate.priorityReason,
                     spreadsheetToken: spreadsheet.spreadsheetToken,
                     sheetId: spreadsheet.sheetId,
                     rowNumber,

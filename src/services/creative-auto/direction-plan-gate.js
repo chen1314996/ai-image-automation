@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const { normalizeDirectionTagsForRecord } = require('../direction-tags');
 
 const DEFAULT_DIRECTION_PLAN_CONFIG = {
     candidateExtensionsPerSource: 8,
@@ -9,7 +10,8 @@ const DEFAULT_DIRECTION_PLAN_CONFIG = {
     maxRepairAttempts: 2,
     diversityMode: 'balanced',
     historyScope: 'recent30',
-    candidateMultiplier: 2
+    candidateMultiplier: 2,
+    tagStrategy: 'stable'
 };
 
 const ABSTRACT_TERMS = [
@@ -76,6 +78,14 @@ const VISUAL_TERMS = [
     '金属',
     '旧布料'
 ];
+
+const DNA_CORE_FIELDS = ['atmosphere', 'camera', 'event', 'visualHook'];
+const DNA_FIELD_ALIASES = {
+    atmosphere: ['atmosphere', 'mood', 'tone', 'emotion', '氛围', '情绪'],
+    camera: ['camera', 'perspective', 'view', 'angle', 'shot', '视角', '镜头'],
+    event: ['event', 'narrative', 'action', 'story', 'moment', '事件', '叙事', '动作'],
+    visualHook: ['visualHook', 'hook', 'pictureHook', 'sellingPoint', '钩子', '视觉钩子']
+};
 
 function safeArray(value) {
     return Array.isArray(value) ? value : [];
@@ -173,6 +183,11 @@ function buildDirectionPlanConfig(payload = {}, config = {}) {
             ['recent10', 'recent30', 'all'],
             DEFAULT_DIRECTION_PLAN_CONFIG.historyScope
         ),
+        tagStrategy: normalizeChoice(
+            firstDefined(fromPayload.tagStrategy, fromPayload.expansionStrategy, fromConfig.tagStrategy, fromConfig.expansionStrategy),
+            ['stable', 'explore'],
+            DEFAULT_DIRECTION_PLAN_CONFIG.tagStrategy
+        ),
         candidateMultiplier
     };
 }
@@ -193,6 +208,314 @@ function hasConcreteEvent(text) {
 
 function hasVisualHook(text) {
     return countHits(text, VISUAL_TERMS) >= 2 || hasConcreteEvent(text);
+}
+
+function valueList(value) {
+    if (Array.isArray(value)) return value.flatMap(item => valueList(item));
+    if (value && typeof value === 'object') {
+        return [value.value, value.label, value.name, value.text].flatMap(item => valueList(item));
+    }
+    return String(value || '')
+        .split(/[、，；;,|/]+/)
+        .map(normalizeText)
+        .filter(Boolean);
+}
+
+function uniqueDnaValues(values = []) {
+    const seen = new Set();
+    const result = [];
+    valueList(values).forEach(value => {
+        const key = normalizeKey(value);
+        if (!key || seen.has(key)) return;
+        seen.add(key);
+        result.push(value);
+    });
+    return result;
+}
+
+function getAliasValue(object = {}, aliases = []) {
+    if (!object || typeof object !== 'object') return [];
+    return aliases.flatMap(alias => valueList(object[alias]));
+}
+
+function inferDnaFromText(record = {}) {
+    const joined = normalizeText([
+        record.name,
+        record.extensionName,
+        record.newDirectionName,
+        record.direction,
+        record.description,
+        record.visualHook,
+        record.productionAdvice,
+        record.dedupeReason
+    ].filter(Boolean).join(' '));
+    const dna = {
+        atmosphere: [],
+        camera: [],
+        event: [],
+        visualHook: []
+    };
+    if (!joined) return dna;
+
+    const atmosphereTerms = [
+        ['紧张危机', ['紧张', '危机', '抢', '争夺', '撤离']],
+        ['史诗壮阔', ['史诗', '壮阔', '巨型', '地标', '宏大']],
+        ['温暖希望', ['温暖', '希望', '暖光', '救援', '灯光']],
+        ['神秘未知', ['神秘', '未知', '发现', '入口', '遗迹']],
+        ['荒凉孤独', ['荒凉', '孤独', '废墟', '空城']]
+    ];
+    const cameraTerms = [
+        ['第一人称', ['第一人称', '手持', '主观']],
+        ['俯瞰', ['俯瞰', '鸟瞰', '高处']],
+        ['平视', ['平视', '正面']],
+        ['低机位', ['低机位', '仰视']],
+        ['近景', ['近景', '特写']]
+    ];
+    const eventTerms = [
+        ['撤离', ['撤离', '逃离']],
+        ['发现', ['发现', '初次发现']],
+        ['求救', ['求救', '救援', '抢救']],
+        ['争夺', ['争夺', '拉扯']],
+        ['修复', ['修复', '重启']]
+    ];
+
+    atmosphereTerms.forEach(([value, terms]) => {
+        if (terms.some(term => joined.includes(term))) dna.atmosphere.push(value);
+    });
+    cameraTerms.forEach(([value, terms]) => {
+        if (terms.some(term => joined.includes(term))) dna.camera.push(value);
+    });
+    eventTerms.forEach(([value, terms]) => {
+        if (terms.some(term => joined.includes(term))) dna.event.push(value);
+    });
+    if (hasVisualHook(joined)) {
+        dna.visualHook.push(normalizeText(record.visualHook || record.hook || record.pictureHook || record.description).slice(0, 80));
+    }
+    return dna;
+}
+
+function extensionVisualDna(extension = {}) {
+    const visualDna = extension.visualDna && typeof extension.visualDna === 'object' ? extension.visualDna : {};
+    const dimensions = extension.dimensions && typeof extension.dimensions === 'object' ? extension.dimensions : {};
+    const inferred = inferDnaFromText(extension);
+    return {
+        atmosphere: uniqueDnaValues(
+            getAliasValue(visualDna, DNA_FIELD_ALIASES.atmosphere)
+                .concat(getAliasValue(dimensions, DNA_FIELD_ALIASES.atmosphere))
+                .concat(inferred.atmosphere)
+        ),
+        camera: uniqueDnaValues(
+            getAliasValue(visualDna, DNA_FIELD_ALIASES.camera)
+                .concat(getAliasValue(dimensions, DNA_FIELD_ALIASES.camera))
+                .concat(inferred.camera)
+        ),
+        event: uniqueDnaValues(
+            getAliasValue(visualDna, DNA_FIELD_ALIASES.event)
+                .concat(getAliasValue(dimensions, DNA_FIELD_ALIASES.event))
+                .concat(inferred.event)
+        ),
+        visualHook: uniqueDnaValues(
+            getAliasValue(visualDna, DNA_FIELD_ALIASES.visualHook)
+                .concat(getAliasValue(dimensions, DNA_FIELD_ALIASES.visualHook))
+                .concat(valueList(extension.visualHook || extension.hook || extension.pictureHook))
+                .concat(inferred.visualHook)
+        )
+    };
+}
+
+function dnaComboKey(dna = {}) {
+    return DNA_CORE_FIELDS
+        .map(key => normalizeKey(safeArray(dna[key])[0] || ''))
+        .filter(Boolean)
+        .join('|');
+}
+
+function preferenceValues(preference = {}, key) {
+    const source = preference[key]
+        || (preference.visualDna && preference.visualDna[key])
+        || (preference.topValues && preference.topValues[key])
+        || (preference.highAdoption && preference.highAdoption[key])
+        || [];
+    return safeArray(source).flatMap(item => valueList(item && typeof item === 'object' ? (item.value || item.label || item.name) : item));
+}
+
+function preferenceRisks(preference = {}) {
+    return safeArray(preference.risks || preference.highRisks || preference.riskTerms || preference.avoid)
+        .flatMap(item => valueList(item && typeof item === 'object' ? (item.value || item.label || item.name || item.text) : item));
+}
+
+function textMatchesValue(text, value) {
+    const left = normalizeKey(text);
+    const right = normalizeKey(value);
+    if (!left || !right) return false;
+    return left.includes(right) || right.includes(left) || similarity(left, right) >= 0.45;
+}
+
+function countPreferenceMatches(dna = {}, preference = {}) {
+    return DNA_CORE_FIELDS.reduce((count, key) => {
+        const values = safeArray(dna[key]);
+        const preferred = preferenceValues(preference, key).slice(0, 6);
+        return count + (values.some(value => preferred.some(target => textMatchesValue(value, target))) ? 1 : 0);
+    }, 0);
+}
+
+function buildHistoricalDnaCombos(items = []) {
+    const combos = new Set();
+    safeArray(items).forEach(item => {
+        const key = dnaComboKey(extensionVisualDna(item));
+        if (key) combos.add(key);
+    });
+    return combos;
+}
+
+function buildDnaAssessment(extension = {}, context = {}) {
+    const dna = extensionVisualDna(extension);
+    const comboKey = dnaComboKey(dna);
+    const completeness = DNA_CORE_FIELDS.filter(key => safeArray(dna[key]).length > 0).length;
+    const preferenceMatchCount = countPreferenceMatches(dna, context.visualDnaPreference || {});
+    const historyCombos = context.historyDnaCombos || new Set();
+    const seenCombos = context.seenDnaCombos || new Set();
+    const riskTerms = preferenceRisks(context.visualDnaPreference || {});
+    const joined = [
+        extension.name,
+        extension.description,
+        extension.visualHook,
+        extension.dedupeReason,
+        extension.riskNote,
+        extension.productionAdvice
+    ].map(normalizeText).filter(Boolean).join(' ');
+    const riskHits = riskTerms
+        .filter(term => normalizeKey(term).length >= 2)
+        .filter(term => textMatchesValue(joined, term))
+        .slice(0, 6);
+    return {
+        dna,
+        comboKey,
+        completeness,
+        completenessRatio: Number((completeness / DNA_CORE_FIELDS.length).toFixed(2)),
+        preferenceMatchCount,
+        isDiverseInCurrentPool: Boolean(comboKey && !seenCombos.has(comboKey)),
+        isHistoricalRepeat: Boolean(comboKey && historyCombos.has(comboKey)),
+        riskHits
+    };
+}
+
+function preferenceTagValues(preference = {}, keys = []) {
+    return keys.flatMap(key => valueList(preference[key]));
+}
+
+function preferenceTopTagValues(preference = {}) {
+    return preferenceTagValues(preference, [
+        'highTags',
+        'preferredTags',
+        'directionTags',
+        'tags',
+        'highPerformingTags'
+    ]).concat(valueList(preference.topTags));
+}
+
+function preferenceGapTagValues(preference = {}) {
+    return preferenceTagValues(preference, [
+        'gapTags',
+        'missingTags',
+        'underusedTags'
+    ]);
+}
+
+function preferenceRiskTagValues(preference = {}) {
+    return preferenceTagValues(preference, [
+        'riskTags',
+        'avoidTags',
+        'highRiskTags',
+        'risks'
+    ]).concat(valueList(preference.topRiskTags));
+}
+
+function preferenceRepeatedTagCombos(preference = {}) {
+    return preferenceTagValues(preference, [
+        'repeatedCombos',
+        'repeatedTagCombos',
+        'duplicateCombos'
+    ]);
+}
+
+function tagComboKey(tags = []) {
+    const values = Array.isArray(tags)
+        ? tags
+        : String(tags || '').split(/[+|/、，,]+/);
+    return values
+        .slice(0, 3)
+        .map(normalizeKey)
+        .filter(Boolean)
+        .join('|');
+}
+
+function buildHistoricalTagCombos(items = []) {
+    const combos = new Set();
+    safeArray(items).forEach(item => {
+        const tags = normalizeDirectionTagsForRecord(item, { limit: 5 }).tags;
+        const key = tagComboKey(tags);
+        if (key) combos.add(key);
+    });
+    return combos;
+}
+
+function buildTagAssessment(extension = {}, context = {}) {
+    const normalized = normalizeDirectionTagsForRecord(extension, { limit: 8, riskLimit: 6 });
+    const tags = normalized.tags;
+    const riskTags = normalized.riskTags;
+    const preference = context.directionTagPreference || {};
+    const highTags = preferenceTopTagValues(preference).slice(0, 12);
+    const gapTags = preferenceGapTagValues(preference).slice(0, 12);
+    const riskPreferences = preferenceRiskTagValues(preference).slice(0, 12);
+    const repeatedCombos = new Set(preferenceRepeatedTagCombos(preference).map(tagComboKey).filter(Boolean));
+    const comboKey = tagComboKey(tags);
+    const joined = [
+        extension.name,
+        extension.description,
+        extension.visualHook,
+        extension.dedupeReason,
+        extension.riskNote,
+        extension.productionAdvice,
+        safeArray(extension.avoidRules).join(' ')
+    ].map(normalizeText).filter(Boolean).join(' ');
+    const matchValues = (values = []) => tags
+        .filter(tag => values.some(value => textMatchesValue(tag, value)));
+    const riskHits = riskTags
+        .concat(riskPreferences
+            .filter(term => normalizeKey(term).length >= 2)
+            .filter(term => riskTags.some(tag => textMatchesValue(tag, term)) || textMatchesValue(joined, term)))
+        .filter(Boolean);
+    const seenCombos = context.seenTagCombos || new Set();
+    const historyCombos = context.historyTagCombos || new Set();
+    return {
+        tags,
+        riskTags,
+        comboKey,
+        completeness: tags.length,
+        completenessRatio: Number((Math.min(tags.length, 5) / 5).toFixed(2)),
+        highTagMatches: Array.from(new Set(matchValues(highTags))).slice(0, 6),
+        gapTagMatches: Array.from(new Set(matchValues(gapTags))).slice(0, 6),
+        isDiverseInCurrentPool: Boolean(comboKey && !seenCombos.has(comboKey)),
+        isHistoricalRepeat: Boolean(comboKey && historyCombos.has(comboKey)),
+        isRepeatedPreferredCombo: Boolean(comboKey && repeatedCombos.has(comboKey)),
+        riskHits: Array.from(new Set(riskHits)).slice(0, 6)
+    };
+}
+
+function directionTagsForOutput(item = {}) {
+    const normalized = normalizeDirectionTagsForRecord(item);
+    const tags = safeArray(item.directionTags).length ? safeArray(item.directionTags) : normalized.tags;
+    return {
+        tags,
+        directionTags: tags,
+        riskTags: safeArray(item.riskTags).length ? safeArray(item.riskTags) : normalized.riskTags
+    };
+}
+
+function hasMeaningfulDnaObject(value) {
+    if (!value || typeof value !== 'object') return false;
+    return Object.values(value).some(item => valueList(item).some(text => normalizeKey(text)));
 }
 
 function hashPlanText(text) {
@@ -365,11 +688,110 @@ function scoreDirectionExtension(extension = {}, context = {}) {
         reasons.push('history similar visual mechanism');
     }
 
+    const dnaAssessment = buildDnaAssessment(extension, context);
+    const hasExplicitDna = Boolean(
+        context.visualDnaPreference
+        || hasMeaningfulDnaObject(extension.visualDna)
+        || hasMeaningfulDnaObject(extension.dimensions)
+    );
+    const dnaCompletenessScore = hasExplicitDna && dnaAssessment.completeness >= 4
+        ? 4
+        : (hasExplicitDna && dnaAssessment.completeness >= 2 ? 2 : 0);
+    if (hasExplicitDna) {
+        score += dnaCompletenessScore;
+        if (dnaAssessment.completeness >= 4) {
+            reasons.push('DNA完整度高');
+        } else if (dnaAssessment.completeness >= 2) {
+            reasons.push('DNA基本可用');
+        } else {
+            reasons.push('DNA维度缺失');
+        }
+
+        if (dnaAssessment.isDiverseInCurrentPool) {
+            score += 2;
+            reasons.push('DNA组合有差异');
+        } else if (dnaAssessment.comboKey) {
+            score -= Math.round(6 * multiplier);
+            reasons.push('本轮DNA组合重复');
+        }
+
+        if (dnaAssessment.preferenceMatchCount > 0) {
+            score += Math.min(12, dnaAssessment.preferenceMatchCount * 4);
+            reasons.push('匹配高采纳DNA');
+        }
+
+        if (dnaAssessment.isHistoricalRepeat) {
+            score -= Math.round(12 * multiplier);
+            reasons.push('历史DNA组合重复');
+        }
+
+        if (dnaAssessment.riskHits.length) {
+            score -= Math.round(10 * multiplier);
+            reasons.push('命中风险DNA');
+        }
+    }
+
+    const tagAssessment = buildTagAssessment(extension, context);
+    const hasTagSignal = Boolean(
+        context.directionTagPreference
+        || safeArray(extension.directionTags).length
+        || safeArray(extension.mainTags).length
+        || safeArray(extension.extraTags).length
+        || tagAssessment.tags.length
+    );
+    const tagCompletenessScore = tagAssessment.completeness >= 5
+        ? 5
+        : (tagAssessment.completeness >= 3 ? 3 : (tagAssessment.completeness >= 1 ? 1 : -3));
+    const tagNoveltyScore = tagAssessment.comboKey
+        ? (tagAssessment.isDiverseInCurrentPool ? 2 : -Math.round(4 * multiplier))
+        : 0;
+    const highMatchScore = Math.min(8, tagAssessment.highTagMatches.length * (context.tagStrategy === 'explore' ? 1 : 2));
+    const gapMatchScore = Math.min(6, tagAssessment.gapTagMatches.length * (context.tagStrategy === 'explore' ? 3 : 1));
+    const repeatPenalty = tagAssessment.isHistoricalRepeat || tagAssessment.isRepeatedPreferredCombo
+        ? -Math.round(10 * multiplier)
+        : 0;
+    const tagRiskPenalty = tagAssessment.riskHits.length
+        ? -Math.round((8 + Math.min(8, tagAssessment.riskHits.length * 2)) * multiplier)
+        : 0;
+    if (hasTagSignal) {
+        score += tagCompletenessScore + tagNoveltyScore + highMatchScore + gapMatchScore + repeatPenalty + tagRiskPenalty;
+        if (tagAssessment.completeness >= 3) {
+            reasons.push('direction tags complete');
+        } else if (tagAssessment.completeness > 0) {
+            reasons.push('direction tags sparse');
+        } else {
+            reasons.push('direction tags missing');
+        }
+        if (tagAssessment.highTagMatches.length) reasons.push('matches high-performing tags');
+        if (tagAssessment.gapTagMatches.length) reasons.push('covers gap tags');
+        if (tagNoveltyScore > 0) reasons.push('tag combo is new in current pool');
+        if (tagNoveltyScore < 0) reasons.push('tag combo repeats in current pool');
+        if (repeatPenalty < 0) reasons.push('tag combo repeats in history');
+        if (tagRiskPenalty < 0) reasons.push('hits risk tags');
+    }
+
     return {
         score: Math.max(0, Math.min(100, score)),
         reasons,
         summary: compactReason(reasons),
-        historySimilarity
+        historySimilarity,
+        dnaAssessment,
+        dnaScore: {
+            completeness: dnaCompletenessScore,
+            diversity: hasExplicitDna ? (dnaAssessment.isDiverseInCurrentPool ? 2 : (dnaAssessment.comboKey ? -6 : 0)) : 0,
+            preferenceMatch: hasExplicitDna ? Math.min(12, dnaAssessment.preferenceMatchCount * 4) : 0,
+            historicalRepeatPenalty: hasExplicitDna && dnaAssessment.isHistoricalRepeat ? -12 : 0,
+            riskPenalty: hasExplicitDna && dnaAssessment.riskHits.length ? -10 : 0
+        },
+        tagAssessment,
+        tagScore: {
+            completeness: hasTagSignal ? tagCompletenessScore : 0,
+            novelty: hasTagSignal ? tagNoveltyScore : 0,
+            highPerformanceMatch: hasTagSignal ? highMatchScore : 0,
+            gapCoverage: hasTagSignal ? gapMatchScore : 0,
+            repeatPenalty: hasTagSignal ? repeatPenalty : 0,
+            riskPenalty: hasTagSignal ? tagRiskPenalty : 0
+        }
     };
 }
 
@@ -384,10 +806,27 @@ function extensionGroupKey(item = {}) {
     ].map(normalizeKey).filter(Boolean).join('::') || `extension::${hashPlanText(item.prompt || JSON.stringify(item))}`;
 }
 
+function rawTagList(values = [], limit = 8) {
+    const seen = new Set();
+    const output = [];
+    safeArray(values).flat().forEach(value => {
+        const text = normalizeText(value);
+        const key = normalizeKey(text);
+        if (!text || !key || seen.has(key)) return;
+        seen.add(key);
+        output.push(text);
+    });
+    return output.slice(0, limit);
+}
+
 function normalizeExtensionFromPrompts(items = [], selected = {}) {
     const first = items[0] || {};
     const direction = selected && selected.direction ? selected.direction : {};
     const name = normalizeText(first.extensionName || first.newDirectionName || first.direction || first.contentTitle);
+    const directionTags = rawTagList(items.flatMap(item => safeArray(item.directionTags)), 8);
+    const mainTags = rawTagList(items.flatMap(item => safeArray(item.mainTags)), 5);
+    const extraTags = rawTagList(items.flatMap(item => safeArray(item.extraTags)), 8);
+    const riskTags = rawTagList(items.flatMap(item => safeArray(item.riskTags)), 6);
     return {
         sourceDirectionId: normalizeText(first.sourceDirectionId || direction.id),
         sourceDirectionPath: normalizeText(first.sourceDirectionPath || direction.path),
@@ -399,6 +838,12 @@ function normalizeExtensionFromPrompts(items = [], selected = {}) {
         dedupeReason: normalizeText(first.dedupeReason || first.dedupReason || first.reason),
         riskNote: normalizeText(first.riskNote || first.qualityRisk || first.duplicateRisk),
         productionAdvice: normalizeText(first.productionAdvice || first.sourceStrategy),
+        directionTags,
+        mainTags,
+        extraTags,
+        riskTags,
+        dimensions: first.dimensions || {},
+        visualDna: first.visualDna || {},
         prompts: items
     };
 }
@@ -469,22 +914,47 @@ function buildHistoryItems(historyUsage = null, payload = {}, config = {}) {
         .filter(item => item && typeof item === 'object');
 }
 
-function selectExtensionsCore({ extensions, prompts = [], payload = {}, config = {}, historyUsage = null }) {
+function selectExtensionsCore({ extensions, prompts = [], selected = {}, payload = {}, config = {}, historyUsage = null }) {
     const planConfig = buildDirectionPlanConfig(payload, config);
     const targetExtensionCount = planConfig.selectedExtensionsPerSource;
     const targetCandidateCount = planConfig.candidateExtensionsPerSource;
     const seenNames = new Set();
     const historyNames = buildHistoryNameSet(historyUsage);
     const historyItems = buildHistoryItems(historyUsage, payload, config);
+    const visualDnaPreference = (payload.directionPlanning && payload.directionPlanning.visualDnaPreference)
+        || (config.directionPlanning && config.directionPlanning.visualDnaPreference)
+        || selected.visualDnaPreferenceContext
+        || (selected.directionSystemContext && selected.directionSystemContext.visualDnaPreferenceContext)
+        || null;
+    const directionTagPreference = (payload.directionPlanning && payload.directionPlanning.directionTagPreference)
+        || (config.directionPlanning && config.directionPlanning.directionTagPreference)
+        || selected.directionTagPreferenceContext
+        || (selected.directionSystemContext && selected.directionSystemContext.directionTagPreferenceContext)
+        || null;
+    const historyDnaCombos = buildHistoricalDnaCombos(historyItems);
+    const historyTagCombos = buildHistoricalTagCombos(historyItems);
+    const seenDnaCombos = new Set();
+    const seenTagCombos = new Set();
     const scored = extensions.map((extension, index) => {
         const score = scoreDirectionExtension(extension, {
             seenNames,
             historyNames,
             historyItems,
-            diversityMode: planConfig.diversityMode
+            diversityMode: planConfig.diversityMode,
+            visualDnaPreference,
+            historyDnaCombos,
+            seenDnaCombos,
+            directionTagPreference,
+            historyTagCombos,
+            seenTagCombos,
+            tagStrategy: planConfig.tagStrategy
         });
         const nameKey = normalizeKey(extension.name);
         if (nameKey) seenNames.add(nameKey);
+        const comboKey = score.dnaAssessment && score.dnaAssessment.comboKey;
+        if (comboKey) seenDnaCombos.add(comboKey);
+        const tagCombo = score.tagAssessment && score.tagAssessment.comboKey;
+        if (tagCombo) seenTagCombos.add(tagCombo);
         return {
             ...extension,
             index: index + 1,
@@ -492,6 +962,10 @@ function selectExtensionsCore({ extensions, prompts = [], payload = {}, config =
             scoreReasons: score.reasons,
             scoreSummary: score.summary,
             historySimilarity: score.historySimilarity,
+            dnaAssessment: score.dnaAssessment,
+            dnaScore: score.dnaScore,
+            tagAssessment: score.tagAssessment,
+            tagScore: score.tagScore,
             promptCount: safeArray(extension.prompts).length
         };
     });
@@ -514,13 +988,17 @@ function selectExtensionsCore({ extensions, prompts = [], payload = {}, config =
     const rejectedExtensions = scored
         .filter(item => !selectedKeys.has(`${item.index}:${normalizeKey(item.name)}`))
         .map(item => ({
+            ...directionTagsForOutput(item),
             name: item.name,
             extensionKey: item.extensionKey,
             score: item.score,
-            reason: item.scoreSummary
+            reason: item.scoreSummary,
+            tagAssessment: item.tagAssessment,
+            tagScore: item.tagScore
         }));
     const selectedPrompts = [];
     selectedExtensions.forEach(extension => {
+        const directionTagSummary = directionTagsForOutput(extension);
         safeArray(extension.prompts)
             .slice(0, planConfig.promptsPerExtension)
             .forEach(item => {
@@ -534,7 +1012,13 @@ function selectExtensionsCore({ extensions, prompts = [], payload = {}, config =
                     visualHook: extension.visualHook,
                     dedupeReason: extension.dedupeReason,
                     riskNote: extension.riskNote,
-                    productionAdvice: extension.productionAdvice
+                    productionAdvice: extension.productionAdvice,
+                    directionTags: directionTagSummary.tags,
+                    riskTags: directionTagSummary.riskTags,
+                    mainTags: safeArray(extension.mainTags),
+                    extraTags: safeArray(extension.extraTags),
+                    dimensions: extension.dimensions || item.dimensions || {},
+                    visualDna: extension.dnaAssessment && extension.dnaAssessment.dna
                 });
             });
     });
@@ -563,12 +1047,19 @@ function selectExtensionsCore({ extensions, prompts = [], payload = {}, config =
             needsRepair: !candidatePoolComplete || !hasEnoughQualifiedExtensions,
             fallbackLowScoreUsed,
             selectedExtensions: selectedExtensions.map(item => ({
+                ...directionTagsForOutput(item),
                 name: item.name,
                 extensionKey: item.extensionKey,
                 extensionType: item.extensionType,
                 score: item.score,
                 scoreSummary: item.scoreSummary,
                 historySimilarity: item.historySimilarity,
+                dnaAssessment: item.dnaAssessment,
+                dnaScore: item.dnaScore,
+                tagAssessment: item.tagAssessment,
+                tagScore: item.tagScore,
+                mainTags: safeArray(item.mainTags),
+                extraTags: safeArray(item.extraTags),
                 visualHook: item.visualHook,
                 dedupeReason: item.dedupeReason,
                 riskNote: item.riskNote,
@@ -578,12 +1069,17 @@ function selectExtensionsCore({ extensions, prompts = [], payload = {}, config =
             lowScoreSelectedExtensions: selectedExtensions
                 .filter(item => item.score < planConfig.minScore)
                 .map(item => ({
+                    ...directionTagsForOutput(item),
                     name: item.name,
                     extensionKey: item.extensionKey,
                     score: item.score,
-                    reason: item.scoreSummary
+                    reason: item.scoreSummary,
+                    tagAssessment: item.tagAssessment,
+                    tagScore: item.tagScore
                 })),
-            rejectedExtensions,
+            rejectedExtensions: rejectedExtensions.map(item => ({
+                ...item
+            })),
             summary: `方向规划目标候选 ${targetCandidateCount} 个，实际候选 ${scored.length} 个，70分以上 ${qualifiedExtensionCount} 个，入选 ${selectedExtensions.length} 个，输出 ${selectedPrompts.length} 条 prompt${fallbackLowScoreUsed ? '，低分兜底' : ''}`
         }
     };
@@ -593,6 +1089,7 @@ function selectDirectionExtensions({ prompts, selected, payload = {}, config = {
     return selectExtensionsCore({
         extensions: buildExtensionsFromPrompts(prompts, selected),
         prompts,
+        selected,
         payload,
         config,
         historyUsage
@@ -603,6 +1100,7 @@ function selectDirectionPlanExtensions({ directionPlans, selected, payload = {},
     return selectExtensionsCore({
         extensions: buildExtensionsFromDirectionPlans(directionPlans, selected),
         prompts: [],
+        selected,
         payload,
         config,
         historyUsage

@@ -833,6 +833,22 @@ function normalizeDimensionObject(value) {
     return normalized;
 }
 
+function normalizeTagArray(value, limit = 8) {
+    const source = Array.isArray(value)
+        ? value
+        : (value ? String(value).split(/[、，,;；|/\n]+/) : []);
+    const seen = new Set();
+    const output = [];
+    source.forEach(item => {
+        const text = normalizeCellText(item);
+        const key = text.toLowerCase().replace(/\s+/g, '');
+        if (!text || !key || seen.has(key)) return;
+        seen.add(key);
+        output.push(text);
+    });
+    return output.slice(0, limit);
+}
+
 function normalizeStructuredRowResult(result, sourceRow) {
     const fallbackReference = `第${sourceRow.originalRowNumber}行｜${sourceRow.directionName}`;
     const referenceAnalysis = result && typeof result.referenceAnalysis === 'object' ? result.referenceAnalysis : {};
@@ -1267,6 +1283,10 @@ function normalizeDirectionPlanExtension(extension, index = 0, plan = {}) {
         riskNote: normalizeCellText(source.riskNote || source.risk || source.qualityRisk || source['风险/注意'] || source['风险备注']),
         productionAdvice: normalizeCellText(source.productionAdvice || source.advice || source.makingAdvice || source['制作建议']),
         dedupeReason: normalizeCellText(source.dedupeReason || source.dedupReason || source.reason || source['排重说明']),
+        directionTags: normalizeTagArray(source.directionTags || source.tags || source.mainTags, 8),
+        mainTags: normalizeTagArray(source.mainTags, 5),
+        extraTags: normalizeTagArray(source.extraTags, 8),
+        riskTags: normalizeTagArray(source.riskTags, 6),
         dimensions: normalizeDimensionObject(source.dimensions || {}),
         promptPair
     };
@@ -1442,6 +1462,10 @@ function flattenDirectionPlansToPromptItems(directionPlans = []) {
                     extensionType: extension.extensionType,
                     extensionName: directionName,
                     extensionDescription: extension.description,
+                    directionTags: Array.isArray(extension.directionTags) ? extension.directionTags : [],
+                    mainTags: Array.isArray(extension.mainTags) ? extension.mainTags : [],
+                    extraTags: Array.isArray(extension.extraTags) ? extension.extraTags : [],
+                    riskTags: Array.isArray(extension.riskTags) ? extension.riskTags : [],
                     visualHook: extension.visualHook,
                     priority: extension.priority,
                     riskNote: extension.riskNote,

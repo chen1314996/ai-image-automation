@@ -38,17 +38,19 @@ module.exports = function createGenerationWaiterMethods(deps) {
             ? Math.max(baseMaxWaitTime, 360000)
             : baseMaxWaitTime;
         const partialOutputSettleTime = Math.max(15000, Math.min(120000, Number(options.partialOutputSettleTime) || 30000));
-        const checkInterval = 3000;
+        const checkInterval = Math.max(20, Number(options.checkIntervalMs) || 3000);
         let waited = 0;
         let sawBusyState = false;
         let readyConfirmations = 0;
         let lastReadySignature = '';
         let firstThreeSlotsSeenAt = null;
         let lastFourthSlotScanAt = 0;
+        let lastOutcome = null;
         const beforeKeys = Array.isArray(beforeImageKeys) ? beforeImageKeys : [];
         const expectedOutputCount = LEGIL_OUTPUT_QUANTITIES.includes(Number(options.expectedOutputCount))
             ? Number(options.expectedOutputCount)
             : 1;
+        this.lastGenerationOutcome = null;
 
         logger.info('等待图片生成中...');
 
@@ -326,6 +328,23 @@ module.exports = function createGenerationWaiterMethods(deps) {
             }
             state.failedImageCount = failedOutputSlots.length;
             state.finishedSlotCount = Math.min(expectedOutputCount, state.newImageCount + state.failedImageCount);
+            const failureTexts = Array.from(new Set(failedOutputSlots
+                .map(item => String(item.text || '').replace(/\s+/g, ' ').trim())
+                .filter(Boolean)));
+            lastOutcome = {
+                completed: false,
+                timedOut: false,
+                expectedOutputCount,
+                validCount: state.newImageCount,
+                failedSlotCount: state.failedImageCount,
+                finishedSlotCount: state.finishedSlotCount,
+                failureTexts,
+                imageKeys: Array.isArray(state.newImageKeys) ? [...state.newImageKeys] : [],
+                allFailed: state.failedImageCount >= expectedOutputCount && state.newImageCount === 0,
+                partial: state.newImageCount > 0 && state.newImageCount < expectedOutputCount,
+                waitedMs: waited
+            };
+            this.lastGenerationOutcome = lastOutcome;
             if (state.busy) {
                 sawBusyState = true;
             }
@@ -334,12 +353,14 @@ module.exports = function createGenerationWaiterMethods(deps) {
             const stillGeneratingCurrentTask = state.generateButtonBusy === true;
             const hasPartialOutputs = state.newImageCount > 0 && state.finishedSlotCount < expectedOutputCount;
             const pageLooksIdle = state.generateButtonReady === true || (sawBusyState && state.busy === false);
+            const hasFinishedFailureSlots = hasExpectedOutputs && state.failedImageCount > 0;
             const canAcceptStablePartialOutputs = acceptStablePartialOutputs &&
                 hasPartialOutputs &&
                 pageLooksIdle &&
                 waited >= partialOutputSettleTime;
             const acceptingPartialOutputs = canAcceptStablePartialOutputs && !hasExpectedOutputs;
-            const canAcceptStableOutputs = (hasExpectedOutputs || canAcceptStablePartialOutputs) && !stillGeneratingCurrentTask;
+            const canAcceptStableOutputs = (hasExpectedOutputs && (!stillGeneratingCurrentTask || hasFinishedFailureSlots)) ||
+                (canAcceptStablePartialOutputs && !stillGeneratingCurrentTask);
 
             if (canAcceptStableOutputs) {
                 const signature = `${(state.newImageKeys || []).join('|')}|failed:${state.failedImageCount}`;
@@ -369,7 +390,15 @@ module.exports = function createGenerationWaiterMethods(deps) {
                         logger.info(`✅ 检测到 ${state.newImageCount} 张新生成图片，且生成状态已稳定结束`);
                     }
                     await interruptibleSleep(1000, options);
-                    return true;
+                    lastOutcome = {
+                        ...(lastOutcome || {}),
+                        completed: true,
+                        timedOut: false,
+                        allFailed: state.failedImageCount >= expectedOutputCount && state.newImageCount === 0,
+                        partial: state.newImageCount > 0 && state.newImageCount < expectedOutputCount
+                    };
+                    this.lastGenerationOutcome = lastOutcome;
+                    return lastOutcome;
                 }
             } else {
                 if ((state.newImageCount > 0 || state.failedImageCount > 0) && waited % 30000 === 0) {
@@ -389,6 +418,13 @@ module.exports = function createGenerationWaiterMethods(deps) {
         }
 
         logger.error('等待图片生成超时');
+        this.lastGenerationOutcome = {
+            ...(lastOutcome || {}),
+            completed: false,
+            timedOut: true,
+            expectedOutputCount,
+            waitedMs: waited
+        };
         return false;
     },
 

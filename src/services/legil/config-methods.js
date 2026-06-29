@@ -68,9 +68,13 @@ module.exports = function createConfigMethodsMethods(deps) {
     return {
     buildOutputFileName(promptIndex, options = {}) {
         const timestamp = formatDateTimeForFile();
-        const variantIndex = Number.isFinite(Number(options.variantIndex)) && Number(options.variantIndex) > 0
+        const variantIndexBase = Number.isFinite(Number(options.variantIndexBase)) && Number(options.variantIndexBase) > 0
+            ? Math.floor(Number(options.variantIndexBase))
+            : 0;
+        const localVariantIndex = Number.isFinite(Number(options.variantIndex)) && Number(options.variantIndex) > 0
             ? Math.floor(Number(options.variantIndex))
             : 1;
+        const variantIndex = variantIndexBase + localVariantIndex;
         const outputSequenceBase = Number(options.outputSequence);
         const outputSequence = Number.isFinite(outputSequenceBase) && outputSequenceBase > 0
             ? outputSequenceBase + variantIndex - 1

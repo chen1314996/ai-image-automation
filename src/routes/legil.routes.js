@@ -1523,6 +1523,8 @@ module.exports = function registerLegilRoutes(app, context) {
                     tagConfidence: enrichedPromptItem.tagConfidence || '',
                     message: meta.message || '',
                     error: meta.error || meta.message || '',
+                    errorCode: meta.errorCode || meta.code || '',
+                    generationOutcome: meta.generationOutcome || null,
                     failedAt: meta.failedAt || new Date().toISOString()
                 });
 
@@ -1753,6 +1755,8 @@ module.exports = function registerLegilRoutes(app, context) {
                                     displayIndex,
                                     outputNameBase,
                                     message: result.message || 'Legil generation failed',
+                                    errorCode: result.code || '',
+                                    generationOutcome: result.generationOutcome || null,
                                     failedAt
                                 }));
                                 automationState.legilTaskProgress = {
@@ -1845,6 +1849,8 @@ module.exports = function registerLegilRoutes(app, context) {
                                 outputNameBase,
                                 message: error.message,
                                 error: error.message,
+                                errorCode: error.code || '',
+                                generationOutcome: error.generationOutcome || null,
                                 failedAt: new Date().toISOString()
                             }));
                             automationState.legilTaskProgress = {

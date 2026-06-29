@@ -6,6 +6,7 @@
             assets: [],
             runs: [],
             memory: null,
+            visualDnaWorkbench: null,
             autoCurator: {
                 report: null,
                 goldenSet: null
@@ -183,7 +184,7 @@
         function knowledgeExtractPromptField(prompt, label, maxLength = 90) {
             const text = knowledgeText(prompt);
             if (!text) return '';
-            const labels = ['主题', '画风', '情绪氛围', '画面内容', '整体基调'];
+            const labels = ['主题', '画风', '情绪感', '画面内容', '整体基调'];
             const nextLabels = labels.filter(item => item !== label).join('|');
             const pattern = new RegExp(`${label}[：:]\\s*([\\s\\S]*?)(?=[，,；;。]\\s*(?:${nextLabels})[：:]|[。\\n]|$)`);
             const match = text.match(pattern);
@@ -191,10 +192,12 @@
         }
 
         function knowledgeAssetSummary(asset = {}) {
+            const coreText = knowledgeExtractPromptField(asset.prompt, '画面内容', 98)
+                || knowledgeShortText(asset.prompt || '未记录画面核心内容', 98);
             return {
                 direction: knowledgeShortText(asset.directionPath || asset.directionName || '未记录方向', 72),
                 theme: knowledgeShortText(asset.promptDirection || asset.directionName || knowledgeExtractPromptField(asset.prompt, '主题', 76) || asset.fileName || '未记录主题', 76),
-                core: knowledgeExtractPromptField(asset.prompt, '画面内容', 98) || knowledgeShortText(asset.prompt || '未记录画面核心内容', 98)
+                core: knowledgeDnaLocalizeText(coreText)
             };
         }
 
@@ -329,6 +332,121 @@
             item.appendChild(key);
             item.appendChild(val);
             container.appendChild(item);
+        }
+
+        function knowledgeFormatVisualDnaTop(items = [], dimension = '') {
+            const values = Array.isArray(items) ? items : [];
+            return values.length
+                ? values.slice(0, 3)
+                    .map(item => knowledgeDnaDisplayLabel(item.value || item.name || item, dimension))
+                    .filter(Boolean)
+                    .join('、')
+                : '--';
+        }
+
+        function knowledgeVisualDnaLine(data = {}) {
+            const summary = data.visualDnaSummary || data;
+            const dna = summary.visualDna || data.visualDna || {};
+            const tags = knowledgeDirectionTagValues({ ...data, visualDna: dna }, 5);
+            if (tags.length) return `方向标签：${tags.join('、')}`;
+            if (!Object.keys(dna || {}).length && summary.summaryText) return knowledgeDnaLocalizeText(summary.summaryText.replace(/^视觉\s*DNA\s*[:：]\s*/i, '方向标签：'));
+            return '方向标签：标签待分析';
+        }
+
+        function knowledgeCandidateText(candidate = {}) {
+            const tags = knowledgeDirectionTagValues(candidate, 8);
+            const risks = knowledgeDirectionRiskTags(candidate, 5);
+            return [
+                candidate.name,
+                knowledgeDnaLocalizeText(candidate.description),
+                candidate.score ? `分数：${candidate.score}` : '',
+                tags.length ? `方向标签：${tags.join('、')}` : '',
+                candidate.scoreSummary ? `值得保留：${knowledgeDnaLocalizeText(candidate.scoreSummary)}` : '',
+                candidate.dedupeReason ? `注意：${knowledgeDnaLocalizeText(candidate.dedupeReason)}` : '',
+                risks.length ? `风险标签：${risks.join('、')}` : '',
+                candidate.productionAdvice ? `投产建议：${knowledgeDnaLocalizeText(candidate.productionAdvice)}` : ''
+            ].filter(Boolean).join('\n');
+        }
+
+        async function knowledgeCopyCandidate(candidate = {}) {
+            const text = knowledgeCandidateText(candidate);
+            if (!text) return;
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                await navigator.clipboard.writeText(text);
+            } else {
+                const textarea = document.createElement('textarea');
+                textarea.value = text;
+                textarea.style.position = 'fixed';
+                textarea.style.left = '-9999px';
+                document.body.appendChild(textarea);
+                textarea.focus();
+                textarea.select();
+                document.execCommand('copy');
+                textarea.remove();
+            }
+            if (typeof showToast === 'function') showToast('候选方向已复制', 'success');
+        }
+
+        function renderKnowledgeCandidateCard(candidate = {}) {
+            const card = knowledgeMakeEl('div', `direction-candidate-card is-${candidate.status || 'selected'}`);
+            const top = knowledgeMakeEl('div', 'direction-candidate-top');
+            top.appendChild(knowledgeMakeEl('strong', '', knowledgeVisibleText(candidate.name, 40, '未命名候选方向')));
+            top.appendChild(knowledgeMakeEl('span', '', `${candidate.status === 'rejected' ? '淘汰' : '入选'} · ${candidate.score || '--'} 分`));
+            card.appendChild(top);
+            card.appendChild(renderKnowledgeDirectionTagPills(knowledgeDirectionTagValues(candidate), {
+                emptyText: '标签待分析'
+            }));
+            if (candidate.description) {
+                card.appendChild(knowledgeMakeEl('p', 'direction-candidate-desc', knowledgeDnaLocalizeText(candidate.description)));
+            }
+            [
+                ['值得保留', candidate.scoreSummary || (Array.isArray(candidate.scoreReasons) ? candidate.scoreReasons.join('、') : candidate.visualHook)],
+                ['注意', candidate.dedupeReason || candidate.riskNote],
+                ['投产建议', candidate.productionAdvice]
+            ].forEach(([label, value]) => {
+                const row = knowledgeMakeEl('div', 'direction-candidate-field');
+                row.appendChild(knowledgeMakeEl('span', '', label));
+                row.appendChild(knowledgeMakeEl('em', '', knowledgeDnaLocalizeText(value || '--')));
+                card.appendChild(row);
+            });
+            const risks = knowledgeDirectionRiskTags(candidate);
+            if (risks.length) {
+                card.appendChild(renderKnowledgeDirectionTagPills(risks, { risk: true }));
+            }
+            const actions = knowledgeMakeEl('div', 'direction-candidate-actions');
+            const copyBtn = knowledgeMakeEl('button', 'creative-mini-btn', '复制');
+            copyBtn.type = 'button';
+            copyBtn.addEventListener('click', () => knowledgeCopyCandidate(candidate).catch(error => {
+                if (typeof showToast === 'function') showToast(error.message || '复制失败', 'error');
+            }));
+            actions.appendChild(copyBtn);
+            ['送入草案', '标记优秀', '标记风险'].forEach(label => {
+                const button = knowledgeMakeEl('button', 'creative-mini-btn', label);
+                button.type = 'button';
+                button.disabled = true;
+                button.title = '第一版只读展示，后续接入写入操作';
+                actions.appendChild(button);
+            });
+            card.appendChild(actions);
+            return card;
+        }
+
+        function renderKnowledgeDirectionCandidateReview(review = null) {
+            if (!review || (!Array.isArray(review.selected) && !Array.isArray(review.rejected))) return null;
+            const selected = Array.isArray(review.selected) ? review.selected : [];
+            const rejected = Array.isArray(review.rejected) ? review.rejected : [];
+            const details = knowledgeMakeEl('details', 'direction-candidate-review');
+            const summary = knowledgeMakeEl('summary', '');
+            summary.appendChild(knowledgeMakeEl('strong', '', '方向候选审核记录'));
+            summary.appendChild(knowledgeMakeEl('span', '', `入选 ${review.selectedCount || selected.length} 个 / 淘汰 ${review.rejectedCount || rejected.length} 个`));
+            details.appendChild(summary);
+            const grid = knowledgeMakeEl('div', 'direction-candidate-grid');
+            selected.concat(rejected).forEach(candidate => grid.appendChild(renderKnowledgeCandidateCard(candidate)));
+            if (!grid.children.length) {
+                grid.appendChild(knowledgeMakeEl('div', 'knowledge-empty', '本次 run 没有记录候选方向明细'));
+            }
+            details.appendChild(grid);
+            return details;
         }
 
         async function fetchKnowledgeJson(url, fallbackMessage, options) {
@@ -680,13 +798,19 @@
                 const card = knowledgeMakeEl('div', 'knowledge-feishu-preview-card');
                 card.appendChild(knowledgeMakeEl('strong', '', '写回飞书预览'));
                 card.appendChild(knowledgeMakeEl('span', '', `待写回 ${Number(preview.pendingCount) || 0} 条`));
+                if (Number(preview.priorityCount) > 0) {
+                    card.appendChild(knowledgeMakeEl('span', '', `标签完整优先 ${Number(preview.priorityCount)} 条`));
+                }
                 card.appendChild(knowledgeMakeEl('span', '', '写入列：A:H'));
                 card.appendChild(knowledgeMakeEl('span', '', '新行底色：黄色'));
                 container.appendChild(card);
                 preview.candidates.slice(0, 6).forEach(item => {
                     const itemCard = knowledgeMakeEl('div', 'knowledge-feishu-preview-card');
-                    itemCard.appendChild(knowledgeMakeEl('strong', '', '待写回方向'));
+                    itemCard.appendChild(knowledgeMakeEl('strong', '', item.priorityWriteback ? '优先写回方向' : '待写回方向'));
                     itemCard.appendChild(knowledgeMakeEl('span', '', item.path || item.name || '--'));
+                    if (item.priorityWriteback) {
+                        itemCard.appendChild(knowledgeMakeEl('span', '', '已采纳 + 标签完整'));
+                    }
                     container.appendChild(itemCard);
                 });
             }
@@ -885,6 +1009,8 @@
 
         function renderKnowledgeOverview(data = {}) {
             const counts = data.counts || {};
+            const dnaOverview = data.visualDnaOverview || {};
+            const dnaCounts = dnaOverview.counts || {};
             knowledgeSetText('knowledgeDirectionCount', knowledgeFormatNumber(counts.directions));
             knowledgeSetText('knowledgeMaterialCount', knowledgeFormatNumber(counts.topMaterials));
             knowledgeSetText('knowledgeReferenceCount', knowledgeFormatNumber(counts.referenceImages));
@@ -902,6 +1028,11 @@
                 'knowledgeReviewStats',
                 `已审 ${knowledgeFormatNumber(counts.reviewedAssets)} · 好 ${knowledgeFormatNumber(counts.goodAssets)} · 坏 ${knowledgeFormatNumber((Number(counts.badAssets) || 0) + (Number(counts.rejectedAssets) || 0))}`
             );
+            knowledgeSetText('knowledgeDnaCoverage', `${knowledgeFormatNumber(dnaCounts.coveredDirections)} / ${knowledgeFormatNumber(dnaCounts.totalDirections || counts.directions)}`);
+            knowledgeSetText('knowledgeDnaTopAtmospheres', knowledgeFormatVisualDnaTop(dnaOverview.topAtmospheres, 'atmosphere'));
+            knowledgeSetText('knowledgeDnaTopCameras', knowledgeFormatVisualDnaTop(dnaOverview.topCameras, 'camera'));
+            knowledgeSetText('knowledgeDnaMissingEvent', knowledgeFormatNumber(dnaCounts.missingEventDirections));
+            knowledgeSetText('knowledgeDnaMissingHook', knowledgeFormatNumber(dnaCounts.missingVisualHookDirections));
             knowledgeSetText('knowledgeImportedAt', knowledgeFormatDate(data.importedAt));
             updateKnowledgeDirectionSelectionUI();
         }
@@ -986,7 +1117,7 @@
         function renderKnowledgeTagNode(node, level) {
             const item = knowledgeMakeEl('div', `knowledge-tag-node level-${Math.min(level, 3)}`);
             const row = knowledgeMakeEl('div', 'knowledge-tag-row');
-            const name = knowledgeMakeEl('span', 'knowledge-tag-name', node.name);
+            const name = knowledgeMakeEl('span', 'knowledge-tag-name', knowledgeVisibleText(node.name));
             const count = knowledgeMakeEl('span', 'knowledge-tag-count', `${node.count} 方向`);
             row.appendChild(name);
             row.appendChild(count);
@@ -1045,7 +1176,7 @@
                 const head = knowledgeMakeEl('div', 'knowledge-tag-group-head');
                 const title = knowledgeMakeEl('div', 'knowledge-tag-group-title');
                 title.appendChild(knowledgeMakeEl('em', 'knowledge-tag-level-label', '一级分组'));
-                title.appendChild(knowledgeMakeEl('strong', '', node.name));
+                title.appendChild(knowledgeMakeEl('strong', '', knowledgeVisibleText(node.name)));
                 title.appendChild(knowledgeMakeEl('span', '', `${knowledgeFormatNumber(node.count)} 个方向`));
                 head.appendChild(title);
                 const meta = knowledgeMakeEl('div', 'knowledge-meta-row');
@@ -1076,14 +1207,14 @@
                         branchRow.style.setProperty('--tag-activity', `${Math.max(8, Math.round(activity / maxActivity * 100))}%`);
                         const branchTitle = knowledgeMakeEl('div', 'knowledge-tag-branch-title');
                         branchTitle.appendChild(knowledgeMakeEl('em', 'knowledge-tag-level-label', '二级方向'));
-                        branchTitle.appendChild(knowledgeMakeEl('strong', '', branch.name));
+                        branchTitle.appendChild(knowledgeMakeEl('strong', '', knowledgeVisibleText(branch.name)));
                         branchTitle.appendChild(knowledgeMakeEl('span', '', `${knowledgeFormatNumber(branch.count)} 方向`));
                         branchRow.appendChild(branchTitle);
 
                         const childNames = Array.from(branch.children.values())
                             .sort((a, b) => Number(a.order) - Number(b.order))
                             .slice(0, 6)
-                            .map(child => child.name);
+                            .map(child => knowledgeVisibleText(child.name));
                         const childWrap = knowledgeMakeEl('div', 'knowledge-tag-child-chips');
                         if (childNames.length) {
                             childNames.forEach(name => childWrap.appendChild(knowledgeMakeEl('span', 'knowledge-tag-chip', name)));
@@ -1304,11 +1435,6 @@
 
         function renderKnowledgeReferencePool(direction = {}) {
             const pool = knowledgeMakeEl('div', 'knowledge-reference-pool');
-            const head = knowledgeMakeEl('div', 'knowledge-reference-pool-head');
-            head.appendChild(knowledgeMakeEl('strong', '', '参考图池'));
-            head.appendChild(knowledgeMakeEl('span', '', 'active 最多 3 张'));
-            pool.appendChild(head);
-
             const slots = knowledgeMakeEl('div', 'knowledge-reference-slot-grid');
             KNOWLEDGE_REFERENCE_SLOTS.forEach(slotConfig => {
                 const reference = knowledgeReferenceInSlot(direction, slotConfig.slot);
@@ -1427,6 +1553,168 @@
             return pool;
         }
 
+        function knowledgeDirectionTagStatus(direction = {}) {
+            const summary = direction.directionTagSummary || {};
+            const status = direction.tagReferenceStatus || {};
+            const count = Number(summary.referenceImageCount) ||
+                Number(direction.knowledgeStats && direction.knowledgeStats.activeReferenceCount) ||
+                Number(direction.knowledgeStats && direction.knowledgeStats.matchedReferenceCount) ||
+                0;
+            const analyzed = Boolean(summary.analysis && (summary.analysis.source === 'reference-vision' || summary.analysis.source === 'manual'));
+            if (summary.referenceImageStatus || status.status) {
+                return {
+                    status: summary.referenceImageStatus || status.status,
+                    label: summary.referenceImageStatusLabel || status.label || `${count} 图`,
+                    message: summary.referenceImageMessage || status.message || (analyzed ? '已分析' : '待分析'),
+                    count,
+                    confidence: Number(summary.confidence) || 0,
+                    analyzed,
+                    needsMoreReferences: summary.needsMoreReferences === true || status.needsMoreReferences === true
+                };
+            }
+            if (count <= 0) return { status: 'missing', label: '0 图', message: '待补参考图', count, confidence: 0, analyzed: false, needsMoreReferences: true };
+            if (count < 3) return { status: 'insufficient', label: `${count} 图`, message: analyzed ? '已分析，建议补图' : '参考图偏少', count, confidence: Number(summary.confidence) || 0, analyzed, needsMoreReferences: true };
+            return { status: analyzed ? 'analyzed' : 'ready', label: `${count} 图`, message: analyzed ? '已分析' : '可分析', count, confidence: Number(summary.confidence) || 0, analyzed, needsMoreReferences: false };
+        }
+
+        function renderKnowledgeDirectionTagStatus(direction = {}) {
+            const state = knowledgeDirectionTagStatus(direction);
+            const row = knowledgeMakeEl('div', `knowledge-direction-tag-state is-${String(state.status || 'ready').replace(/[^a-z0-9-]/gi, '')}`);
+            row.appendChild(knowledgeMakeEl('span', 'knowledge-direction-tag-state-count', state.label || `${state.count || 0} 图`));
+            row.appendChild(knowledgeMakeEl('span', 'knowledge-direction-tag-state-text', state.message || '待分析'));
+            if (state.confidence) row.appendChild(knowledgeMakeEl('span', 'knowledge-direction-tag-state-score', `可信度 ${Math.round(state.confidence * 100)}%`));
+            return row;
+        }
+
+        async function knowledgeAnalyzeDirectionTags(direction = {}, force = false) {
+            const id = knowledgeDirectionSelectionId(direction);
+            if (!id) return;
+            const label = force ? '重新分析参考图' : '分析方向标签';
+            try {
+                setKnowledgeInfo('info-box loading', `${label}中...`);
+                const data = await fetchKnowledgeJson(
+                    `/api/creative-knowledge/directions/${encodeURIComponent(id)}/tags/${force ? 'reanalyze' : 'analyze'}`,
+                    `${label}失败`,
+                    {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({})
+                    }
+                );
+                await loadCreativeKnowledgeDirections();
+                setKnowledgeInfo('info-box success', data.message || `${label}完成`);
+                if (typeof showToast === 'function') showToast(data.message || `${label}完成`, 'success');
+            } catch (error) {
+                setKnowledgeInfo('info-box error', error.message || `${label}失败`);
+                if (typeof showToast === 'function') showToast(error.message || `${label}失败`, 'error');
+            }
+        }
+
+        async function knowledgeBatchAnalyzeDirectionTags() {
+            const button = document.getElementById('knowledgeBatchAnalyzeTagsBtn');
+            try {
+                if (button) button.disabled = true;
+                setKnowledgeInfo('info-box loading', '正在批量补齐方向标签...');
+                const data = await fetchKnowledgeJson('/api/creative-knowledge/direction-tags/batch-analyze', '批量补齐方向标签失败', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ limit: 12 })
+                });
+                await Promise.all([
+                    loadCreativeKnowledgeDirections(),
+                    loadCreativeKnowledgePage({ silent: true }).catch(() => null)
+                ]);
+                const message = data.message || `批量补齐完成：分析 ${data.analyzed || 0} 个方向`;
+                setKnowledgeInfo(data.failed ? 'info-box error' : 'info-box success', message);
+                if (typeof showToast === 'function') showToast(message, data.failed ? 'error' : 'success');
+            } catch (error) {
+                setKnowledgeInfo('info-box error', error.message || '批量补齐方向标签失败');
+                if (typeof showToast === 'function') showToast(error.message || '批量补齐方向标签失败', 'error');
+            } finally {
+                if (button) button.disabled = false;
+            }
+        }
+
+        function knowledgeTagsToInput(tags = []) {
+            return knowledgeUniqueTags(tags, 12).join('、');
+        }
+
+        function openKnowledgeDirectionTagEditor(direction = {}) {
+            const id = knowledgeDirectionSelectionId(direction);
+            if (!id) return;
+            const summary = direction.directionTagSummary || {};
+            const overlay = knowledgeMakeEl('div', 'knowledge-tag-editor-overlay');
+            const modal = knowledgeMakeEl('div', 'knowledge-tag-editor-modal');
+            const head = knowledgeMakeEl('div', 'knowledge-tag-editor-head');
+            head.appendChild(knowledgeMakeEl('strong', '', '手动覆盖方向标签'));
+            head.appendChild(knowledgeMakeEl('span', '', knowledgeVisibleText(direction.path || direction.name, 72, '未命名方向')));
+            const closeBtn = knowledgeMakeEl('button', 'knowledge-reference-preview-close', '×');
+            head.appendChild(closeBtn);
+            modal.appendChild(head);
+
+            [
+                { key: 'mainTags', label: '主标签', value: knowledgeTagsToInput(summary.mainTags || knowledgeDirectionTagValues(direction, 5)) },
+                { key: 'extraTags', label: '扩展标签', value: knowledgeTagsToInput(summary.extraTags || []) },
+                { key: 'riskTags', label: '风险标签', value: knowledgeTagsToInput(summary.riskTags || knowledgeDirectionRiskTags(direction, 5)) },
+                { key: 'summary', label: '摘要', value: summary.summary || '' }
+            ].forEach(field => {
+                const group = knowledgeMakeEl('label', 'knowledge-tag-editor-field');
+                group.appendChild(knowledgeMakeEl('span', '', field.label));
+                const input = field.key === 'summary' ? document.createElement('textarea') : document.createElement('input');
+                input.value = field.value || '';
+                input.dataset.tagField = field.key;
+                input.placeholder = field.key === 'summary' ? '一句话说明这个方向的画面重点' : '用顿号分隔，保持短中文标签';
+                group.appendChild(input);
+                modal.appendChild(group);
+            });
+
+            const footer = knowledgeMakeEl('div', 'knowledge-reference-modal-actions');
+            const cancel = knowledgeMakeEl('button', 'btn btn-secondary', '取消');
+            const save = knowledgeMakeEl('button', 'btn btn-primary', '保存覆盖');
+            footer.appendChild(cancel);
+            footer.appendChild(save);
+            modal.appendChild(footer);
+            overlay.appendChild(modal);
+            document.body.appendChild(overlay);
+
+            const close = () => overlay.remove();
+            closeBtn.addEventListener('click', close);
+            cancel.addEventListener('click', close);
+            overlay.addEventListener('click', event => {
+                if (event.target === overlay) close();
+            });
+            save.addEventListener('click', async () => {
+                const value = key => modal.querySelector(`[data-tag-field="${key}"]`)?.value || '';
+                const payload = {
+                    mainTags: knowledgeSplitDirectionTags(value('mainTags')).slice(0, 5),
+                    extraTags: knowledgeSplitDirectionTags(value('extraTags')).slice(0, 8),
+                    riskTags: knowledgeSplitDirectionTags(value('riskTags')).slice(0, 6),
+                    summary: value('summary').trim()
+                };
+                try {
+                    save.disabled = true;
+                    setKnowledgeInfo('info-box loading', '正在保存方向标签...');
+                    const data = await fetchKnowledgeJson(
+                        `/api/creative-knowledge/directions/${encodeURIComponent(id)}/tags/manual`,
+                        '保存方向标签失败',
+                        {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        }
+                    );
+                    close();
+                    await loadCreativeKnowledgeDirections();
+                    setKnowledgeInfo('info-box success', data.message || '方向标签已保存');
+                    if (typeof showToast === 'function') showToast(data.message || '方向标签已保存', 'success');
+                } catch (error) {
+                    save.disabled = false;
+                    setKnowledgeInfo('info-box error', error.message || '保存方向标签失败');
+                    if (typeof showToast === 'function') showToast(error.message || '保存方向标签失败', 'error');
+                }
+            });
+        }
+
         function renderKnowledgeDirections(directions = [], total = directions.length) {
             const container = document.getElementById('knowledgeDirectionList');
             const meta = document.getElementById('knowledgeDirectionMeta');
@@ -1460,7 +1748,7 @@
                 checkbox.setAttribute('aria-label', `选择方向：${knowledgeDirectionLabel(direction)}`);
                 checkbox.addEventListener('change', () => toggleKnowledgeDirectionSelection(directionId, checkbox.checked));
                 title.appendChild(checkbox);
-                title.appendChild(knowledgeMakeEl('strong', '', direction.path || direction.name || '未命名方向'));
+                title.appendChild(knowledgeMakeEl('strong', '', knowledgeVisibleText(direction.path || direction.name, 72, '未命名方向')));
                 const directionStatus = knowledgeDirectionStatus(direction);
                 title.appendChild(knowledgeDirectionStatusPill(directionStatus));
                 item.appendChild(title);
@@ -1468,9 +1756,16 @@
                 item.appendChild(knowledgeMakeEl(
                     'div',
                     'knowledge-direction-desc',
-                    knowledgeShortText(direction.description || '无描述', 120)
+                    knowledgeVisibleText(direction.description, 120, '无描述')
                 ));
 
+                const tagPanel = knowledgeMakeEl('div', 'knowledge-direction-tags');
+                tagPanel.appendChild(knowledgeMakeEl('strong', '', '方向标签'));
+                tagPanel.appendChild(renderKnowledgeDirectionTagPills(knowledgeDirectionTagValues(direction), {
+                    compact: true,
+                    emptyText: '标签待分析'
+                }));
+                item.appendChild(tagPanel);
                 item.appendChild(renderKnowledgeReferencePool(direction));
 
                 const metaRow = knowledgeMakeEl('div', 'knowledge-meta-row');
@@ -1480,7 +1775,6 @@
                 knowledgeAppendMeta(metaRow, '资产 ', Number(stats.assetCount) || 0);
                 knowledgeAppendMeta(metaRow, '成功案例 ', Number(direction.evidenceCount || (direction.evidenceStats && direction.evidenceStats.successCaseCount)) || 0);
                 knowledgeAppendMeta(metaRow, '提示词 ', Number(direction.stats && direction.stats.promptCount) || 0);
-                knowledgeAppendMeta(metaRow, '更新 ', knowledgeFormatDate(knowledgeDirectionUpdatedAt(direction)));
                 item.appendChild(metaRow);
 
                 const actions = knowledgeMakeEl('div', 'knowledge-item-actions');
@@ -1490,6 +1784,21 @@
                     selectBtn.addEventListener('click', () => toggleKnowledgeDirectionSelection(directionId, !selected));
                     actions.appendChild(selectBtn);
                 }
+                const analyzeBtn = knowledgeMakeEl('button', 'btn btn-secondary', '分析方向标签');
+                analyzeBtn.type = 'button';
+                analyzeBtn.addEventListener('click', () => knowledgeAnalyzeDirectionTags(direction, false));
+                actions.appendChild(analyzeBtn);
+
+                const reanalyzeBtn = knowledgeMakeEl('button', 'btn btn-secondary', '重新分析参考图');
+                reanalyzeBtn.type = 'button';
+                reanalyzeBtn.addEventListener('click', () => knowledgeAnalyzeDirectionTags(direction, true));
+                actions.appendChild(reanalyzeBtn);
+
+                const manualTagBtn = knowledgeMakeEl('button', 'btn btn-secondary', '手动覆盖');
+                manualTagBtn.type = 'button';
+                manualTagBtn.addEventListener('click', () => openKnowledgeDirectionTagEditor(direction));
+                actions.appendChild(manualTagBtn);
+
                 if (knowledgeDirectionStatus(direction) === 'disabled') {
                     const enableBtn = knowledgeMakeEl('button', 'btn btn-secondary', '恢复可跑');
                     enableBtn.type = 'button';
@@ -1709,11 +2018,88 @@
             }
         }
 
-        function renderKnowledgeDrafts(drafts = [], total = drafts.length, counts = {}) {
+        function knowledgeDraftRiskClass(level = '') {
+            if (level === 'high') return 'is-risk-high';
+            if (level === 'medium') return 'is-risk-medium';
+            return 'is-risk-low';
+        }
+
+        function renderKnowledgeDraftGovernanceSummary(counts = {}) {
+            const container = document.getElementById('knowledgeDraftGovernanceSummary');
+            if (!container) return;
+            knowledgeClear(container);
+            [
+                ['缺方向标签', counts.missingDna || 0, 'missing_dna'],
+                ['缺参考图', counts.missingReference || 0, 'missing_reference'],
+                ['高重复风险', counts.highDuplicateRisk || 0, 'high_duplicate_risk'],
+                ['已有好图证据', counts.hasGoodEvidence || 0, 'has_good_evidence'],
+                ['可直接采纳', counts.readyToAccept || 0, 'ready_to_accept'],
+                ['需要编辑', counts.needsEdit || 0, 'needs_edit']
+            ].forEach(([label, value, filterValue]) => {
+                const item = knowledgeMakeEl('button', 'knowledge-draft-queue-chip', '');
+                item.type = 'button';
+                item.addEventListener('click', () => {
+                    const filter = document.getElementById('knowledgeDraftGovernanceFilter');
+                    if (filter) filter.value = filterValue;
+                    loadCreativeKnowledgeDrafts().catch(error => setKnowledgeInfo('info-box error', error.message));
+                });
+                item.appendChild(knowledgeMakeEl('strong', '', knowledgeFormatNumber(value)));
+                item.appendChild(knowledgeMakeEl('span', '', label));
+                container.appendChild(item);
+            });
+        }
+
+        function renderKnowledgeDraftMetric(label, value, className = '') {
+            const item = knowledgeMakeEl('div', `knowledge-draft-metric ${className}`.trim());
+            item.appendChild(knowledgeMakeEl('span', '', label));
+            item.appendChild(knowledgeMakeEl('strong', '', value));
+            return item;
+        }
+
+        function renderKnowledgeDraftChecks(draft = {}) {
+            const governance = draft.governance || {};
+            const preflight = governance.preflight || {};
+            const checks = knowledgeMakeEl('div', 'knowledge-draft-checks');
+            [
+                ['必须有名称', Boolean(draft.name), 'hard'],
+                ['必须有路径', Boolean(draft.path), 'hard'],
+                ['建议有 description', Boolean(draft.description), 'soft'],
+                [
+                    preflight.needsDna === true
+                        ? '建议补齐方向标签'
+                        : '方向标签已满足',
+                    !(preflight.needsDna === true),
+                    'soft'
+                ],
+                [
+                    preflight.needsReference === true
+                        ? '缺参考图，采纳后标记待补图'
+                        : '参考图已满足',
+                    !(preflight.needsReference === true),
+                    'soft'
+                ],
+                [
+                    preflight.shouldMerge === true
+                        ? '重复风险高，建议合并'
+                        : '重复风险可控',
+                    !(preflight.shouldMerge === true),
+                    'soft'
+                ]
+            ].forEach(([label, ok, type]) => {
+                const row = knowledgeMakeEl('span', `knowledge-draft-check ${ok ? 'is-ok' : (type === 'hard' ? 'is-error' : 'is-warning')}`);
+                row.appendChild(document.createTextNode(ok ? '✓ ' : '! '));
+                row.appendChild(document.createTextNode(label));
+                checks.appendChild(row);
+            });
+            return checks;
+        }
+
+        function renderKnowledgeDrafts(drafts = [], total = drafts.length, counts = {}, governanceCounts = {}) {
             const container = document.getElementById('knowledgeDraftList');
             const meta = document.getElementById('knowledgeDraftMeta');
             if (!container) return;
             knowledgeClear(container);
+            renderKnowledgeDraftGovernanceSummary(governanceCounts);
             if (meta) {
                 meta.textContent = `显示 ${drafts.length} / ${total} 个草案 · 待审 ${counts.draft || 0} · 已采纳 ${counts.accepted || 0} · 已拒绝 ${counts.rejected || 0}`;
             }
@@ -1724,19 +2110,31 @@
             }
 
             drafts.forEach(draft => {
-                const item = knowledgeMakeEl('div', 'knowledge-draft-item');
+                const governance = draft.governance || {};
+                const dna = governance.dnaCompleteness || {};
+                const item = knowledgeMakeEl('div', `knowledge-draft-item ${knowledgeDraftRiskClass(governance.duplicateRiskLevel)}`);
                 const top = knowledgeMakeEl('div', 'knowledge-direction-title');
-                top.appendChild(knowledgeMakeEl('strong', '', draft.path || draft.name || '未命名方向草案'));
+                top.appendChild(knowledgeMakeEl('strong', '', knowledgeVisibleText(draft.path || draft.name, 72, '未命名方向草案')));
                 top.appendChild(knowledgeDirectionStatusPill(draft.status || 'draft'));
                 item.appendChild(top);
 
-                item.appendChild(knowledgeMakeEl('div', 'knowledge-direction-desc', knowledgeShortText(draft.description || '无描述', 160)));
+                item.appendChild(knowledgeMakeEl('div', 'knowledge-direction-desc', knowledgeVisibleText(draft.description, 160, '无描述')));
+
+                const metrics = knowledgeMakeEl('div', 'knowledge-draft-metrics');
+                metrics.appendChild(renderKnowledgeDraftMetric('标签完整度', dna.label || `${dna.count || 0} / ${dna.total || 6}`, (Number(dna.count) || 0) >= Number(dna.total || 6) ? 'is-ok' : 'is-warning'));
+                metrics.appendChild(renderKnowledgeDraftMetric('参考图', `${Number(governance.referenceCount) || 0} / ${Number(governance.referenceTarget) || 3}`, Number(governance.referenceCount) > 0 ? 'is-ok' : 'is-warning'));
+                metrics.appendChild(renderKnowledgeDraftMetric('重复风险', governance.duplicateRiskLabel || '低', knowledgeDraftRiskClass(governance.duplicateRiskLevel)));
+                metrics.appendChild(renderKnowledgeDraftMetric('Prompt 样本', knowledgeFormatNumber(governance.promptSampleCount || draft.promptCount || 0)));
+                metrics.appendChild(renderKnowledgeDraftMetric('成功案例', knowledgeFormatNumber(governance.successCaseCount || 0), Number(governance.successCaseCount) > 0 ? 'is-ok' : ''));
+                item.appendChild(metrics);
+
+                item.appendChild(renderKnowledgeDraftChecks(draft));
 
                 const metaRow = knowledgeMakeEl('div', 'knowledge-meta-row');
                 knowledgeAppendMeta(metaRow, '来源任务 ', draft.sourceRunId || '--');
-                knowledgeAppendMeta(metaRow, '父方向 ', draft.sourceDirectionPath || draft.sourceDirectionName || '--');
-                knowledgeAppendMeta(metaRow, '提示词 ', draft.promptCount || (draft.prompts || []).length || 0);
-                knowledgeAppendMeta(metaRow, '策略 ', knowledgeShortText(draft.sourceStrategy || '--', 48));
+                knowledgeAppendMeta(metaRow, '父方向 ', knowledgeVisibleText(draft.sourceDirectionPath || draft.sourceDirectionName, 72, '--'));
+                knowledgeAppendMeta(metaRow, '方向标签 ', knowledgeDirectionTagValues(draft, 3).join('、') || knowledgeVisibleText(draft.visualHook || (governance.visualDna && (governance.visualDna.visualHook || [])[0]), 40, '--'));
+                knowledgeAppendMeta(metaRow, '策略 ', knowledgeVisibleText(draft.sourceStrategy, 48, '--'));
                 item.appendChild(metaRow);
 
                 if (Array.isArray(draft.similarDirections) && draft.similarDirections.length) {
@@ -1744,7 +2142,7 @@
                     draft.similarDirections.slice(0, 4).forEach(direction => {
                         similar.appendChild(knowledgeDirectionStatusPill(
                             knowledgeDirectionStatus(direction),
-                            `${direction.id || '--'} · ${knowledgeShortText(direction.path || direction.name, 36)}`
+                            `${direction.id || '--'} · ${knowledgeVisibleText(direction.path || direction.name, 36, '--')}`
                         ));
                     });
                     item.appendChild(similar);
@@ -1757,14 +2155,14 @@
                     summary.textContent = `查看 ${draft.prompts.length} 条样例提示词`;
                     details.appendChild(summary);
                     draft.prompts.slice(0, 5).forEach(prompt => {
-                        details.appendChild(knowledgeMakeEl('div', 'knowledge-run-message', knowledgeShortText(prompt.prompt || prompt.finalPrompt || prompt.title, 180)));
+                        details.appendChild(knowledgeMakeEl('div', 'knowledge-run-message', knowledgeVisibleText(prompt.prompt || prompt.finalPrompt || prompt.title, 180)));
                     });
                     item.appendChild(details);
                 }
 
                 const decision = draft.decisionReason || draft.rejectionReason || draft.archiveReason || draft.mergeReason;
                 if (decision) {
-                    item.appendChild(knowledgeMakeEl('div', 'knowledge-run-message', `决策记录：${knowledgeShortText(decision, 160)}`));
+                    item.appendChild(knowledgeMakeEl('div', 'knowledge-run-message', `决策记录：${knowledgeVisibleText(decision, 160)}`));
                 }
 
                 const actions = knowledgeMakeEl('div', 'knowledge-item-actions');
@@ -1794,25 +2192,35 @@
             });
         }
 
-        async function acceptKnowledgeDraft(draftId, allowSimilar = false) {
-            const reason = window.prompt('为什么这个方向值得进入本地成长层？', '') || '';
-            const priorityText = window.prompt('优先级 1-100，默认 50', '50') || '50';
+        async function acceptKnowledgeDraft(draftId, allowSimilar = false, confirmPreflight = false, cachedPayload = null) {
+            const body = cachedPayload || {
+                reason: window.prompt('为什么这个方向值得进入本地成长层？', '') || '',
+                priority: Number(window.prompt('优先级 1-100，默认 50', '50') || '50') || 50,
+                autoRun: true
+            };
+            body.allowSimilar = allowSimilar;
+            body.confirmPreflight = confirmPreflight;
             try {
                 const response = await fetch(`/api/creative-knowledge/direction-drafts/${encodeURIComponent(draftId)}/accept`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        reason,
-                        priority: Number(priorityText) || 50,
-                        autoRun: true,
-                        allowSimilar
-                    })
+                    body: JSON.stringify(body)
                 });
                 const data = await response.json();
+                if (response.status === 409 && data.needsPreflightConfirmation) {
+                    const preflight = data.preflight || {};
+                    const messages = []
+                        .concat(preflight.hardErrors || [])
+                        .concat(preflight.warnings || []);
+                    if (window.confirm(`采纳前检查：\n${messages.join('\n')}\n\n仍要采纳并进入正式方向库吗？`)) {
+                        return acceptKnowledgeDraft(draftId, allowSimilar, true, body);
+                    }
+                    return;
+                }
                 if (response.status === 409 && data.needsConfirmation) {
                     const summary = (data.similarDirections || []).map(item => `${item.id} ${item.path || item.name}`).join('\n');
                     if (window.confirm(`发现相似方向，仍要采纳为新方向吗？\n${summary}`)) {
-                        return acceptKnowledgeDraft(draftId, true);
+                        return acceptKnowledgeDraft(draftId, true, confirmPreflight, body);
                     }
                     return;
                 }
@@ -2699,7 +3107,7 @@
                 ));
                 item.appendChild(top);
 
-                item.appendChild(knowledgeMakeEl('div', 'knowledge-run-direction', run.sourceDirection && run.sourceDirection.path ? run.sourceDirection.path : '未记录方向'));
+                item.appendChild(knowledgeMakeEl('div', 'knowledge-run-direction', knowledgeVisibleText(run.sourceDirection && run.sourceDirection.path, 72, '未记录方向')));
 
                 const meta = knowledgeMakeEl('div', 'knowledge-meta-row');
                 knowledgeAppendMeta(meta, '提示词 ', `${run.promptTotal}/${run.promptTotalRaw || run.promptTotal}`);
@@ -2710,8 +3118,10 @@
                 item.appendChild(meta);
 
                 if (run.message) {
-                    item.appendChild(knowledgeMakeEl('div', 'knowledge-run-message', knowledgeShortText(run.message, 150)));
+                    item.appendChild(knowledgeMakeEl('div', 'knowledge-run-message', knowledgeVisibleText(run.message, 150)));
                 }
+                const candidateReview = renderKnowledgeDirectionCandidateReview(run.directionCandidateReview);
+                if (candidateReview) item.appendChild(candidateReview);
                 const actions = knowledgeMakeEl('div', 'knowledge-item-actions');
                 const draftBtn = knowledgeMakeEl('button', 'btn btn-secondary', '提取方向草案');
                 draftBtn.type = 'button';
@@ -2740,15 +3150,17 @@
 
         async function loadCreativeKnowledgeDrafts() {
             const status = document.getElementById('knowledgeDraftStatusFilter')?.value || '';
+            const governance = document.getElementById('knowledgeDraftGovernanceFilter')?.value || '';
             const data = await fetchKnowledgeJson(
-                `/api/creative-knowledge/direction-drafts${buildKnowledgeQuery('knowledgeDraftSearch', { limit: 80, status })}`,
+                `/api/creative-knowledge/direction-drafts${buildKnowledgeQuery('knowledgeDraftSearch', { limit: 80, status, governance })}`,
                 '读取方向草案失败'
             );
             creativeKnowledgeState.drafts = Array.isArray(data.drafts) ? data.drafts : [];
             renderKnowledgeDrafts(
                 creativeKnowledgeState.drafts,
                 Number(data.total) || creativeKnowledgeState.drafts.length,
-                data.counts || {}
+                data.counts || {},
+                data.governanceCounts || {}
             );
             return data;
         }
@@ -2774,6 +3186,549 @@
             return data;
         }
 
+        const KNOWLEDGE_DNA_DIMENSION_LABELS = {
+            atmosphere: '标签',
+            camera: '标签',
+            event: '标签',
+            scale: '标签',
+            visualHook: '标签'
+        };
+
+        const KNOWLEDGE_DNA_TAG_CLASS = {
+            atmosphere: 'is-atmosphere',
+            camera: 'is-camera',
+            event: 'is-event',
+            scale: 'is-scale',
+            visualHook: 'is-hook'
+        };
+
+        const KNOWLEDGE_DNA_DISPLAY_LABELS = {
+            'comic relief under danger': '危中幽默',
+            'urgent hope': '急迫希望',
+            'last chance pressure': '最后机会',
+            'surprise reward': '惊喜奖励',
+            'low-angle close foreground': '低机位近景',
+            'macro prop with human stakes': '道具特写',
+            'top-down map-like view': '地图俯瞰',
+            'evacuation countdown': '撤离倒计时',
+            'temporary bridge': '临时桥',
+            'blocked entrance': '入口受阻',
+            'collapsing shelter': '庇护坍塌',
+            'escort through danger': '护送穿越',
+            'frozen vehicle route': '冰面车路',
+            'repair restart': '维修重启',
+            'evacuation': '撤离',
+            'danger': '危险',
+            'hope': '希望',
+            'warm hope': '温暖希望',
+            'warning': '警示',
+            'discovery': '发现',
+            'first person': '第一人称',
+            'first-person': '第一人称',
+            'overhead': '俯瞰',
+            'top down': '俯瞰',
+            'close-up': '近景',
+            'close up': '近景',
+            'low angle': '低机位'
+        };
+
+        function knowledgeDnaDisplayKey(value = '') {
+            return String(value || '')
+                .trim()
+                .replace(/[()（）\d]+/g, '')
+                .replace(/[_/]+/g, ' ')
+                .replace(/\s+/g, ' ')
+                .toLowerCase();
+        }
+
+        function knowledgeDnaHookLabel(value = '') {
+            const text = String(value || '').trim();
+            if (!text) return '';
+            if (text.length <= 8 && !/[a-z]/i.test(text)) return text;
+            const rules = [
+                [/方向正确|主体明确|一眼|吸引人/, '主体明确'],
+                [/没啥吸引|常规图|吸引力弱/, '吸引力弱'],
+                [/探索发现感弱|发现感弱/, '探索弱'],
+                [/多余.*文字|上下.*文字|文字信息|英文|小字|包装|品牌|标识|地名|UI/, '文字干扰'],
+                [/信号弹|信号|光束/, '信号线索'],
+                [/标语|文字|短牌|中文/, '中文标语'],
+                [/路标|指示牌|箭头/, '指示路标'],
+                [/巨型|地标/, '巨型地标'],
+                [/暖光|暖灯|窗口|灯/, '暖光目标'],
+                [/选择压力|犹豫|是否|转向|分叉/, '选择压力'],
+                [/守护|保护阵型|围成保护|护住/, '守护动作'],
+                [/手套|伸手|手部|拉扯/, '手部动作'],
+                [/绳梯|绳索|绳结|攀/, '绳索攀爬'],
+                [/工具箱|工具小件|破冰工具/, '工具箱'],
+                [/零件包|维修零件|破损零件/, '维修零件'],
+                [/搭建支架|搭建|支架/, '搭建动作'],
+                [/车辆|车辙|雪橇|小推车|载具/, '载具路线'],
+                [/桥|桥面|断桥/, '桥梁通行'],
+                [/裂缝|裂冰|冰裂/, '冰裂危机'],
+                [/补给|物资|药包|木柴|热汤/, '物资补给'],
+                [/地图|路线/, '地图线索'],
+                [/入口|仓门|门/, '入口目标'],
+                [/火光|暖炉|炉/, '火光庇护'],
+                [/冰洞|天窗|洞口/, '洞口撤离'],
+                [/队列|排队|订单/, '订单队列']
+            ];
+            const found = rules.find(([pattern]) => pattern.test(text));
+            if (found) return found[1];
+            return text.slice(0, 8);
+        }
+
+        function knowledgeDnaDisplayLabel(value = '', dimension = '') {
+            const raw = String(value || '').trim();
+            if (!raw) return '';
+            if (dimension === 'visualHook') return knowledgeDnaHookLabel(raw);
+            const key = knowledgeDnaDisplayKey(raw);
+            if (KNOWLEDGE_DNA_DISPLAY_LABELS[key]) return KNOWLEDGE_DNA_DISPLAY_LABELS[key];
+            if (/^[a-z0-9\s-]+$/i.test(raw)) {
+                if (key.includes('comic')) return '危中幽默';
+                if (key.includes('urgent') && key.includes('hope')) return '急迫希望';
+                if (key.includes('last') && key.includes('chance')) return '最后机会';
+                if (key.includes('surprise') || key.includes('reward')) return '惊喜奖励';
+                if (key.includes('low') && key.includes('angle')) return '低机位';
+                if (key.includes('macro') || key.includes('prop')) return '道具特写';
+                if (key.includes('top') || key.includes('overhead') || key.includes('map')) return '俯瞰';
+                if (key.includes('evac')) return '撤离';
+                if (key.includes('shelter')) return '庇护所';
+                if (key.includes('escort')) return '护送';
+                if (key.includes('repair')) return '维修';
+                if (key.includes('danger')) return '危险';
+                if (key.includes('hope')) return '希望';
+                return '未归类';
+            }
+            const localizedRaw = knowledgeDnaLocalizeText(raw);
+            return localizedRaw.length > 8 ? localizedRaw.slice(0, 8) : localizedRaw;
+        }
+
+        function knowledgeNormalizeDirectionTag(value = '', dimension = '') {
+            let text = String(value || '').trim();
+            if (!text) return '';
+            text = text
+                .replace(/^(visualHook|dedupeReason|riskNote|productionAdvice)\s*[:：]\s*/i, '')
+                .replace(/^(氛围|视角|事件|钩子|视觉钩子|DNA|视觉 DNA)\s*[:：]\s*/i, '')
+                .replace(/[。；;,.，、]+$/g, '')
+                .trim();
+            const label = knowledgeDnaLocalizeText(knowledgeDnaDisplayLabel(text, dimension));
+            if (!label || label === '未归类') return '';
+            if (/^(感|镜头|动作|抓手|视觉|方向|主体|画面|制作|风险)$/.test(label)) return '';
+            return label.length > 8 ? label.slice(0, 8) : label;
+        }
+
+        function knowledgeSplitDirectionTags(value, dimension = '') {
+            if (Array.isArray(value)) return value.flatMap(item => knowledgeSplitDirectionTags(item, dimension));
+            if (value && typeof value === 'object') return Object.values(value).flatMap(item => knowledgeSplitDirectionTags(item, dimension));
+            return String(value || '')
+                .split(/[、,，;；\n|/]+/)
+                .map(item => knowledgeNormalizeDirectionTag(item, dimension))
+                .filter(Boolean);
+        }
+
+        function knowledgeUniqueTags(values = [], limit = 5) {
+            const seen = new Set();
+            const output = [];
+            values.forEach(value => {
+                const tag = knowledgeNormalizeDirectionTag(value);
+                if (!tag || seen.has(tag)) return;
+                seen.add(tag);
+                output.push(tag);
+            });
+            return output.slice(0, limit);
+        }
+
+        function knowledgeDirectionTagValues(source = {}, limit = 5) {
+            const visualDna = source.visualDna && typeof source.visualDna === 'object' ? source.visualDna : {};
+            const dimensions = source.dimensions && typeof source.dimensions === 'object' ? source.dimensions : {};
+            const directTags = [
+                source.mainTags,
+                source.directionTags,
+                source.tags,
+                source.extraTags
+            ].flatMap(item => knowledgeSplitDirectionTags(item));
+            const legacyTags = [
+                visualDna.mainTags,
+                visualDna.atmosphere,
+                visualDna.camera,
+                visualDna.event,
+                visualDna.visualHook,
+                dimensions.mood,
+                dimensions.atmosphere,
+                dimensions.perspective,
+                dimensions.camera,
+                dimensions.narrative,
+                dimensions.event,
+                dimensions.hook,
+                dimensions.visualHook,
+                source.visualHook
+            ].flatMap(item => knowledgeSplitDirectionTags(item));
+            const textTags = [
+                source.name,
+                source.newDirectionName,
+                source.path,
+                source.description
+            ].flatMap(item => knowledgeSplitDirectionTags(item)).filter(tag => tag.length <= 6);
+            return knowledgeUniqueTags(directTags.concat(legacyTags, textTags), limit);
+        }
+
+        function knowledgeDirectionRiskTags(source = {}, limit = 5) {
+            return knowledgeUniqueTags([
+                source.riskTags,
+                source.avoidRules,
+                source.riskNote,
+                source.duplicateRisk
+            ].flatMap(item => knowledgeSplitDirectionTags(item)), limit);
+        }
+
+        function renderKnowledgeDirectionTagPills(tags = [], options = {}) {
+            const row = knowledgeMakeEl('div', `direction-tag-pill-row${options.risk ? ' is-risk' : ''}${options.compact ? ' is-compact' : ''}`.trim());
+            const list = knowledgeUniqueTags(tags, options.limit || 5);
+            if (!list.length) {
+                row.appendChild(knowledgeMakeEl('span', 'direction-tag-pill is-empty', options.emptyText || '标签待分析'));
+                return row;
+            }
+            list.forEach(tagText => {
+                const tag = knowledgeMakeEl('span', 'direction-tag-pill', tagText);
+                tag.title = tagText;
+                row.appendChild(tag);
+            });
+            if (Array.isArray(tags) && tags.length > list.length) {
+                row.appendChild(knowledgeMakeEl('span', 'direction-tag-pill is-more', `+${tags.length - list.length}`));
+            }
+            return row;
+        }
+
+        function knowledgeDnaValueWithCount(item = {}, dimension = '') {
+            const label = knowledgeVisibleText(knowledgeDnaDisplayLabel(item.value || item.name || item, dimension), 24, '--');
+            const count = Number(item.count) || 0;
+            return count ? `${label}(${count})` : label;
+        }
+
+        function knowledgeEscapeRegExp(value = '') {
+            return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        }
+
+        function knowledgeDnaLocalizeText(text = '') {
+            let output = String(text || '');
+            Object.entries(KNOWLEDGE_DNA_DISPLAY_LABELS)
+                .sort((a, b) => b[0].length - a[0].length)
+                .forEach(([from, to]) => {
+                    output = output.replace(new RegExp(knowledgeEscapeRegExp(from), 'gi'), to);
+                });
+            [
+                ['macro prop with human stakes', '道具特写'],
+                ['comic relief under danger', '危中幽默'],
+                ['urgent hope', '急迫希望'],
+                ['low-angle close foreground', '低机位近景'],
+                ['collapsing shelter', '庇护坍塌'],
+                ['escort through danger', '护送穿越'],
+                ['frozen vehicle route', '冰面车路'],
+                ['repair restart', '维修重启'],
+                ['evacuation countdown', '撤离倒计时'],
+                ['temporary bridge', '临时桥'],
+                ['blocked entrance', '入口受阻'],
+                ['surprise reward', '惊喜奖励'],
+                ['last chance pressure', '最后机会'],
+                ['top-down map-like view', '地图俯瞰'],
+                ['over-shoulder pursuit', '越肩追逐'],
+                ['moral tradeoff', '取舍抉择'],
+                ['resource contest', '资源争夺'],
+                ['seeded axis 的 frozen vehicle route', '冻车路线标签'],
+                ['visible hook 为 signal flare clue', '画面重点改为信号弹线索'],
+                ['静态氛围', '静态场景'],
+                ['风景氛围', '风景感'],
+                ['场景氛围', '场景感'],
+                ['情绪氛围', '情绪感'],
+                ['冰雪氛围', '冰雪感'],
+                ['事件机制', '画面机制'],
+                ['明确事件', '明确动作'],
+                ['广告钩子', '画面重点'],
+                ['紧张氛围', '紧张感'],
+                ['冰雪末日氛围', '冰雪末日感'],
+                ['多视角', '多镜头'],
+                ['不同视角', '不同镜头'],
+                ['direction tags complete', '标签完整'],
+                ['matches high-performing tags', '命中高表现标签'],
+                ['covers gap tags', '覆盖缺口标签'],
+                ['tag combo is new in current pool', '本轮组合新'],
+                ['hits risk tags', '命中风险标签'],
+                ['direction tags', '方向标签'],
+                ['DNA完整度高', '标签完整'],
+                ['DNA基本可用', '标签可用'],
+                ['DNA维度缺失', '标签缺失'],
+                ['DNA组合有差异', '标签组合有差异'],
+                ['本轮DNA组合重复', '本轮标签组合重复'],
+                ['匹配高采纳DNA', '匹配高采纳标签'],
+                ['历史DNA组合重复', '历史标签组合重复'],
+                ['命中风险DNA', '命中风险标签'],
+                ['seeded axis', '方向标签'],
+                ['visible hook', '画面重点'],
+                ['visual hook', '画面重点'],
+                ['signal flare clue', '信号弹线索'],
+                ['视觉 DNA 组合', '方向标签组合'],
+                ['视觉DNA组合', '方向标签组合'],
+                ['视觉 DNA', '方向标签'],
+                ['视觉DNA', '方向标签']
+            ].forEach(([from, to]) => {
+                output = output.replace(new RegExp(knowledgeEscapeRegExp(from), 'gi'), to);
+            });
+            output = output
+                .replace(/\b(visualDna|atmosphere|camera|event|visualHook)\b\s*/gi, '')
+                .replace(/\bDNA\b/gi, '方向标签')
+                .replace(/DNA/g, '方向标签')
+                .replace(/视觉\s*钩子/g, '画面重点')
+                .replace(/钩子/g, '重点')
+                .replace(/视角/g, '镜头')
+                .replace(/事件/g, '动作')
+                .replace(/氛围/g, '感')
+                .replace(/\s{2,}/g, ' ')
+                .trim();
+            return output;
+        }
+
+        function knowledgeVisibleText(value = '', maxLength = 90, fallback = '') {
+            const localized = knowledgeDnaLocalizeText(knowledgeText(value, fallback));
+            return knowledgeShortText(localized || fallback, maxLength);
+        }
+
+        function setKnowledgeVisualDnaInfo(className, text) {
+            const infoBox = document.getElementById('knowledgeVisualDnaInfo');
+            if (!infoBox) return;
+            infoBox.className = className;
+            infoBox.textContent = text;
+        }
+
+        function knowledgeDnaPreferenceText(items = [], limit = 5) {
+            const values = Array.isArray(items) ? items : [];
+            return values.length
+                ? values.slice(0, limit).map(item => knowledgeDnaValueWithCount(item)).join('、')
+                : '--';
+        }
+
+        function knowledgeDnaSourceText(sample = {}) {
+            const labels = {
+                feedback: '反馈采纳',
+                'direction-evidence': '成功案例',
+                'direction-expansion-history': '入选候选',
+                'direction-drafts': '已采纳方向'
+            };
+            return sample.sourceLabel || labels[sample.source] || sample.source || '样本';
+        }
+
+        function renderKnowledgeDnaChip(label = '', value = '', dimension = '') {
+            const chip = knowledgeMakeEl('span', `knowledge-dna-chip ${KNOWLEDGE_DNA_TAG_CLASS[dimension] || ''}`.trim());
+            const val = knowledgeMakeEl('em', '', value || '--');
+            chip.appendChild(val);
+            chip.title = value || '方向标签';
+            return chip;
+        }
+
+        function renderKnowledgeDnaTags(source = {}) {
+            const row = knowledgeMakeEl('div', 'knowledge-dna-tags');
+            const dna = source && source.visualDna && typeof source.visualDna === 'object' ? source.visualDna : {};
+            const legacyTags = Array.isArray(source) ? source : (Array.isArray(source.tags) ? source.tags : []);
+            const values = [
+                ['方向标签', knowledgeDnaDisplayLabel((dna.atmosphere || [legacyTags[0]])[0], 'atmosphere'), 'atmosphere'],
+                ['方向标签', knowledgeDnaDisplayLabel((dna.camera || [legacyTags[1]])[0], 'camera'), 'camera'],
+                ['方向标签', knowledgeDnaDisplayLabel((dna.event || [legacyTags[2]])[0], 'event'), 'event'],
+                ['方向标签', knowledgeDnaDisplayLabel((dna.visualHook || [legacyTags[4] || legacyTags[3]])[0], 'visualHook'), 'visualHook']
+            ].filter(([, value]) => value);
+            if (!values.length) {
+                row.appendChild(knowledgeMakeEl('span', 'is-empty', '标签待分析'));
+                return row;
+            }
+            values.forEach(([label, value, dimension]) => row.appendChild(renderKnowledgeDnaChip(label, value, dimension)));
+            return row;
+        }
+
+        function renderKnowledgeDnaSample(sample = {}) {
+            const item = knowledgeMakeEl('div', 'knowledge-dna-sample');
+            const top = knowledgeMakeEl('div', 'knowledge-dna-sample-top');
+            top.appendChild(knowledgeMakeEl('strong', '', knowledgeVisibleText(sample.name || sample.directionPath, 48, '未命名采纳样本')));
+            top.appendChild(knowledgeMakeEl('span', '', knowledgeDnaSourceText(sample)));
+            item.appendChild(top);
+            if (sample.directionPath) {
+                item.appendChild(knowledgeMakeEl('em', 'knowledge-dna-path', knowledgeVisibleText(sample.directionPath, 72)));
+            }
+            item.appendChild(renderKnowledgeDnaTags(sample));
+            if (sample.evidence) {
+                item.appendChild(knowledgeMakeEl('p', 'knowledge-dna-evidence', knowledgeShortText(knowledgeDnaLocalizeText(sample.evidence), 112)));
+            }
+            return item;
+        }
+
+        function renderKnowledgeDnaPreferenceTags(items = [], dimension = '', limit = 4) {
+            const row = knowledgeMakeEl('div', 'knowledge-dna-preference-tags');
+            const values = Array.isArray(items) ? items.slice(0, limit) : [];
+            if (!values.length) {
+                row.appendChild(knowledgeMakeEl('span', 'knowledge-dna-preference-empty', '--'));
+                return row;
+            }
+            values.forEach(item => {
+                const itemDimension = item.dimension || dimension;
+                const tag = knowledgeMakeEl('span', `knowledge-dna-preference-tag ${KNOWLEDGE_DNA_TAG_CLASS[itemDimension] || (dimension === 'risk' ? 'is-risk' : '')}`.trim());
+                const label = knowledgeMakeEl('em', '', knowledgeNormalizeDirectionTag(item.value || item.name || item, itemDimension) || '--');
+                const count = knowledgeMakeEl('b', '', knowledgeFormatNumber(item.count || 0));
+                tag.appendChild(label);
+                tag.appendChild(count);
+                tag.title = `${knowledgeVisibleText(item.value || item.name || item, 32, '--')}：${Number(item.count) || 0} 次`;
+                row.appendChild(tag);
+            });
+            return row;
+        }
+
+        function renderKnowledgeDnaAdoptionBoard(groups = []) {
+            const container = document.getElementById('knowledgeDnaAdoptionBoard');
+            if (!container) return;
+            knowledgeClear(container);
+            const list = Array.isArray(groups) ? groups : [];
+            if (!list.length) {
+                container.appendChild(knowledgeMakeEl('div', 'knowledge-empty', '暂无采纳样本。审核好图、采纳方向或运行创意拓展后，这里会形成维护记录。'));
+                return;
+            }
+
+            list.slice(0, 10).forEach(group => {
+                const card = knowledgeMakeEl('article', 'knowledge-dna-adoption-group');
+                const head = knowledgeMakeEl('div', 'knowledge-dna-group-head');
+                head.appendChild(knowledgeMakeEl('strong', '', knowledgeVisibleText(group.label || group.path, 56, '未分组')));
+                head.appendChild(knowledgeMakeEl('span', '', knowledgeFormatNumber(group.sampleCount || 0)));
+                card.appendChild(head);
+
+                const sources = group.sources || {};
+                const meta = knowledgeMakeEl('div', 'knowledge-meta-row');
+                knowledgeAppendMeta(meta, '反馈 ', sources.feedback || 0);
+                knowledgeAppendMeta(meta, '案例 ', sources.evidence || 0);
+                knowledgeAppendMeta(meta, '入选 ', sources.history || 0);
+                knowledgeAppendMeta(meta, '采纳 ', sources.drafts || 0);
+                card.appendChild(meta);
+
+                const samples = knowledgeMakeEl('div', 'knowledge-dna-sample-list');
+                (Array.isArray(group.samples) ? group.samples : []).slice(0, 6).forEach(sample => {
+                    samples.appendChild(renderKnowledgeDnaSample(sample));
+                });
+                if (!samples.children.length) {
+                    samples.appendChild(knowledgeMakeEl('div', 'knowledge-empty', '该方向暂未展开样本明细'));
+                }
+                card.appendChild(samples);
+                container.appendChild(card);
+            });
+        }
+
+        function renderKnowledgeDnaPreferenceBoard(groups = []) {
+            const container = document.getElementById('knowledgeDnaPreferenceBoard');
+            if (!container) return;
+            knowledgeClear(container);
+            const list = Array.isArray(groups) ? groups : [];
+            if (!list.length) {
+                container.appendChild(knowledgeMakeEl('div', 'knowledge-empty', '暂无风格偏好统计。'));
+                return;
+            }
+
+            list.slice(0, 12).forEach(group => {
+                const card = knowledgeMakeEl('article', 'knowledge-dna-preference-group');
+                const head = knowledgeMakeEl('div', 'knowledge-dna-group-head');
+                head.appendChild(knowledgeMakeEl('strong', '', knowledgeVisibleText(group.label || group.path, 56, '未分组')));
+                head.appendChild(knowledgeMakeEl('span', '', `${knowledgeFormatNumber(group.sampleCount || 0)} 样本`));
+                card.appendChild(head);
+
+                const prefs = group.preferences || {};
+                const allPreferenceTags = ['atmosphere', 'camera', 'event', 'scale', 'visualHook']
+                    .flatMap(key => (Array.isArray(prefs[key]) ? prefs[key] : []).map(item => ({ ...item, dimension: key })))
+                    .sort((a, b) => (Number(b.count) || 0) - (Number(a.count) || 0));
+                [
+                    ['高频标签', allPreferenceTags, 'mixed', 10],
+                    ['风险标签', prefs.risks || prefs.riskTags || prefs.avoid || [], 'risk', 6],
+                    ['缺口标签', prefs.gaps || prefs.missingTags || prefs.opportunityTags || [], 'gap', 6]
+                ].forEach(([label, items, key, limit]) => {
+                    const row = knowledgeMakeEl('div', 'knowledge-dna-preference-line');
+                    row.appendChild(knowledgeMakeEl('strong', '', label));
+                    row.appendChild(renderKnowledgeDnaPreferenceTags(items, key, limit));
+                    card.appendChild(row);
+                });
+                container.appendChild(card);
+            });
+        }
+
+        function renderKnowledgeDnaRuleDrafts(rules = []) {
+            const container = document.getElementById('knowledgeDnaRuleDrafts');
+            if (!container) return;
+            knowledgeClear(container);
+            container.appendChild(knowledgeMakeEl('div', 'knowledge-memory-section-title', '方向标签规则草案预览'));
+            const list = Array.isArray(rules) ? rules : [];
+            if (!list.length) {
+                container.appendChild(knowledgeMakeEl('div', 'knowledge-empty', '当前样本不足，暂未形成可沉淀的规则草案。'));
+                return;
+            }
+            list.slice(0, 6).forEach(rule => {
+                const item = knowledgeMakeEl('div', 'knowledge-dna-rule-item');
+                item.appendChild(knowledgeMakeEl('strong', '', knowledgeDnaLocalizeText(rule.title || '未命名规则草案')));
+                item.appendChild(knowledgeMakeEl('p', '', knowledgeDnaLocalizeText(rule.pattern || rule.action || '')));
+                const meta = knowledgeMakeEl('div', 'knowledge-meta-row');
+                knowledgeAppendMeta(meta, '类型 ', knowledgeMemoryRuleTypeLabel(rule.type));
+                knowledgeAppendMeta(meta, '作用域 ', knowledgeMemoryRuleScopeLabel(rule));
+                knowledgeAppendMeta(meta, '可信度 ', Math.round((Number(rule.confidence) || 0) * 100) + '%');
+                item.appendChild(meta);
+                if (Array.isArray(rule.evidence) && rule.evidence.length) {
+                    item.appendChild(knowledgeMakeEl('em', '', knowledgeDnaLocalizeText(rule.evidence.slice(0, 3).join('；'))));
+                }
+                container.appendChild(item);
+            });
+        }
+
+        function renderKnowledgeVisualDnaWorkbench(data = {}) {
+            creativeKnowledgeState.visualDnaWorkbench = data || null;
+            const counts = data.counts || {};
+            knowledgeSetText('knowledgeDnaWorkbenchParents', knowledgeFormatNumber(counts.parentDirections));
+            knowledgeSetText('knowledgeDnaWorkbenchSamples', knowledgeFormatNumber(counts.adoptionSamples));
+            knowledgeSetText('knowledgeDnaWorkbenchRules', knowledgeFormatNumber(counts.suggestedRules));
+            renderKnowledgeDnaAdoptionBoard(data.adoptionPatterns || []);
+            renderKnowledgeDnaPreferenceBoard(data.stylePreferences || []);
+            renderKnowledgeDnaRuleDrafts(data.suggestedRules || []);
+            setKnowledgeVisualDnaInfo(
+                'info-box success',
+                `方向标签工作台已刷新：采纳样本 ${knowledgeFormatNumber(counts.adoptionSamples || 0)} 条，候选规则 ${knowledgeFormatNumber(counts.suggestedRules || 0)} 条。`
+            );
+        }
+
+        async function loadKnowledgeVisualDnaWorkbench() {
+            const data = await fetchKnowledgeJson('/api/creative-knowledge/visual-dna/workbench', '读取方向标签工作台失败');
+            renderKnowledgeVisualDnaWorkbench(data);
+            return data;
+        }
+
+        async function generateKnowledgeVisualDnaRules() {
+            const button = document.getElementById('knowledgeDnaRuleDraftBtn');
+            try {
+                if (button) {
+                    button.disabled = true;
+                    button.textContent = '生成中...';
+                }
+                setKnowledgeVisualDnaInfo('info-box loading', '正在把高频方向标签转成经验规则草案...');
+                const data = await fetchKnowledgeJson('/api/creative-knowledge/visual-dna/rule-drafts', '生成标签规则草案失败', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ limit: 12 })
+                });
+                if (data.memory) {
+                    creativeKnowledgeState.memory = data.memory;
+                    renderCreativeKnowledgeMemory(data.memory || {});
+                } else {
+                    await loadCreativeKnowledgeMemory();
+                }
+                await loadKnowledgeVisualDnaWorkbench();
+                setKnowledgeVisualDnaInfo(data.success ? 'info-box success' : 'info-box error', data.message || '标签规则草案已处理');
+                if (typeof showToast === 'function') showToast(data.message || '标签规则草案已处理', data.success ? 'success' : 'error');
+            } catch (error) {
+                setKnowledgeVisualDnaInfo('info-box error', error.message || '生成标签规则草案失败');
+            } finally {
+                if (button) {
+                    button.disabled = false;
+                    button.textContent = '生成标签规则草案';
+                }
+            }
+        }
+
         function knowledgeMemoryRuleTypeLabel(type) {
             const labels = {
                 preferred: '偏好',
@@ -2786,8 +3741,8 @@
         }
 
         function knowledgeMemoryRuleScopeLabel(rule = {}) {
-            if (rule.scope === 'dimension') return `标签层：${rule.target || '未指定'}`;
-            if (rule.scope === 'node') return `方向层：${rule.target || '未指定'}`;
+            if (rule.scope === 'dimension') return `标签层：${knowledgeVisibleText(rule.target, 48, '未指定')}`;
+            if (rule.scope === 'node') return `方向层：${knowledgeVisibleText(rule.target, 48, '未指定')}`;
             return '全局';
         }
 
@@ -2804,8 +3759,8 @@
             }
 
             const card = knowledgeMakeEl('div', 'knowledge-memory-report-card');
-            card.appendChild(knowledgeMakeEl('strong', '', report.title || '反馈学习报告'));
-            card.appendChild(knowledgeMakeEl('p', '', report.summary || '本轮已生成反馈学习结果。'));
+            card.appendChild(knowledgeMakeEl('strong', '', knowledgeVisibleText(report.title, 72, '反馈学习报告')));
+            card.appendChild(knowledgeMakeEl('p', '', knowledgeVisibleText(report.summary, 180, '本轮已生成反馈学习结果。')));
 
             const groups = [
                 ['正向偏好', report.positiveFindings],
@@ -2818,7 +3773,7 @@
                 block.appendChild(knowledgeMakeEl('span', '', title));
                 const list = knowledgeMakeEl('ul', '');
                 items.slice(0, 5).forEach(item => {
-                    list.appendChild(knowledgeMakeEl('li', '', item));
+                    list.appendChild(knowledgeMakeEl('li', '', knowledgeVisibleText(item, 140)));
                 });
                 block.appendChild(list);
                 card.appendChild(block);
@@ -2830,7 +3785,7 @@
             const group = knowledgeMakeEl('label', 'knowledge-memory-field');
             group.appendChild(knowledgeMakeEl('span', '', label));
             const input = multiline ? document.createElement('textarea') : document.createElement('input');
-            input.value = rule[field] || '';
+            input.value = knowledgeDnaLocalizeText(rule[field] || '');
             input.dataset.memoryField = field;
             if (multiline) input.rows = 2;
             group.appendChild(input);
@@ -2841,7 +3796,7 @@
             const item = knowledgeMakeEl('div', `knowledge-memory-rule ${mode === 'active' ? 'is-active' : 'is-draft'}`);
             item.dataset.ruleId = rule.ruleId || '';
             const top = knowledgeMakeEl('div', 'knowledge-memory-rule-top');
-            top.appendChild(knowledgeMakeEl('strong', '', rule.title || '未命名规则'));
+            top.appendChild(knowledgeMakeEl('strong', '', knowledgeVisibleText(rule.title, 72, '未命名规则')));
             top.appendChild(knowledgeMakeEl('span', 'knowledge-status-pill is-ok', `${knowledgeMemoryRuleTypeLabel(rule.type)} / ${knowledgeMemoryRuleScopeLabel(rule)}`));
             item.appendChild(top);
 
@@ -2857,7 +3812,7 @@
             item.appendChild(meta);
 
             if (Array.isArray(rule.evidence) && rule.evidence.length) {
-                item.appendChild(knowledgeMakeEl('div', 'knowledge-memory-evidence', rule.evidence.slice(0, 3).join('；')));
+                item.appendChild(knowledgeMakeEl('div', 'knowledge-memory-evidence', knowledgeDnaLocalizeText(rule.evidence.slice(0, 3).join('；'))));
             }
 
             const actions = knowledgeMakeEl('div', 'knowledge-item-actions');
@@ -3035,6 +3990,7 @@
                     loadCreativeKnowledgeDrafts(),
                     loadCreativeKnowledgeAssets(),
                     loadKnowledgeAutoCurator(),
+                    loadKnowledgeVisualDnaWorkbench(),
                     loadCreativeKnowledgeMemory(),
                     loadCreativeKnowledgeRuns()
                 ]);
@@ -3080,6 +4036,7 @@
             document.getElementById('knowledgeSelectVisibleDirectionsBtn')?.addEventListener('click', selectKnowledgeVisibleDirections);
             document.getElementById('knowledgeInvertVisibleDirectionsBtn')?.addEventListener('click', invertKnowledgeVisibleDirections);
             document.getElementById('knowledgeClearSelectedDirectionsBtn')?.addEventListener('click', clearKnowledgeSelectedDirections);
+            document.getElementById('knowledgeBatchAnalyzeTagsBtn')?.addEventListener('click', knowledgeBatchAnalyzeDirectionTags);
             document.getElementById('knowledgeAssetSearch')?.addEventListener(
                 'input',
                 debounceCreativeKnowledge(() => loadCreativeKnowledgeAssets().catch(error => setKnowledgeInfo('info-box error', error.message)))
@@ -3089,6 +4046,10 @@
                 debounceCreativeKnowledge(() => loadCreativeKnowledgeDrafts().catch(error => setKnowledgeInfo('info-box error', error.message)))
             );
             document.getElementById('knowledgeDraftStatusFilter')?.addEventListener(
+                'change',
+                () => loadCreativeKnowledgeDrafts().catch(error => setKnowledgeInfo('info-box error', error.message))
+            );
+            document.getElementById('knowledgeDraftGovernanceFilter')?.addEventListener(
                 'change',
                 () => loadCreativeKnowledgeDrafts().catch(error => setKnowledgeInfo('info-box error', error.message))
             );

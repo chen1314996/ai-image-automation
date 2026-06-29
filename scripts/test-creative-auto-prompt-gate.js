@@ -187,6 +187,102 @@ function runPromptGateTest() {
         assert.strictEqual(unlimitedGate.promptQualityReport.unlimitedPrompts, true);
         assert.strictEqual(unlimitedGate.promptQualityReport.unlimitedImages, true);
         assert.ok(!unlimitedGate.promptQualityReport.rejectionSummary.quota_limit);
+
+        const missingDirectionTagGate = applyPromptGate({
+            prompts: [
+                {
+                    index: 1,
+                    direction: '方向标签未落地',
+                    promptTitle: 'missing-tag',
+                    prompt: createPrompt('普通雪地行动'),
+                    directionTags: ['地图线索', '入口目标'],
+                    mainTags: ['地图线索', '入口目标']
+                }
+            ],
+            selected,
+            quota: {
+                usedImagesToday: 0,
+                maxImagesPerDay: null,
+                remainingImagesToday: Number.MAX_SAFE_INTEGER,
+                unlimitedImages: true,
+                unlimitedPrompts: true,
+                outputQuantity: 4,
+                maxPrompts: Number.MAX_SAFE_INTEGER
+            },
+            store,
+            runId: 'missing-direction-tag-run',
+            payload: {},
+            config: {}
+        });
+        assert.strictEqual(missingDirectionTagGate.prompts.length, 0);
+        assert.strictEqual(missingDirectionTagGate.promptQualityReport.rejectionSummary.missing_direction_tag_landing, 1);
+
+        const landedDirectionTagGate = applyPromptGate({
+            prompts: [
+                {
+                    index: 1,
+                    direction: '方向标签已落地',
+                    promptTitle: 'landed-tag',
+                    prompt: createPrompt('地图入口线索'),
+                    directionTags: ['地图线索', '入口目标'],
+                    mainTags: ['地图线索', '入口目标']
+                }
+            ],
+            selected,
+            quota: {
+                usedImagesToday: 0,
+                maxImagesPerDay: null,
+                remainingImagesToday: Number.MAX_SAFE_INTEGER,
+                unlimitedImages: true,
+                unlimitedPrompts: true,
+                outputQuantity: 4,
+                maxPrompts: Number.MAX_SAFE_INTEGER
+            },
+            store,
+            runId: 'landed-direction-tag-run',
+            payload: {},
+            config: {}
+        });
+        assert.strictEqual(landedDirectionTagGate.prompts.length, 1);
+
+        const dnaLandingGate = applyPromptGate({
+            prompts: [
+                {
+                    index: 1,
+                    direction: 'DNA landing check',
+                    promptTitle: 'landing-warning',
+                    prompt: createPrompt('DNA warning accepted prompt', ' red-risk-token '),
+                    visualHook: '巨型地标信号灯',
+                    riskNote: 'red-risk-token',
+                    dimensions: {
+                        perspective: '俯瞰',
+                        narrative: '撤离'
+                    }
+                }
+            ],
+            selected,
+            quota: {
+                usedImagesToday: 0,
+                maxImagesPerDay: null,
+                remainingImagesToday: Number.MAX_SAFE_INTEGER,
+                unlimitedImages: true,
+                unlimitedPrompts: true,
+                outputQuantity: 4,
+                maxPrompts: Number.MAX_SAFE_INTEGER
+            },
+            store,
+            runId: 'dna-landing-run',
+            payload: {},
+            config: {}
+        });
+        assert.strictEqual(dnaLandingGate.prompts.length, 1);
+        const dnaWarnings = dnaLandingGate.promptQualityReport.warnings
+            .filter(issue => issue.source === 'direction-dna-landing');
+        assert.ok(dnaWarnings.some(issue => issue.field === 'visualHook'));
+        assert.ok(dnaWarnings.some(issue => issue.field === 'event'));
+        assert.ok(dnaWarnings.some(issue => issue.field === 'camera'));
+        assert.ok(dnaWarnings.some(issue => issue.field === 'riskNote'));
+        assert.strictEqual(dnaLandingGate.promptQualityReport.dnaLandingWarningCount, dnaWarnings.length);
     } finally {
         fs.rmSync(tempDir, { recursive: true, force: true });
     }

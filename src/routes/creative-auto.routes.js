@@ -126,6 +126,20 @@ module.exports = function registerCreativeAutoRoutes(app, context) {
         }
     });
 
+    app.post('/api/creative-auto/runs/:runId/direction-review', (req, res) => {
+        try {
+            const result = service.continueRunFromDirectionReview(req.params.runId, req.body || {}, {
+                appConfig: context.appConfig
+            });
+            res.status(result.success ? 202 : 400).json(result);
+        } catch (error) {
+            res.status(500).json({
+                success: false,
+                message: '候选方向审核后继续生成 prompt 失败: ' + error.message
+            });
+        }
+    });
+
     app.post('/api/creative-auto/runs/:runId/pause', (req, res) => {
         try {
             const result = service.pauseRun(req.params.runId, req.body || {}, {

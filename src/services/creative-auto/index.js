@@ -5,6 +5,13 @@ const axios = require('axios');
 const { buildDefaultConfig } = require('../creative-knowledge');
 const { CreativeKnowledgeStore } = require('../creative-knowledge/store');
 const { emptyCreativeMemory, getActiveMemoryRules } = require('../creative-knowledge/feedback-learning');
+const {
+    DIRECTION_TAGS_FILE,
+    buildDirectionTagsIndex,
+    directionMatchKey,
+    emptyDirectionTags,
+    normalizeDirectionTagsForRecord
+} = require('../direction-tags');
 const { selectNextDirection } = require('./direction-selector');
 const {
     applyPromptGate,
@@ -82,6 +89,12 @@ const CREATIVE_DIVERSITY_AXIS_POOL = [
     { key: 'emotion', label: 'Change emotional tension', options: ['urgent hope', 'moral tradeoff', 'surprise reward', 'protective teamwork', 'last chance pressure', 'comic relief under danger'] },
     { key: 'scene-mechanism', label: 'Change scene mechanism', options: ['blocked entrance', 'collapsing shelter', 'frozen vehicle route', 'abandoned clinic', 'temporary bridge', 'storm shelter queue'] }
 ];
+const VISUAL_DNA_GAP_POOL = {
+    atmosphere: ['紧张危机', '史诗壮阔', '温暖希望', '神秘未知', '荒凉孤独'],
+    camera: ['第一人称', '俯瞰', '平视', '低机位', '近景物件'],
+    event: ['撤离', '发现', '求救', '护送', '争夺', '修复'],
+    visualHook: ['巨型地标', '近景物件', '暖光目标', '信号灯', '补给箱']
+};
 const DEFAULT_LEGIL_MIN_WAIT_MS = 60 * 60 * 1000;
 const DEFAULT_LEGIL_PER_PROMPT_WAIT_MS = 15 * 60 * 1000;
 const STALE_RUNNING_RECONCILE_GRACE_MS = 5 * 60 * 1000;
@@ -182,6 +195,10 @@ function normalizeAutoBrowserMode(value, fallback = DEFAULT_AUTO_CONFIG.browserM
         return value;
     }
     return fallback === 'headless' ? 'headless' : 'headed';
+}
+
+function normalizeText(value) {
+    return String(value || '').replace(/\s+/g, ' ').trim();
 }
 
 function todayKey() {
@@ -756,6 +773,426 @@ function collectRejectedDirectionContext(store, selectedDirection = {}, currentR
         .reverse();
 }
 
+function visualDnaValues(value) {
+    if (Array.isArray(value)) return value.flatMap(item => visualDnaValues(item));
+    if (value && typeof value === 'object') {
+        return [value.value, value.label, value.name, value.text].flatMap(item => visualDnaValues(item));
+    }
+    return String(value || '')
+        .split(/[、，；;,|/]+/)
+        .map(normalizeText)
+        .filter(Boolean);
+}
+
+function getVisualDnaAliasValue(object = {}, aliases = []) {
+    if (!object || typeof object !== 'object') return [];
+    return aliases.flatMap(alias => visualDnaValues(object[alias]));
+}
+
+function addVisualDnaCount(map, value, weight = 1, source = {}) {
+    visualDnaValues(value).forEach(item => {
+        const key = normalizePathKey(item);
+        if (!key) return;
+        const current = map.get(key) || {
+            value: item,
+            count: 0,
+            sources: []
+        };
+        current.count += weight;
+        if (source.type || source.id || source.label) {
+            current.sources.push(source);
+        }
+        map.set(key, current);
+    });
+}
+
+function topVisualDnaCounts(map, limit = 5) {
+    return Array.from(map.values())
+        .sort((left, right) => right.count - left.count || left.value.localeCompare(right.value, 'zh-CN'))
+        .slice(0, limit)
+        .map(item => ({
+            value: item.value,
+            count: item.count,
+            sources: item.sources.slice(0, 4)
+        }));
+}
+
+function directionRecordMatchesSelected(direction = {}, record = {}) {
+    if (!direction || !record) return false;
+    const directionId = normalizeText(direction.id);
+    const idFields = [
+        record.directionId,
+        record.targetDirectionId,
+        record.sourceDirectionId,
+        record.matchedDirectionId
+    ].map(normalizeText).filter(Boolean);
+    if (directionId && idFields.includes(directionId)) return true;
+
+    const directionPath = normalizePathKey(directionDisplayPath(direction) || direction.name || direction.id);
+    const recordPath = normalizePathKey(
+        record.directionPath ||
+        record.targetDirectionPath ||
+        record.sourceDirectionPath ||
+        record.path ||
+        record.referenceDirection ||
+        record.directionKey ||
+        record.target ||
+        record.scope && record.scope.target
+    );
+    const recordName = normalizePathKey(record.name || record.newDirectionName || record.extensionName || record.targetDirectionName);
+    if (!directionPath) return false;
+    return Boolean(recordPath && (directionPath === recordPath || directionPath.includes(recordPath) || recordPath.includes(directionPath)))
+        || Boolean(recordName && directionPath.includes(recordName));
+}
+
+function addVisualDnaFromRecord(accumulator, record = {}, options = {}) {
+    if (!record || typeof record !== 'object') return;
+    const source = {
+        type: options.type || '',
+        id: options.id || record.id || record.feedbackId || record.evidenceId || record.runId || '',
+        label: options.label || record.path || record.directionPath || record.sourceDirectionPath || record.name || record.newDirectionName || ''
+    };
+    const weight = Number(options.weight) || 1;
+    const visualDna = record.visualDna && typeof record.visualDna === 'object' ? record.visualDna : {};
+    const dimensions = record.dimensions && typeof record.dimensions === 'object' ? record.dimensions : {};
+    const inferred = inferDirectionDimensionLabels({
+        ...record,
+        description: [
+            record.description,
+            record.visualHook,
+            record.productionAdvice,
+            record.prompt,
+            record.finalPrompt,
+            record.note,
+            record.comment
+        ].filter(Boolean).join(' ')
+    });
+
+    addVisualDnaCount(accumulator.atmosphere, getVisualDnaAliasValue(visualDna, ['atmosphere', 'mood', '氛围', '情绪']), weight, source);
+    addVisualDnaCount(accumulator.atmosphere, getVisualDnaAliasValue(dimensions, ['atmosphere', 'mood', 'tone', '氛围']), weight, source);
+    addVisualDnaCount(accumulator.atmosphere, inferred.mood, Math.max(1, weight - 0.25), source);
+
+    addVisualDnaCount(accumulator.camera, getVisualDnaAliasValue(visualDna, ['camera', 'perspective', 'view', 'angle', '视角', '镜头']), weight, source);
+    addVisualDnaCount(accumulator.camera, getVisualDnaAliasValue(dimensions, ['camera', 'perspective', 'view', 'angle', 'shot', '视角']), weight, source);
+    addVisualDnaCount(accumulator.camera, inferred.perspective, Math.max(1, weight - 0.25), source);
+
+    addVisualDnaCount(accumulator.event, getVisualDnaAliasValue(visualDna, ['event', 'narrative', 'action', '事件', '叙事', '动作']), weight, source);
+    addVisualDnaCount(accumulator.event, getVisualDnaAliasValue(dimensions, ['event', 'narrative', 'action', 'moment', '事件', '叙事']), weight, source);
+    addVisualDnaCount(accumulator.event, inferred.narrative, Math.max(1, weight - 0.25), source);
+
+    addVisualDnaCount(accumulator.visualHook, getVisualDnaAliasValue(visualDna, ['visualHook', 'hook', '钩子', '视觉钩子']), weight, source);
+    addVisualDnaCount(accumulator.visualHook, getVisualDnaAliasValue(dimensions, ['visualHook', 'hook', 'pictureHook', '钩子']), weight, source);
+    addVisualDnaCount(accumulator.visualHook, record.visualHook || record.hook || record.pictureHook, weight, source);
+
+    addVisualDnaCount(accumulator.risks, record.riskNote || record.duplicateRisk || record.mustAvoid || record.avoid || record.note, Math.max(1, weight - 0.5), source);
+}
+
+function readRecentRunsForVisualDna(store, currentRunId = '', limit = 40) {
+    const runsDir = store.filePath('runs');
+    if (!fs.existsSync(runsDir)) return [];
+    return fs.readdirSync(runsDir)
+        .filter(fileName => fileName.endsWith('.json'))
+        .filter(fileName => fileName !== `${currentRunId}.json`)
+        .map(fileName => {
+            try {
+                return JSON.parse(fs.readFileSync(path.join(runsDir, fileName), 'utf8'));
+            } catch {
+                return null;
+            }
+        })
+        .filter(Boolean)
+        .sort((a, b) => new Date(b.startedAt || b.createdAt || 0).getTime() - new Date(a.startedAt || a.createdAt || 0).getTime())
+        .slice(0, limit);
+}
+
+function collectMemoryRuleRecords(memory = {}) {
+    return safeArray(memory.rules)
+        .concat(safeArray(memory.globalRules))
+        .concat(safeArray(memory.nodeRules))
+        .concat(safeArray(memory.dimensionRules))
+        .concat(safeArray(memory.items));
+}
+
+function buildVisualDnaPreferenceContext({ store, selectedDirection = {}, directions = [], currentRunId = '' }) {
+    const accumulator = {
+        atmosphere: new Map(),
+        camera: new Map(),
+        event: new Map(),
+        visualHook: new Map(),
+        risks: new Map()
+    };
+    const evidenceSources = [];
+    const addRecord = (record, options = {}) => {
+        addVisualDnaFromRecord(accumulator, record, options);
+        evidenceSources.push({
+            type: options.type || '',
+            id: options.id || record.id || record.feedbackId || record.runId || '',
+            label: options.label || record.path || record.name || record.newDirectionName || ''
+        });
+    };
+
+    addRecord(selectedDirection, { type: 'directions', id: selectedDirection.id || '', label: directionDisplayPath(selectedDirection), weight: 1 });
+    safeArray(directions)
+        .filter(direction => sameDirectionIdentity(direction, selectedDirection))
+        .forEach(direction => addRecord(direction, { type: 'directions', id: direction.id || '', label: directionDisplayPath(direction), weight: 1 }));
+
+    safeArray(store.read('feedback.json', { feedback: [] }).feedback)
+        .filter(feedback => directionRecordMatchesSelected(selectedDirection, feedback))
+        .forEach(feedback => {
+            const status = String(feedback.status || feedback.reviewStatus || '').toLowerCase();
+            const isAccepted = ['good', 'normal', 'accepted', 'adopted'].includes(status);
+            addRecord(feedback, {
+                type: 'feedback',
+                id: feedback.feedbackId || feedback.id || '',
+                label: feedback.directionPath || feedback.targetDirectionPath || '',
+                weight: isAccepted ? 3 : 1
+            });
+        });
+
+    safeArray(store.read('direction-evidence.json', { evidence: [] }).evidence)
+        .filter(entry => directionRecordMatchesSelected(selectedDirection, entry))
+        .forEach(entry => addRecord(entry, {
+            type: 'direction-evidence',
+            id: entry.evidenceId || entry.id || '',
+            label: entry.targetDirectionPath || entry.directionPath || '',
+            weight: 3
+        }));
+
+    safeArray(store.read('direction-drafts.json', { drafts: [] }).drafts)
+        .filter(draft => directionRecordMatchesSelected(selectedDirection, draft))
+        .forEach(draft => addRecord(draft, {
+            type: 'direction-drafts',
+            id: draft.id || draft.draftId || '',
+            label: draft.path || draft.name || '',
+            weight: ['accepted', 'adopted', 'ready'].includes(String(draft.status || '').toLowerCase()) ? 2.5 : 1
+        }));
+
+    safeArray(readDirectionExpansionHistory(store).items)
+        .filter(item => directionRecordMatchesSelected(selectedDirection, item))
+        .forEach(item => addRecord(item, {
+            type: 'direction-expansion-history',
+            id: item.runId || item.dedupeKey || '',
+            label: item.newDirectionName || item.extensionName || '',
+            weight: 2
+        }));
+
+    readRecentRunsForVisualDna(store, currentRunId).forEach(run => {
+        const runDirection = run.sourceDirection || {};
+        if (!directionRecordMatchesSelected(selectedDirection, {
+            sourceDirectionId: runDirection.id,
+            sourceDirectionPath: runDirection.path,
+            sourceDirectionName: runDirection.name
+        })) return;
+        safeArray(run.directionPlanReport && run.directionPlanReport.selectedExtensions)
+            .forEach(extension => addRecord(extension, {
+                type: 'runs',
+                id: run.runId || '',
+                label: extension.name || extension.extensionName || '',
+                weight: 1.5
+            }));
+    });
+
+    collectMemoryRuleRecords(store.read('creative-memory.json', emptyCreativeMemory()))
+        .filter(rule => directionRecordMatchesSelected(selectedDirection, rule) || directionRecordMatchesSelected(selectedDirection, rule.scope || {}))
+        .forEach(rule => addRecord(rule, {
+            type: 'creative-memory',
+            id: rule.ruleId || rule.id || '',
+            label: rule.title || '',
+            weight: rule.type === 'avoid' ? 2 : 1
+        }));
+
+    const topValues = {
+        atmosphere: topVisualDnaCounts(accumulator.atmosphere, 6),
+        camera: topVisualDnaCounts(accumulator.camera, 6),
+        event: topVisualDnaCounts(accumulator.event, 6),
+        visualHook: topVisualDnaCounts(accumulator.visualHook, 6),
+        risks: topVisualDnaCounts(accumulator.risks, 6)
+    };
+    const compact = {
+        atmosphere: topValues.atmosphere.slice(0, 4).map(item => item.value),
+        camera: topValues.camera.slice(0, 4).map(item => item.value),
+        event: topValues.event.slice(0, 4).map(item => item.value),
+        visualHook: topValues.visualHook.slice(0, 4).map(item => item.value),
+        risks: topValues.risks.slice(0, 5).map(item => item.value)
+    };
+    const gaps = Object.fromEntries(Object.entries(VISUAL_DNA_GAP_POOL).map(([key, pool]) => [
+        key,
+        pool.filter(value => !safeArray(compact[key]).some(item => normalizePathKey(item) === normalizePathKey(value))).slice(0, 3)
+    ]));
+    return {
+        version: 'creative-auto-visual-dna-preference-v1',
+        directionId: selectedDirection.id || '',
+        directionPath: directionDisplayPath(selectedDirection),
+        evidenceCount: evidenceSources.length,
+        sourceCount: evidenceSources.length,
+        sources: evidenceSources.slice(0, 16),
+        topValues,
+        highAdoption: compact,
+        atmosphere: compact.atmosphere,
+        camera: compact.camera,
+        event: compact.event,
+        visualHook: compact.visualHook,
+        risks: compact.risks,
+        gaps
+    };
+}
+
+function formatVisualDnaPreferenceContext(context = {}, compact = false) {
+    if (!context || !context.evidenceCount) {
+        return '';
+    }
+    const joinValues = (values, fallback = '暂无') => safeArray(values).filter(Boolean).slice(0, compact ? 3 : 5).join('、') || fallback;
+    const gaps = Object.values(context.gaps || {})
+        .flatMap(items => safeArray(items))
+        .slice(0, compact ? 4 : 8);
+    const lines = [
+        compact ? '# Current Direction DNA' : '# 当前方向 DNA 偏好',
+        `- 高频氛围：${joinValues(context.atmosphere)}`,
+        `- 高频视角：${joinValues(context.camera)}`,
+        `- 高采纳事件：${joinValues(context.event)}`,
+        `- 视觉钩子：${joinValues(context.visualHook)}`,
+        `- 高风险：${joinValues(context.risks)}`,
+        `- 缺口：${joinValues(gaps)}`
+    ];
+    return lines.join('\n');
+}
+
+const DIRECTION_TAG_GAP_POOL = [
+    '暖光目标',
+    '物资补给',
+    '信号线索',
+    '地图线索',
+    '入口目标',
+    '救援目标',
+    '撤离压力',
+    '交易队列',
+    '选择压力',
+    '冰裂危机',
+    '风雪压迫',
+    '手部动作',
+    '低机位',
+    '俯瞰',
+    '第一人称'
+];
+
+function addDirectionTagCount(map, value, weight = 1, source = '') {
+    normalizeDirectionTagsForRecord({ directionTags: value }, { limit: 12 }).tags.forEach(tag => {
+        const current = map.get(tag) || { value: tag, count: 0, score: 0, sources: [] };
+        current.count += 1;
+        current.score += weight;
+        if (source && current.sources.length < 10) current.sources.push(source);
+        map.set(tag, current);
+    });
+}
+
+function addDirectionRiskTagCount(map, value, weight = 1, source = '') {
+    normalizeDirectionTagsForRecord({ riskTags: value }, { riskLimit: 6 }).riskTags.forEach(tag => {
+        const current = map.get(tag) || { value: tag, count: 0, score: 0, sources: [] };
+        current.count += 1;
+        current.score += weight;
+        if (source && current.sources.length < 10) current.sources.push(source);
+        map.set(tag, current);
+    });
+}
+
+function topDirectionTagCounts(map, limit = 8) {
+    return Array.from(map.values())
+        .sort((a, b) => b.score - a.score || b.count - a.count || a.value.localeCompare(b.value))
+        .slice(0, limit);
+}
+
+function directionTagComboKeyFromRecord(record = {}) {
+    const tags = normalizeDirectionTagsForRecord(record, { limit: 5 }).tags;
+    return tags.slice(0, 3).join('+');
+}
+
+function buildDirectionTagPreferenceContext({ store, selectedDirection = {}, directions = [], currentRunId = '', strategy = 'stable' }) {
+    const tags = new Map();
+    const risks = new Map();
+    const combos = new Map();
+    const sources = [];
+    const addRecord = (record = {}, weight = 1, source = '') => {
+        const normalized = normalizeDirectionTagsForRecord(record, { limit: 8, riskLimit: 6 });
+        normalized.tags.forEach(tag => addDirectionTagCount(tags, tag, weight, source));
+        normalized.riskTags.forEach(tag => addDirectionRiskTagCount(risks, tag, weight, source));
+        const combo = directionTagComboKeyFromRecord(record);
+        if (combo) {
+            const current = combos.get(combo) || { value: combo, count: 0, score: 0 };
+            current.count += 1;
+            current.score += weight;
+            combos.set(combo, current);
+        }
+        if (normalized.tags.length || normalized.riskTags.length) sources.push(source);
+    };
+
+    addRecord(selectedDirection, 1, 'direction');
+    safeArray(directions)
+        .filter(direction => sameDirectionIdentity(direction, selectedDirection))
+        .forEach(direction => addRecord(direction, 1, 'direction'));
+    safeArray(store.read('feedback.json', { feedback: [] }).feedback)
+        .filter(feedback => directionRecordMatchesSelected(selectedDirection, feedback))
+        .forEach(feedback => {
+            const status = String(feedback.status || feedback.reviewStatus || '').toLowerCase();
+            addRecord(feedback, ['good', 'normal', 'accepted', 'adopted'].includes(status) ? 4 : 1, 'feedback');
+        });
+    safeArray(store.read('direction-evidence.json', { evidence: [] }).evidence)
+        .filter(entry => directionRecordMatchesSelected(selectedDirection, entry))
+        .forEach(entry => addRecord(entry, 3, 'evidence'));
+    safeArray(store.read('direction-drafts.json', { drafts: [] }).drafts)
+        .filter(draft => directionRecordMatchesSelected(selectedDirection, draft))
+        .forEach(draft => addRecord(draft, ['accepted', 'adopted', 'ready'].includes(String(draft.status || '').toLowerCase()) ? 3 : 1, 'draft'));
+    safeArray(readDirectionExpansionHistory(store).items)
+        .filter(item => directionRecordMatchesSelected(selectedDirection, item))
+        .forEach(item => addRecord(item, 2, 'history'));
+    readRecentRunsForVisualDna(store, currentRunId).forEach(run => {
+        const runDirection = run.sourceDirection || {};
+        if (!directionRecordMatchesSelected(selectedDirection, {
+            sourceDirectionId: runDirection.id,
+            sourceDirectionPath: runDirection.path,
+            sourceDirectionName: runDirection.name
+        })) return;
+        safeArray(run.directionPlanReport && run.directionPlanReport.selectedExtensions)
+            .forEach(extension => addRecord(extension, 1.5, 'run'));
+    });
+
+    const topTags = topDirectionTagCounts(tags, 12);
+    const topRiskTags = topDirectionTagCounts(risks, 8);
+    const repeatedCombos = topDirectionTagCounts(combos, 8).filter(item => item.count >= 2);
+    const highTagValues = topTags.slice(0, 8).map(item => item.value);
+    const gapTags = DIRECTION_TAG_GAP_POOL
+        .filter(tag => !highTagValues.some(value => normalizePathKey(value) === normalizePathKey(tag)))
+        .slice(0, 6);
+    return {
+        version: 'creative-auto-direction-tags-v1',
+        strategy: ['explore', 'stable'].includes(strategy) ? strategy : 'stable',
+        directionId: selectedDirection.id || '',
+        directionPath: directionDisplayPath(selectedDirection),
+        evidenceCount: sources.length,
+        highTags: highTagValues,
+        topTags,
+        riskTags: topRiskTags.map(item => item.value),
+        gapTags,
+        repeatedCombos: repeatedCombos.map(item => item.value),
+        sources: sources.slice(0, 20)
+    };
+}
+
+function formatDirectionTagPreferenceContext(context = {}, compact = false) {
+    if (!context || !context.evidenceCount) return '';
+    const joinValues = (values, fallback = '暂无') => safeArray(values).filter(Boolean).slice(0, compact ? 4 : 8).join('、') || fallback;
+    const strategyText = context.strategy === 'explore'
+        ? '探索拓展：优先补缺口标签，同时保留 1-2 个高表现标签做锚点'
+        : '稳定拓展：优先复用高表现标签，并替换动作/道具/空间形成安全变体';
+    return [
+        compact ? '# Direction Tags' : '# 当前方向标签偏好',
+        `- 策略：${strategyText}`,
+        `- 高表现标签：${joinValues(context.highTags)}`,
+        `- 缺口标签：${joinValues(context.gapTags)}`,
+        `- 避坑标签：${joinValues(context.riskTags)}`,
+        `- 重复组合：${joinValues(context.repeatedCombos)}`
+    ].join('\n');
+}
+
 function readDirectionExpansionHistory(store) {
     const data = store.read(DIRECTION_EXPANSION_HISTORY_FILE, {
         version: 1,
@@ -928,7 +1365,7 @@ function collectDirectionPlanHistoryUsage(store, run = {}, selected = {}, payloa
     return usage;
 }
 
-function buildDirectionSystemContext({ directions = [], selected, store, currentRunId = '' }) {
+function buildDirectionSystemContext({ directions = [], selected, store, currentRunId = '', tagStrategy = 'stable' }) {
     const selectedDirection = selected && selected.direction ? selected.direction : {};
     const siblings = findSiblingDirections(directions, selectedDirection);
     const siblingDirections = siblings.map(sibling => ({
@@ -941,6 +1378,19 @@ function buildDirectionSystemContext({ directions = [], selected, store, current
     const historicalUsage = collectHistoricalCreativeUsage(store, currentRunId, {
         maxDirectionSamples: 160,
         maxPromptSamples: 120
+    });
+    const visualDnaPreferenceContext = buildVisualDnaPreferenceContext({
+        store,
+        selectedDirection,
+        directions,
+        currentRunId
+    });
+    const directionTagPreferenceContext = buildDirectionTagPreferenceContext({
+        store,
+        selectedDirection,
+        directions,
+        currentRunId,
+        strategy: tagStrategy
     });
     const exclusionContext = {
         existingDirectionNames: collectExistingDirectionsForExclusion(directions, selectedDirection, siblings),
@@ -963,7 +1413,9 @@ function buildDirectionSystemContext({ directions = [], selected, store, current
         directionTreeSummary: buildDirectionTreeSummary(directions, selectedDirection),
         siblings,
         dimensionCoverage,
-        exclusionContext
+        exclusionContext,
+        visualDnaPreferenceContext,
+        directionTagPreferenceContext
     };
 }
 
@@ -998,6 +1450,29 @@ function createCreativeAutoService(options = {}) {
         };
     }
 
+    function directionTagRecordForDirection(direction = {}, tagsIndex = new Map()) {
+        const record = [
+            direction.id,
+            direction.path,
+            direction.name
+        ].map(normalizeText).filter(Boolean)
+            .map(key => tagsIndex.get(key) || tagsIndex.get(directionMatchKey(key)))
+            .find(Boolean) || {};
+        const fallback = normalizeDirectionTagsForRecord(direction);
+        return {
+            directionTags: safeArray(record.tags).length ? safeArray(record.tags) : fallback.tags,
+            riskTags: safeArray(record.riskTags).length ? safeArray(record.riskTags) : fallback.riskTags,
+            directionTagSummary: {
+                ...record,
+                directionId: record.directionId || direction.id || '',
+                path: record.path || direction.path || direction.name || '',
+                name: record.name || direction.name || direction.path || '',
+                tags: safeArray(record.tags).length ? safeArray(record.tags) : fallback.tags,
+                riskTags: safeArray(record.riskTags).length ? safeArray(record.riskTags) : fallback.riskTags
+            }
+        };
+    }
+
     function readKnowledge(configOverrides = {}) {
         const { knowledgeConfig, store } = getKnowledgeStore(configOverrides);
         store.ensureBase();
@@ -1014,6 +1489,8 @@ function createCreativeAutoService(options = {}) {
         const directionData = store.read('directions.json', {
             directions: []
         });
+        const directionTagsData = store.read(DIRECTION_TAGS_FILE, emptyDirectionTags());
+        const directionTagsIndex = buildDirectionTagsIndex(directionTagsData);
         const insightData = store.read('top-material-insights.json', {
             insights: []
         });
@@ -1038,7 +1515,10 @@ function createCreativeAutoService(options = {}) {
         return {
             knowledgeConfig,
             metadata,
-            directions: directionData.directions || [],
+            directions: safeArray(directionData.directions).map(direction => ({
+                ...direction,
+                ...directionTagRecordForDirection(direction, directionTagsIndex)
+            })),
             insights: insightData.insights || [],
             materialLearnings: materialLearningData.learnings || [],
             referenceImages: referenceData.images || [],
@@ -1467,6 +1947,36 @@ function createCreativeAutoService(options = {}) {
         };
     }
 
+    function enrichDirectionCandidateTags(candidate = {}) {
+        const fallback = normalizeDirectionTagsForRecord(candidate);
+        return {
+            ...candidate,
+            directionTags: safeArray(candidate.directionTags).length ? safeArray(candidate.directionTags) : fallback.tags,
+            riskTags: safeArray(candidate.riskTags).length ? safeArray(candidate.riskTags) : fallback.riskTags
+        };
+    }
+
+    function enrichRunDirectionTags(run = null) {
+        if (!run || typeof run !== 'object') return run;
+        const next = { ...run };
+        if (next.directionPlanReport && typeof next.directionPlanReport === 'object') {
+            next.directionPlanReport = {
+                ...next.directionPlanReport,
+                selectedExtensions: safeArray(next.directionPlanReport.selectedExtensions).map(enrichDirectionCandidateTags),
+                lowScoreSelectedExtensions: safeArray(next.directionPlanReport.lowScoreSelectedExtensions).map(enrichDirectionCandidateTags),
+                rejectedExtensions: safeArray(next.directionPlanReport.rejectedExtensions).map(enrichDirectionCandidateTags)
+            };
+        }
+        if (next.directionCandidateReview && typeof next.directionCandidateReview === 'object') {
+            next.directionCandidateReview = {
+                ...next.directionCandidateReview,
+                selected: safeArray(next.directionCandidateReview.selected).map(enrichDirectionCandidateTags),
+                rejected: safeArray(next.directionCandidateReview.rejected).map(enrichDirectionCandidateTags)
+            };
+        }
+        return next;
+    }
+
     function getRun(runId, context = {}) {
         const { store } = getKnowledgeStore(context);
         store.ensureBase();
@@ -1474,7 +1984,7 @@ function createCreativeAutoService(options = {}) {
         if (!id) {
             return null;
         }
-        return attachTargetQueueProgress(store, store.read(path.join('runs', `${id}.json`), null));
+        return attachTargetQueueProgress(store, enrichRunDirectionTags(store.read(path.join('runs', `${id}.json`), null)));
     }
 
     function getLiveCreativeLegilTask() {
@@ -2549,8 +3059,16 @@ function createCreativeAutoService(options = {}) {
             .concat(directionMustAvoid ? [directionMustAvoid] : [])
             .map(item => String(item || '').trim())
             .filter(Boolean);
-        const diversityBrief = formatDirectionDiversityContext(diversityContext);
         const compactAgentInstruction = payload.compactAgentInstruction === true;
+        const diversityBrief = formatDirectionDiversityContext(diversityContext);
+        const visualDnaBrief = formatVisualDnaPreferenceContext(
+            selected.visualDnaPreferenceContext || (selected.directionSystemContext && selected.directionSystemContext.visualDnaPreferenceContext),
+            compactAgentInstruction
+        );
+        const directionTagBrief = formatDirectionTagPreferenceContext(
+            selected.directionTagPreferenceContext || (selected.directionSystemContext && selected.directionSystemContext.directionTagPreferenceContext),
+            compactAgentInstruction
+        );
         if (compactAgentInstruction) {
             const targetDirectionCount = Math.max(1, totalNewDirectionCount || directionPlanConfig.selectedExtensionsPerSource || DEFAULT_AUTO_CONFIG.newDirectionsPerSource);
             const promptsPerDirection = Math.max(1, expansionTargets[0]?.promptGroupsPerNewDirection || directionPlanConfig.promptsPerExtension || DEFAULT_AUTO_CONFIG.promptsPerNewDirection);
@@ -2584,6 +3102,8 @@ function createCreativeAutoService(options = {}) {
                 `Source direction name: ${direction.name || ''}`,
                 `Source description: ${direction.description || ''}`,
                 diversityBrief,
+                directionTagBrief,
+                visualDnaBrief,
                 insight ? `Top material signal: ${insight.pathKey || ''}; materialCount=${insight.materialCount || 0}; keywords=${safeArray(insight.keywords).slice(0, 8).join('/')}` : '',
                 referenceText,
                 '',
@@ -2610,6 +3130,12 @@ function createCreativeAutoService(options = {}) {
                             name: 'specific event-based new direction name',
                             description: 'one sentence describing the visual mechanism',
                             visualHook: 'clear visible hook',
+                            dimensions: {
+                                mood: '',
+                                perspective: '',
+                                narrative: '',
+                                hook: ''
+                            },
                             dedupeReason: 'why this differs from existing directions',
                             riskNote: 'controllable production risk',
                             productionAdvice: 'how to make it readable'
@@ -2691,6 +3217,10 @@ function createCreativeAutoService(options = {}) {
             diversityBrief,
             '',
             formatDirectionFocusContext(selected),
+            '',
+            directionTagBrief,
+            '',
+            visualDnaBrief,
             aggregateTarget
                 ? [
                     '',
@@ -2758,7 +3288,7 @@ function createCreativeAutoService(options = {}) {
             '只输出 JSON，不输出 Markdown 表格、Excel 表格、CSV 表格或任何 spreadsheet-ready 表格；JSON 顶层字段必须包含 directionPlans 和 candidateDirections。',
             `隐藏式方向规划：每个原始方向先生成 ${directionPlanConfig.candidateExtensionsPerSource} 个候选延展方向，后台会自动评分、去重和淘汰；不要要求人工预览或勾选。`,
             `第一阶段只生成短方向候选，不生成 promptPair、prompts、finalPrompt 或任何长生图提示词；入选后后台会单独进入第二阶段生成 prompt。`,
-            `directionPlans 每一项必须包含 sourceDirectionPath、currentJudgment、exclusionSummary、extensions；extensions 默认 ${directionPlanConfig.candidateExtensionsPerSource} 个候选，每个 extension 必须包含 extensionKey、extensionType、name、description、visualHook、dedupeReason、riskNote、productionAdvice。`,
+            `directionPlans 每一项必须包含 sourceDirectionPath、currentJudgment、exclusionSummary、extensions；extensions 默认 ${directionPlanConfig.candidateExtensionsPerSource} 个候选，每个 extension 必须包含 extensionKey、extensionType、name、description、visualHook、dimensions、dedupeReason、riskNote、productionAdvice；dimensions 至少包含 mood、perspective、narrative、hook。`,
             `candidateDirections 是兼容旧解析器的扁平字段，只放最终推荐延展方向即可；第一阶段不要在 candidateDirections 里写 prompts。`,
             'candidateDirections 每一项必须包含 type、sourcePath、targetLevel、label、description、dimensions、duplicateRisk、reason。dimensions 必须包含 mood、perspective、time、narrative、scale、material、subjectRelation、hook。',
             expansionTargets.length
@@ -2780,7 +3310,8 @@ function createCreativeAutoService(options = {}) {
             'Output JSON only for this run. Do not output Markdown tables, Excel tables, CSV tables, or spreadsheet-ready tables.',
             'The JSON top-level object must contain directionPlans and candidateDirections.',
             'Stage 1 is direction-only. Do not output promptPair, prompts, finalPrompt, or long image-generation prompts.',
-            'directionPlans[].extensions[] must include name, description, visualHook, dedupeReason, riskNote, and productionAdvice.',
+            'directionPlans[].extensions[] must include name, description, visualHook, dimensions, dedupeReason, riskNote, and productionAdvice.',
+            'directionPlans[].extensions[].dimensions should include mood, perspective, narrative, and hook so Direction Plan Gate can score visual DNA.',
             'Each candidateDirections item must contain: type, sourcePath, targetLevel, label, description, dimensions, duplicateRisk, reason.',
             'dimensions must include mood, perspective, time, narrative, scale, material, subjectRelation, hook.',
             '',
@@ -3139,8 +3670,8 @@ function createCreativeAutoService(options = {}) {
             '只输出严格 JSON object，不要 Markdown，不要代码块，不要解释。',
             'JSON 顶层必须包含 directionPlans 和 candidateDirections。',
             directionOnly
-                ? 'directionPlans[].extensions[] 必须包含 extensionKey、extensionType、name、description、visualHook、dedupeReason、riskNote、productionAdvice；不要包含 promptPair。'
-                : 'directionPlans[].extensions[] 必须包含 extensionKey、extensionType、name、description、visualHook、dedupeReason、riskNote、productionAdvice、promptPair。',
+                ? 'directionPlans[].extensions[] 必须包含 extensionKey、extensionType、name、description、visualHook、dimensions、dedupeReason、riskNote、productionAdvice；dimensions 至少包含 mood、perspective、narrative、hook；不要包含 promptPair。'
+                : 'directionPlans[].extensions[] 必须包含 extensionKey、extensionType、name、description、visualHook、dimensions、dedupeReason、riskNote、productionAdvice、promptPair；dimensions 至少包含 mood、perspective、narrative、hook。',
             directionOnly
                 ? '本轮是方向级修复：只补短方向候选，不要生成 promptPair、prompts、finalPrompt 或长生图提示词。'
                 : `Each extension.promptPair must contain exactly ${planConfig.promptsPerExtension} complete Chinese prompts.`,
@@ -3274,6 +3805,7 @@ function createCreativeAutoService(options = {}) {
     }
 
     function compactDirectionExtensionForPromptStage(extension = {}) {
+        const tagSummary = normalizeDirectionTagsForRecord(extension, { limit: 8, riskLimit: 6 });
         return {
             sourceDirectionId: extension.sourceDirectionId || '',
             sourceDirectionPath: extension.sourceDirectionPath || '',
@@ -3281,6 +3813,10 @@ function createCreativeAutoService(options = {}) {
             extensionType: extension.extensionType || '',
             name: extension.name || extension.extensionName || extension.newDirectionName || '',
             description: extension.description || extension.extensionDescription || '',
+            directionTags: safeArray(extension.directionTags).length ? safeArray(extension.directionTags) : tagSummary.tags,
+            mainTags: safeArray(extension.mainTags),
+            extraTags: safeArray(extension.extraTags),
+            riskTags: safeArray(extension.riskTags).length ? safeArray(extension.riskTags) : tagSummary.riskTags,
             visualHook: extension.visualHook || '',
             dedupeReason: extension.dedupeReason || '',
             riskNote: extension.riskNote || '',
@@ -3288,6 +3824,153 @@ function createCreativeAutoService(options = {}) {
             dimensions: extension.dimensions || {},
             directionPlanScore: extension.score || extension.directionPlanScore || '',
             directionPlanScoreSummary: extension.scoreSummary || extension.directionPlanScoreSummary || ''
+        };
+    }
+
+    function directionReviewModeFromPayload(payload = {}, config = {}) {
+        const value = normalizeText(
+            (payload.directionReview && payload.directionReview.mode)
+            || (payload.directionPlanning && payload.directionPlanning.reviewMode)
+            || (config.directionPlanning && config.directionPlanning.reviewMode)
+            || 'auto'
+        ).toLowerCase();
+        return value === 'manual' || value === 'human' ? 'manual' : 'auto';
+    }
+
+    function candidateReviewKey(candidate = {}, index = 0) {
+        return normalizeText(candidate.reviewKey || candidate.extensionKey || candidate.name || candidate.newDirectionName || candidate.direction)
+            || `candidate-${index + 1}`;
+    }
+
+    function normalizeReviewCandidate(candidate = {}, index = 0, status = 'selected') {
+        const dimensions = candidate.dimensions && typeof candidate.dimensions === 'object' ? candidate.dimensions : {};
+        const mainTags = safeArray(candidate.mainTags).map(normalizeText).filter(Boolean);
+        const extraTags = safeArray(candidate.extraTags).map(normalizeText).filter(Boolean);
+        const editedDirectionTags = mainTags.concat(extraTags);
+        const tagSummary = normalizeDirectionTagsForRecord({
+            ...candidate,
+            directionTags: safeArray(candidate.directionTags).length
+                ? candidate.directionTags
+                : editedDirectionTags
+        }, { limit: 8, riskLimit: 6 });
+        const directionTags = safeArray(candidate.directionTags).length
+            ? safeArray(candidate.directionTags).map(normalizeText).filter(Boolean)
+            : (editedDirectionTags.length ? editedDirectionTags : tagSummary.tags);
+        const riskTags = safeArray(candidate.riskTags).length
+            ? safeArray(candidate.riskTags).map(normalizeText).filter(Boolean)
+            : tagSummary.riskTags;
+        return {
+            ...candidate,
+            reviewKey: candidateReviewKey(candidate, index),
+            status,
+            index: Number(candidate.index) || index + 1,
+            name: normalizeText(candidate.name || candidate.extensionName || candidate.newDirectionName || candidate.direction),
+            description: normalizeText(candidate.description || candidate.extensionDescription || candidate.directionDescription),
+            visualHook: normalizeText(candidate.visualHook || candidate.hook || candidate.pictureHook),
+            dedupeReason: normalizeText(candidate.dedupeReason || candidate.dedupReason || candidate.reason),
+            riskNote: normalizeText(candidate.riskNote || candidate.qualityRisk || candidate.duplicateRisk),
+            productionAdvice: normalizeText(candidate.productionAdvice || candidate.makingAdvice || candidate.sourceStrategy),
+            directionTags,
+            mainTags: mainTags.length ? mainTags : directionTags.slice(0, 5),
+            extraTags,
+            riskTags,
+            avoidRules: safeArray(candidate.avoidRules).map(normalizeText).filter(Boolean),
+            dimensions,
+            score: Number(candidate.score || candidate.directionPlanScore) || 0,
+            scoreSummary: normalizeText(candidate.scoreSummary || candidate.directionPlanScoreSummary),
+            scoreReasons: safeArray(candidate.scoreReasons)
+        };
+    }
+
+    function buildDirectionCandidateReview(directionPlanGate = {}) {
+        const report = directionPlanGate.directionPlanReport || {};
+        const selected = safeArray(directionPlanGate.selectedExtensions)
+            .map((candidate, index) => normalizeReviewCandidate(candidate, index, 'selected'));
+        const rejected = safeArray(report.rejectedExtensions)
+            .map((candidate, index) => normalizeReviewCandidate(candidate, index, 'rejected'));
+        return {
+            mode: 'manual',
+            status: 'pending',
+            selectedCount: Number(report.selectedExtensionCount) || selected.length,
+            rejectedCount: Number(report.rejectedExtensionCount) || rejected.length,
+            selected,
+            rejected,
+            updatedAt: new Date().toISOString()
+        };
+    }
+
+    function selectedReviewCandidatesFromPayload(run = {}, payload = {}) {
+        const review = run.directionCandidateReview || {};
+        const reviewCandidates = safeArray(review.selected).concat(safeArray(review.rejected));
+        const existingByKey = new Map(reviewCandidates.map((candidate, index) => [
+            candidateReviewKey(candidate, index),
+            candidate
+        ]));
+        const payloadCandidates = safeArray(payload.candidates || payload.selectedCandidates);
+        const sourceCandidates = payloadCandidates.length ? payloadCandidates : safeArray(review.selected);
+        return sourceCandidates
+            .map((candidate, index) => {
+                const key = candidateReviewKey(candidate, index);
+                const mergedCandidate = {
+                    ...(existingByKey.get(key) || {}),
+                    ...candidate,
+                    reviewKey: key
+                };
+                const editedTags = safeArray(candidate.mainTags)
+                    .concat(safeArray(candidate.extraTags))
+                    .map(normalizeText)
+                    .filter(Boolean);
+                if (editedTags.length && !safeArray(candidate.directionTags).length) {
+                    mergedCandidate.directionTags = editedTags;
+                }
+                return normalizeReviewCandidate(mergedCandidate, index, candidate.status || 'selected');
+            })
+            .filter(candidate => candidate && candidate.status !== 'deleted' && candidate.selected !== false && candidate.name);
+    }
+
+    function buildReviewedDirectionPlanGate(run = {}, candidates = []) {
+        const previousReport = run.directionPlanReport || {};
+        const selectedExtensions = safeArray(candidates).map((candidate, index) => ({
+            ...candidate,
+            index: index + 1,
+            extensionKey: candidate.extensionKey || candidate.reviewKey || `manual-${index + 1}`,
+            extensionType: candidate.extensionType || 'manual-reviewed',
+            score: Number(candidate.score) || Number(candidate.directionPlanScore) || 100,
+            scoreSummary: candidate.scoreSummary || '人工审核采纳'
+        }));
+        const selectedExtensionsReport = selectedExtensions.map(item => ({
+            name: item.name,
+            extensionKey: item.extensionKey,
+            extensionType: item.extensionType,
+            score: item.score,
+            scoreSummary: item.scoreSummary,
+            directionTags: safeArray(item.directionTags),
+            mainTags: safeArray(item.mainTags),
+            extraTags: safeArray(item.extraTags),
+            riskTags: safeArray(item.riskTags),
+            visualHook: item.visualHook,
+            dedupeReason: item.dedupeReason,
+            riskNote: item.riskNote,
+            productionAdvice: item.productionAdvice,
+            dimensions: item.dimensions || {},
+            promptCount: 0,
+            reviewKey: item.reviewKey
+        }));
+        return {
+            prompts: [],
+            selectedExtensions,
+            directionPlanReport: {
+                ...previousReport,
+                success: selectedExtensions.length > 0,
+                checkedAt: new Date().toISOString(),
+                manualReview: true,
+                reviewStatus: 'approved',
+                selectedExtensionCount: selectedExtensions.length,
+                selectedPromptCount: 0,
+                rejectedExtensionCount: Math.max(0, Number(previousReport.candidateExtensionCount || 0) - selectedExtensions.length),
+                selectedExtensions: selectedExtensionsReport,
+                summary: `人工审核采纳 ${selectedExtensions.length} 个候选方向，准备生成 prompt`
+            }
         };
     }
 
@@ -3331,11 +4014,13 @@ function createCreativeAutoService(options = {}) {
                 `2. 每个 promptPair 正好 ${planConfig.promptsPerExtension} 条；不要多，不要少。`,
                 '3. 每条 prompt 必须是一段自然中文镜头描述，不要写“主题：/画风：/画面内容：/核心构图：”字段模板。',
                 '4. 同一方向下的多条 prompt 必须在主体组合、动作机制、镜头角度、空间结构、前景道具、光线方案、情绪瞬间或广告钩子中至少改变两项。',
-                '5. 保留每个方向的 visualHook、dedupeReason、riskNote、productionAdvice，不要改写方向名称。',
-                `6. 遵守当前提示词风格：${getCreativePromptStyle(config.creativePromptStyle).label}；不要把比例、分辨率、输出数量写进 prompt。`,
+                '5. 每条 prompt 必须明显体现该方向的 directionTags，尤其是 mainTags；不要只写泛泛场景。',
+                '6. riskTags 只用于规避，不要把风险词字面写进 prompt。',
+                '7. 保留每个方向的 visualHook、dedupeReason、riskNote、productionAdvice，不要改写方向名称。',
+                `8. 遵守当前提示词风格：${getCreativePromptStyle(config.creativePromptStyle).label}；不要把比例、分辨率、输出数量写进 prompt。`,
                 buildStyleInstruction(config.creativePromptStyle),
                 forbiddenTerms.length
-                    ? `7. 内部风险词只用于规避，不要写进 prompt 字面：${sanitizeRepairForbiddenText(forbiddenTerms.join('、'), forbiddenTerms)}`
+                    ? `9. 内部风险词只用于规避，不要写进 prompt 字面：${sanitizeRepairForbiddenText(forbiddenTerms.join('、'), forbiddenTerms)}`
                     : ''
             ].filter(Boolean).join('\n'),
             '',
@@ -3348,6 +4033,10 @@ function createCreativeAutoService(options = {}) {
                         extensionType: extension.extensionType || 'selected',
                         name: extension.name,
                         description: extension.description,
+                        directionTags: extension.directionTags,
+                        mainTags: extension.mainTags,
+                        extraTags: extension.extraTags,
+                        riskTags: extension.riskTags,
                         visualHook: extension.visualHook,
                         dedupeReason: extension.dedupeReason,
                         riskNote: extension.riskNote,
@@ -3365,6 +4054,38 @@ function createCreativeAutoService(options = {}) {
             { role: 'system', content: systemPrompt },
             { role: 'user', content: userPrompt }
         ];
+    }
+
+    function attachSelectedDirectionTagsToPrompts(prompts = [], directionPlanGate = {}) {
+        const selectedExtensions = safeArray(directionPlanGate && directionPlanGate.selectedExtensions)
+            .map(compactDirectionExtensionForPromptStage);
+        const byKey = new Map();
+        selectedExtensions.forEach(extension => {
+            [
+                extension.extensionKey,
+                extension.name,
+                extension.extensionName,
+                extension.newDirectionName
+            ].map(normalizeText).filter(Boolean).forEach(key => byKey.set(key, extension));
+        });
+        return safeArray(prompts).map(prompt => {
+            const match = byKey.get(normalizeText(prompt.extensionKey))
+                || byKey.get(normalizeText(prompt.extensionName))
+                || byKey.get(normalizeText(prompt.newDirectionName))
+                || byKey.get(normalizeText(prompt.direction));
+            if (!match) return prompt;
+            return {
+                ...prompt,
+                directionTags: safeArray(match.directionTags).length ? safeArray(match.directionTags) : safeArray(prompt.directionTags),
+                mainTags: safeArray(match.mainTags).length ? safeArray(match.mainTags) : safeArray(prompt.mainTags),
+                extraTags: safeArray(match.extraTags).length ? safeArray(match.extraTags) : safeArray(prompt.extraTags),
+                riskTags: safeArray(match.riskTags).length ? safeArray(match.riskTags) : safeArray(prompt.riskTags),
+                visualHook: prompt.visualHook || match.visualHook,
+                riskNote: prompt.riskNote || match.riskNote,
+                productionAdvice: prompt.productionAdvice || match.productionAdvice,
+                dedupeReason: prompt.dedupeReason || match.dedupeReason
+            };
+        });
     }
 
     async function generatePromptsForSelectedDirections({ selected, payload, config, directionPlanGate, winkyConfig }) {
@@ -3394,7 +4115,10 @@ function createCreativeAutoService(options = {}) {
                 payload,
                 config
             });
-            const prompts = flattenDirectionPlansToPromptItems(directionPlans)
+            const prompts = attachSelectedDirectionTagsToPrompts(
+                flattenDirectionPlansToPromptItems(directionPlans),
+                directionPlanGate
+            )
                 .map((item, index) => ({
                     ...sanitizeRepairPromptItem(item, forbiddenTerms),
                     index: index + 1,
@@ -4154,7 +4878,9 @@ function createCreativeAutoService(options = {}) {
         const directionSystemContext = buildDirectionSystemContext({
             directions: knowledge.directions,
             selected: selectedBase,
-            store
+            store,
+            tagStrategy: (payload.directionPlanning && (payload.directionPlanning.tagStrategy || payload.directionPlanning.expansionStrategy))
+                || 'stable'
         });
         const selected = {
             ...selectedBase,
@@ -4162,6 +4888,8 @@ function createCreativeAutoService(options = {}) {
             siblings: directionSystemContext.siblings,
             dimensionCoverage: directionSystemContext.dimensionCoverage,
             exclusionContext: directionSystemContext.exclusionContext,
+            visualDnaPreferenceContext: directionSystemContext.visualDnaPreferenceContext,
+            directionTagPreferenceContext: directionSystemContext.directionTagPreferenceContext,
             directionTreeSummary: directionSystemContext.directionTreeSummary
         };
         const creativeConfig = appConfig.creative || {};
@@ -4877,6 +5605,11 @@ function createCreativeAutoService(options = {}) {
         const config = {
             ...DEFAULT_AUTO_CONFIG,
             ...(run.config || {}),
+            generationSettings: {
+                ...(DEFAULT_AUTO_CONFIG.generationSettings || {}),
+                ...((run.config && run.config.generationSettings) || {}),
+                ...((payload && payload.generationSettings) || {})
+            },
             browserMode: normalizeAutoBrowserMode(
                 payload.browserMode
                     || creativeConfig.browserMode
@@ -4884,6 +5617,11 @@ function createCreativeAutoService(options = {}) {
                     || DEFAULT_AUTO_CONFIG.browserMode
             )
         };
+        const requestedOutputQuantity = Number(payload.outputQuantity || (payload.generationSettings && payload.generationSettings.outputQuantity));
+        if (Number.isFinite(requestedOutputQuantity) && requestedOutputQuantity > 0) {
+            config.outputQuantity = Math.max(1, Math.min(20, Math.floor(requestedOutputQuantity)));
+            config.generationSettings.outputQuantity = config.outputQuantity;
+        }
         const startedAt = new Date().toISOString();
         const promptSelection = hasSelectionPayload
             ? {
@@ -4908,6 +5646,7 @@ function createCreativeAutoService(options = {}) {
             status: 'running',
             phase: 'legil_pending',
             agentOnly: false,
+            config,
             continuedFromAgentOnly: run.agentOnly === true,
             continuedToLegilAt: startedAt,
             mode: run.agentOnly === true ? 'agent-only-continued-legil' : (run.mode || 'legil-run-once'),
@@ -4968,6 +5707,259 @@ function createCreativeAutoService(options = {}) {
             message: '已从 Prompt Gate 结果继续启动 Legil',
             run: preparedRun
         };
+    }
+
+    function continueRunFromDirectionReview(runId, payload = {}, context = {}) {
+        if (activeRunId) {
+            return {
+                success: false,
+                message: '已有自动创意任务正在运行',
+                activeRun: getRun(activeRunId, context)
+            };
+        }
+
+        const { store } = getKnowledgeStore(context);
+        store.ensureBase();
+        const run = getRun(runId, context);
+        if (!run) {
+            return {
+                success: false,
+                message: '自动创意运行记录不存在'
+            };
+        }
+        if (run.phase !== 'pending_direction_review') {
+            return {
+                success: false,
+                message: '当前任务没有停在候选方向审核阶段'
+            };
+        }
+
+        const candidates = selectedReviewCandidatesFromPayload(run, payload);
+        if (!candidates.length) {
+            return {
+                success: false,
+                message: '请至少采纳 1 个候选方向后再生成 prompt'
+            };
+        }
+
+        const creativeConfig = context.appConfig && context.appConfig.creative ? context.appConfig.creative : {};
+        const config = {
+            ...DEFAULT_AUTO_CONFIG,
+            ...(run.config || {}),
+            browserMode: normalizeAutoBrowserMode(
+                payload.browserMode
+                    || creativeConfig.browserMode
+                    || (run.config && run.config.browserMode)
+                    || DEFAULT_AUTO_CONFIG.browserMode
+            )
+        };
+        const promptOnly = payload.promptOnly === true || payload.agentOnly === true || run.agentOnly === true;
+        if (!promptOnly && typeof options.isLegilBusy === 'function' && options.isLegilBusy()) {
+            return {
+                success: false,
+                message: '当前已有 Legil 自动化任务正在运行，请稍后再试'
+            };
+        }
+        const winkyConfig = typeof options.getStoredWinkyConfig === 'function'
+            ? options.getStoredWinkyConfig()
+            : {};
+        if (!winkyConfig.apiKey || !winkyConfig.apiUrl || !winkyConfig.model) {
+            return {
+                success: false,
+                message: '创意 Agent 的 LLM 配置不完整，无法生成 prompt'
+            };
+        }
+
+        const selected = buildSelectedFromRun(run);
+        const directionPlanGate = buildReviewedDirectionPlanGate(run, candidates);
+        const startedAt = new Date().toISOString();
+        const updatedReview = {
+            ...(run.directionCandidateReview || {}),
+            status: 'approved',
+            selectedCount: candidates.length,
+            selected: candidates.map((candidate, index) => normalizeReviewCandidate(candidate, index, 'selected')),
+            rejected: safeArray(run.directionCandidateReview && run.directionCandidateReview.rejected),
+            updatedAt: startedAt
+        };
+        const preparedRun = updateRun(store, run.runId, {
+            status: 'running',
+            phase: 'direction_review_prompt_running',
+            completedAt: '',
+            resumedAt: startedAt,
+            agentOnly: promptOnly,
+            mode: promptOnly ? 'agent-only-direction-review' : (run.mode || 'legil-run-once'),
+            directionCandidateReview: updatedReview,
+            pendingDirectionReview: {
+                ...(run.pendingDirectionReview || {}),
+                status: 'approved',
+                approvedAt: startedAt,
+                updatedAt: startedAt,
+                selectedCandidates: candidates,
+                directionPlanGate
+            },
+            directionPlanReport: directionPlanGate.directionPlanReport,
+            message: `人工审核已采纳 ${candidates.length} 个候选方向，正在生成 prompt`
+        }) || run;
+
+        activeRunId = run.runId;
+        writeSchedulerState(store, {
+            status: 'running',
+            currentRunId: run.runId,
+            currentAgentTaskRunId: null,
+            lastStartedAt: startedAt
+        });
+
+        continueDirectionReviewInBackground({
+            store,
+            run: preparedRun,
+            selected,
+            payload: {
+                ...buildResumePayloadFromRun(run),
+                ...(run.reviewPayload || {}),
+                ...(payload || {}),
+                directionPlanning: {
+                    ...((run.config && run.config.directionPlanning) || {}),
+                    ...((run.reviewPayload && run.reviewPayload.directionPlanning) || {}),
+                    ...((payload && payload.directionPlanning) || {}),
+                    selectedExtensionsPerSource: candidates.length,
+                    candidateExtensionsPerSource: candidates.length,
+                    maxRepairAttempts: 0
+                }
+            },
+            config,
+            quota: run.quota || {},
+            promptOnly,
+            directionPlanGate,
+            winkyConfig
+        }).catch(error => {
+            const failedAt = new Date().toISOString();
+            const failedRun = updateRun(store, run.runId, {
+                status: 'failed',
+                phase: 'direction_review_continue_failed',
+                completedAt: failedAt,
+                error: error.message,
+                message: '候选方向审核后生成 prompt 失败: ' + error.message
+            });
+            notifyCreativeAutoRunFinal(failedRun, 'failed');
+            writeSchedulerState(store, {
+                status: 'idle',
+                currentRunId: null,
+                currentAgentTaskRunId: null,
+                currentLegilTask: null,
+                lastRunId: run.runId,
+                lastError: error.message
+            });
+            if (activeRunId === run.runId) activeRunId = null;
+            if (logger && typeof logger.error === 'function') {
+                logger.error(`候选方向审核后生成 prompt 失败: ${error.message}`);
+            }
+        });
+
+        return {
+            success: true,
+            message: promptOnly ? '已开始基于审核候选生成 prompt' : '已开始基于审核候选生成 prompt，并将在 Prompt Gate 后调用 Legil',
+            run: preparedRun
+        };
+    }
+
+    async function continueDirectionReviewInBackground({ store, run, selected, payload, config, quota, promptOnly, directionPlanGate, winkyConfig }) {
+        const selectedDirectionPromptStage = await generatePromptsForSelectedDirections({
+            selected,
+            payload,
+            config,
+            directionPlanGate,
+            winkyConfig
+        });
+        const agentPrompts = selectedDirectionPromptStage.prompts;
+        const translation = bypassPromptTranslationForLegil({
+            prompts: agentPrompts,
+            selected,
+            runId: run.runId
+        });
+        const gates = await applyPromptGatesWithRepair({
+            translation,
+            selected,
+            quota,
+            store,
+            run,
+            payload,
+            config,
+            memoryRules: run.memoryRules || [],
+            winkyConfig,
+            skipDirectionRepair: true
+        });
+        const gate = gates.gate;
+        const prompts = gate.prompts;
+        const qualityReport = gate.qualityReport;
+        const plannedDirectionDefinitions = safeArray(translation.directionDefinitions).length
+            ? translation.directionDefinitions
+            : buildDirectionDefinitions(agentPrompts, selected);
+        const directionExpansionHistoryAdditions = appendDirectionExpansionHistory(store, {
+            run,
+            selected,
+            directionPlanGate,
+            diversityContext: run.directionDiversityContext
+        });
+        const completedAt = promptOnly ? new Date().toISOString() : '';
+        const completedRun = updateRun(store, run.runId, {
+            status: promptOnly ? 'completed' : 'running',
+            phase: 'agent_completed',
+            completedAt,
+            promptTotalRaw: agentPrompts.length,
+            promptTotalTranslated: translation.report.promptCount,
+            promptTotalDirectionPlanned: directionPlanGate.directionPlanReport.selectedPromptCount,
+            promptTotalCandidate: gate.promptQualityReport.candidatePromptCount,
+            promptTotal: prompts.length,
+            promptTotalRejected: gate.promptQualityReport.rejectedPromptCount,
+            expectedImageTotal: gate.promptQualityReport.expectedImageTotal,
+            directionDefinitions: plannedDirectionDefinitions,
+            prompts,
+            qualityReport,
+            directionExpansionHistoryAdditions,
+            directionPlanReport: directionPlanGate.directionPlanReport,
+            directionCandidateReport: directionPlanGate.directionPlanReport,
+            selectedDirectionPromptReport: selectedDirectionPromptStage.report,
+            directionPlanRepairReport: gates.repairReport,
+            promptQualityReport: gate.promptQualityReport,
+            promptTranslation: translation.report,
+            agentOutput: {
+                ...(run.agentOutput || {}),
+                twoStagePromptGeneration: true,
+                selectedDirectionPromptCount: selectedDirectionPromptStage.report
+                    ? selectedDirectionPromptStage.report.generatedPromptCount
+                    : 0,
+                selectedDirectionPromptRawText: selectedDirectionPromptStage.rawText || ''
+            },
+            message: promptOnly
+                ? `人工审核方向后已生成 ${agentPrompts.length} 条 prompt，Prompt Gate 接受 ${prompts.length} 条，未调用 Legil`
+                : `人工审核方向后已生成 ${agentPrompts.length} 条 prompt，Prompt Gate 接受 ${prompts.length} 条，准备调用 Legil`
+        }) || run;
+        updateSelectedDirectionPromptStats(store, selected, {
+            expandedCountDelta: 1,
+            promptCountDelta: prompts.length,
+            lastRunAt: completedRun.completedAt || new Date().toISOString()
+        });
+
+        if (promptOnly) {
+            notifyCreativeAutoRunFinal(completedRun, 'completed');
+            writeSchedulerState(store, {
+                status: 'idle',
+                currentRunId: null,
+                currentAgentTaskRunId: null,
+                lastRunId: run.runId,
+                lastCompletedAt: completedRun.completedAt
+            });
+            if (activeRunId === run.runId) activeRunId = null;
+            return completedRun;
+        }
+
+        return await startLegilAfterAgent({
+            store,
+            run: completedRun,
+            selected,
+            prompts,
+            config
+        });
     }
 
     function markRunPaused(store, run, updates = {}) {
@@ -5739,6 +6731,49 @@ function createCreativeAutoService(options = {}) {
                         logger.info(`Direction Candidate Gate: ${directionCandidateStage.directionPlanGate.directionPlanReport.summary}`);
                         logger.info(`Direction candidate repair: ${directionCandidateStage.repairReport.summary}`);
                     }
+                    if (directionReviewModeFromPayload(payload, config) === 'manual') {
+                        const pausedAt = new Date().toISOString();
+                        const pendingReview = buildDirectionCandidateReview(directionCandidateStage.directionPlanGate);
+                        const pausedRun = markRunPaused(store, run, {
+                            phase: 'pending_direction_review',
+                            completedAt: pausedAt,
+                            directionReviewMode: 'manual',
+                            directionCandidateReview: pendingReview,
+                            pendingDirectionReview: {
+                                status: 'pending',
+                                mode: 'manual',
+                                createdAt: pausedAt,
+                                updatedAt: pausedAt,
+                                directionPlanGate: directionCandidateStage.directionPlanGate,
+                                repairReport: directionCandidateStage.repairReport,
+                                directionPlans: directionCandidateStage.directionPlans,
+                                promptOnly: agentOnly === true
+                            },
+                            directionPlanReport: directionCandidateStage.directionPlanGate.directionPlanReport,
+                            directionCandidateReport: directionCandidateStage.directionPlanGate.directionPlanReport,
+                            directionCandidateRepairReport: directionCandidateStage.repairReport,
+                            agentTask: publicTask,
+                            agentOutput: {
+                                fileName: result.fileName || '',
+                                downloadUrl: result.downloadUrl || '',
+                                localPath: result.localPath || '',
+                                rawText: result.rawText || '',
+                                rawTableMarkdown: result.rawTableMarkdown || result.rawText || '',
+                                markdownPreview: result.markdownPreview || '',
+                                message: result.message || '',
+                                directionPlans: result.directionPlans || [],
+                                directionPlanCount: result.directionPlanCount || 0,
+                                candidateDirections: result.candidateDirections || [],
+                                candidateDirectionCount: result.candidateDirectionCount || 0,
+                                twoStagePromptGeneration: true,
+                                pendingDirectionReview: true
+                            },
+                            reviewPayload: payload,
+                            message: `候选方向审核模式：已生成 ${pendingReview.selected.length + pendingReview.rejected.length} 个候选，等待人工确认后再生成 prompt`
+                        });
+                        notifyCreativeAutoRunFinal(pausedRun, 'paused');
+                        return pausedRun;
+                    }
                     selectedDirectionPromptStage = await generatePromptsForSelectedDirections({
                         selected,
                         payload,
@@ -6337,7 +7372,9 @@ function createCreativeAutoService(options = {}) {
         const directionSystemContext = buildDirectionSystemContext({
             directions: knowledge.directions,
             selected: selectedBase,
-            store
+            store,
+            tagStrategy: (payload.directionPlanning && (payload.directionPlanning.tagStrategy || payload.directionPlanning.expansionStrategy))
+                || 'stable'
         });
         const selected = {
             ...selectedBase,
@@ -6345,6 +7382,8 @@ function createCreativeAutoService(options = {}) {
             siblings: directionSystemContext.siblings,
             dimensionCoverage: directionSystemContext.dimensionCoverage,
             exclusionContext: directionSystemContext.exclusionContext,
+            visualDnaPreferenceContext: directionSystemContext.visualDnaPreferenceContext,
+            directionTagPreferenceContext: directionSystemContext.directionTagPreferenceContext,
             directionTreeSummary: directionSystemContext.directionTreeSummary
         };
         const creativeConfig = appConfig.creative || {};
@@ -6540,6 +7579,7 @@ function createCreativeAutoService(options = {}) {
             selectDirectionPlansWithRepair
         },
         continueRunToLegil,
+        continueRunFromDirectionReview,
         getDiagnostics,
         getRun,
         getStatus,

@@ -267,6 +267,65 @@ module.exports = function registerCreativeKnowledgeRoutes(app, context) {
         }
     });
 
+    app.get('/api/creative-knowledge/visual-dna/overview', (req, res) => {
+        try {
+            res.json(service.buildVisualDnaOverview(req.query || {}));
+        } catch (error) {
+            res.status(500).json({
+                success: false,
+                message: '获取方向标签总览失败: ' + error.message
+            });
+        }
+    });
+
+    app.get('/api/creative-knowledge/direction-tags/overview', (req, res) => {
+        try {
+            res.json(service.buildDirectionTagsOverview(req.query || {}));
+        } catch (error) {
+            res.status(500).json({
+                success: false,
+                message: '获取方向标签总览失败: ' + error.message
+            });
+        }
+    });
+
+    app.post('/api/creative-knowledge/direction-tags/refresh', (req, res) => {
+        try {
+            res.json(service.refreshDirectionTags(req.query || {}));
+        } catch (error) {
+            res.status(500).json({
+                success: false,
+                message: '刷新方向标签失败: ' + error.message
+            });
+        }
+    });
+
+    app.get('/api/creative-knowledge/visual-dna/workbench', (req, res) => {
+        try {
+            res.json(service.buildVisualDnaWorkbench(req.query || {}));
+        } catch (error) {
+            res.status(500).json({
+                success: false,
+                message: '获取方向标签工作台失败: ' + error.message
+            });
+        }
+    });
+
+    app.post('/api/creative-knowledge/visual-dna/rule-drafts', (req, res) => {
+        try {
+            const result = service.generateVisualDnaRuleDrafts(req.body || {}, req.query || {});
+            if (!result.success) {
+                return res.status(400).json(result);
+            }
+            res.json(result);
+        } catch (error) {
+            res.status(500).json({
+                success: false,
+                message: '生成方向标签规则草案失败: ' + error.message
+            });
+        }
+    });
+
     app.post('/api/creative-knowledge/import', (req, res) => {
         try {
             res.json(service.importKnowledge(req.body || {}));
@@ -296,6 +355,97 @@ module.exports = function registerCreativeKnowledgeRoutes(app, context) {
             res.status(500).json({
                 success: false,
                 message: '读取创意方向失败: ' + error.message
+            });
+        }
+    });
+
+    app.get('/api/creative-knowledge/directions/:directionId/visual-dna', (req, res) => {
+        try {
+            const result = service.getDirectionVisualDna(req.params.directionId, req.query || {});
+            if (!result.success) {
+                return res.status(404).json(result);
+            }
+            res.json(result);
+        } catch (error) {
+            res.status(500).json({
+                success: false,
+                message: '获取方向标签失败: ' + error.message
+            });
+        }
+    });
+
+    app.get('/api/creative-knowledge/directions/:directionId/tags', (req, res) => {
+        try {
+            const result = service.getDirectionTags(req.params.directionId, req.query || {});
+            if (!result.success) {
+                return res.status(404).json(result);
+            }
+            res.json(result);
+        } catch (error) {
+            res.status(500).json({
+                success: false,
+                message: '获取方向标签失败: ' + error.message
+            });
+        }
+    });
+
+    app.post('/api/creative-knowledge/directions/:directionId/tags/analyze', async (req, res) => {
+        try {
+            const result = await service.analyzeDirectionTagsFromReferences(req.params.directionId, req.body || {}, req.query || {});
+            if (!result.success) {
+                return res.status(400).json(result);
+            }
+            res.json(result);
+        } catch (error) {
+            res.status(400).json({
+                success: false,
+                message: '分析方向标签失败: ' + error.message
+            });
+        }
+    });
+
+    app.post('/api/creative-knowledge/directions/:directionId/tags/reanalyze', async (req, res) => {
+        try {
+            const result = await service.analyzeDirectionTagsFromReferences(
+                req.params.directionId,
+                { ...(req.body || {}), force: true },
+                req.query || {}
+            );
+            if (!result.success) {
+                return res.status(400).json(result);
+            }
+            res.json(result);
+        } catch (error) {
+            res.status(400).json({
+                success: false,
+                message: '重新分析参考图失败: ' + error.message
+            });
+        }
+    });
+
+    app.post('/api/creative-knowledge/direction-tags/batch-analyze', async (req, res) => {
+        try {
+            const result = await service.batchAnalyzeDirectionTagsFromReferences(req.body || {}, req.query || {});
+            res.status(result.success ? 200 : 207).json(result);
+        } catch (error) {
+            res.status(400).json({
+                success: false,
+                message: '批量补齐方向标签失败: ' + error.message
+            });
+        }
+    });
+
+    app.post('/api/creative-knowledge/directions/:directionId/tags/manual', (req, res) => {
+        try {
+            const result = service.updateDirectionTagsManualOverride(req.params.directionId, req.body || {}, req.query || {});
+            if (!result.success) {
+                return res.status(400).json(result);
+            }
+            res.json(result);
+        } catch (error) {
+            res.status(400).json({
+                success: false,
+                message: '保存方向标签失败: ' + error.message
             });
         }
     });
@@ -398,6 +548,9 @@ module.exports = function registerCreativeKnowledgeRoutes(app, context) {
             if (!result.success && result.needsConfirmation) {
                 return res.status(409).json(result);
             }
+            if (!result.success && result.code === 'draft_preflight_error') {
+                return res.status(400).json(result);
+            }
             if (!result.success) {
                 return res.status(404).json(result);
             }
@@ -435,7 +588,7 @@ module.exports = function registerCreativeKnowledgeRoutes(app, context) {
         } catch (error) {
             res.status(400).json({
                 success: false,
-                message: '分析参考图 DNA 失败: ' + error.message
+                message: '分析参考图方向标签失败: ' + error.message
             });
         }
     });

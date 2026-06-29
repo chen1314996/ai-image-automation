@@ -1,7 +1,9 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const axios = require('axios');
 const XLSX = require('xlsx');
+const { readSecrets } = require('../../../secrets-store');
 const { importDirections } = require('./direction-importer');
 const { importTopMaterials } = require('./top-material-importer');
 const { indexReferenceImages } = require('./reference-image-indexer');
@@ -21,6 +23,16 @@ const {
     removeRuleFromBuckets,
     upsertDrafts
 } = require('./feedback-learning');
+const {
+    DIRECTION_TAGS_FILE,
+    buildDirectionTagRecords,
+    buildDirectionTagsIndex,
+    directionMatchKey,
+    emptyDirectionTags,
+    isCleanDirectionTag,
+    normalizeTag,
+    normalizeDirectionTagsForRecord
+} = require('../direction-tags');
 
 const DEFAULT_REFERENCE_FOLDER = 'D:\\工作\\自动化工作流1\\创意拓展\\参考图';
 const REVIEW_STATUSES = new Set(['unreviewed', 'good', 'normal', 'bad', 'rejected']);
@@ -49,6 +61,10 @@ const REFERENCE_POOL_ROLES = {
 };
 const REFERENCE_POOL_ALLOWED_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif']);
 const REFERENCE_POOL_MAX_BYTES = 20 * 1024 * 1024;
+const DIRECTION_TAG_REFERENCE_VISION_SOURCE = 'reference-vision';
+const DIRECTION_TAG_REFERENCE_MAX_IMAGES = 3;
+const DIRECTION_TAG_VISION_TIMEOUT_MS = 180000;
+const DIRECTION_TAG_VISION_MAX_TOKENS = 1400;
 
 function nowIso() {
     return new Date().toISOString();
@@ -401,6 +417,175 @@ function findSimilarDirections(directions = [], candidate = {}, options = {}) {
         .slice(0, 8);
 }
 
+function textValues(value) {
+    if (Array.isArray(value)) {
+        return value.map(normalizeText).filter(Boolean);
+    }
+    const text = normalizeText(value);
+    return text ? [text] : [];
+}
+
+function firstTextValue(value) {
+    return textValues(value)[0] || '';
+}
+
+function draftDimensionValue(draft = {}, key = '') {
+    const dimensions = draft.dimensions && typeof draft.dimensions === 'object' ? draft.dimensions : {};
+    const aliases = {
+        atmosphere: ['atmosphere', 'mood', '氛围'],
+        camera: ['camera', 'perspective', 'view', '视角'],
+        event: ['event', 'narrative', 'action', '事件'],
+        visualHook: ['visualHook', 'hook', 'pictureHook', '钩子']
+    };
+    const keys = aliases[key] || [key];
+    for (const alias of keys) {
+        const value = firstTextValue(dimensions[alias]);
+        if (value) return value;
+    }
+    if (key === 'visualHook') {
+        return firstTextValue(draft.visualHook || draft.hook || draft.pictureHook);
+    }
+    return '';
+}
+
+function buildVisualDnaFromDraft(draft = {}) {
+    return {
+        atmosphere: textValues(draftDimensionValue(draft, 'atmosphere')),
+        camera: textValues(draftDimensionValue(draft, 'camera')),
+        event: textValues(draftDimensionValue(draft, 'event')),
+        visualHook: textValues(draftDimensionValue(draft, 'visualHook'))
+    };
+}
+
+function duplicateRiskLevel(draft = {}, similarDirections = []) {
+    const text = normalizeText(draft.duplicateRisk || draft.dedupeReason || draft.reason).toLowerCase();
+    const similarCount = safeArray(similarDirections).length;
+    if (/高|high|严重|strong/.test(text) || similarCount >= 3) return 'high';
+    if (/中|medium|重复|similar|相似|same|merge|合并/.test(text) || similarCount > 0 || text) return 'medium';
+    return 'low';
+}
+
+function countAcceptedDirectionReferences(direction = {}, referenceImages = []) {
+    if (!direction || !direction.id) return 0;
+    return safeArray(referenceImages).filter(image => {
+        if (!image || image.status === 'archived' || image.status === 'deleted' || image.status === 'rejected') return false;
+        if (image.directionId === direction.id) return true;
+        return safeArray(image.matchedDirectionIds).includes(direction.id);
+    }).length;
+}
+
+function draftReferenceCount(draft = {}, acceptedDirection = null, referenceImages = []) {
+    const explicitIds = safeArray(draft.referenceImageIds).filter(Boolean).length;
+    const poolCount = safeArray(draft.referencePool).filter(reference => reference && reference.status !== 'archived' && reference.status !== 'deleted' && reference.status !== 'rejected').length;
+    const acceptedCount = countAcceptedDirectionReferences(acceptedDirection, referenceImages);
+    const selectedCount = draft.selectedAsReference === true ? 1 : 0;
+    return Math.min(3, Math.max(explicitIds, poolCount, acceptedCount, selectedCount));
+}
+
+function draftSuccessCaseCount(draft = {}, context = {}) {
+    const feedbackEntries = safeArray(context.feedbackEntries);
+    const evidenceEntries = safeArray(context.evidenceEntries);
+    const directionId = draft.acceptedDirectionId || '';
+    const pathKey = normalizeForDuplicate(draft.path || draft.name);
+    const isAcceptedDraft = normalizeDirectionStatus(draft.status, 'draft') === 'accepted' || Boolean(directionId);
+    const feedbackCount = feedbackEntries.filter(entry => {
+        if (!entry || !['good', 'normal'].includes(normalizeText(entry.status || entry.value).toLowerCase())) return false;
+        if (entry.directionDraftId && entry.directionDraftId === draft.id) return true;
+        if (directionId && entry.directionId === directionId) return true;
+        const entryPath = normalizeForDuplicate(entry.directionPath || entry.targetDirectionPath || entry.promptDirection || entry.newDirectionName);
+        if (!pathKey || !entryPath) return false;
+        return isAcceptedDraft
+            ? (pathKey === entryPath || pathKey.includes(entryPath) || entryPath.includes(pathKey))
+            : pathKey === entryPath;
+    }).length;
+    const evidenceCount = evidenceEntries.filter(entry => {
+        if (!entry) return false;
+        if (directionId && entry.targetDirectionId === directionId) return true;
+        const entryPath = normalizeForDuplicate(evidenceDirectionText(entry));
+        if (!pathKey || !entryPath) return false;
+        return isAcceptedDraft
+            ? (pathKey === entryPath || pathKey.includes(entryPath) || entryPath.includes(pathKey))
+            : pathKey === entryPath;
+    }).length;
+    return feedbackCount + evidenceCount;
+}
+
+function buildDirectionDraftGovernance(draft = {}, directions = [], context = {}) {
+    const acceptedDirection = draft.acceptedDirectionId
+        ? safeArray(directions).find(direction => direction && direction.id === draft.acceptedDirectionId)
+        : null;
+    const similarDirections = Array.isArray(draft.similarDirections)
+        ? draft.similarDirections
+        : findSimilarDirections(directions, draft, { excludeId: draft.acceptedDirectionId || '' });
+    const visualDna = buildVisualDnaFromDraft(draft);
+    const dnaFields = [
+        { key: 'name', label: '名称', ok: Boolean(normalizeText(draft.name)) },
+        { key: 'description', label: '描述', ok: Boolean(normalizeText(draft.description)) },
+        { key: 'atmosphere', label: '氛围', ok: visualDna.atmosphere.length > 0 },
+        { key: 'camera', label: '视角', ok: visualDna.camera.length > 0 },
+        { key: 'event', label: '事件', ok: visualDna.event.length > 0 },
+        { key: 'visualHook', label: '视觉钩子', ok: visualDna.visualHook.length > 0 }
+    ];
+    const dnaCompleteCount = dnaFields.filter(field => field.ok).length;
+    const referenceCount = draftReferenceCount(draft, acceptedDirection, context.referenceImages);
+    const promptCount = compactPromptList(draft.prompts).length;
+    const successCaseCount = draftSuccessCaseCount(draft, context);
+    const riskLevel = duplicateRiskLevel(draft, similarDirections);
+    const hardErrors = [];
+    const warnings = [];
+    if (!normalizeText(draft.name)) hardErrors.push('必须有名称');
+    if (!normalizeText(draft.path)) hardErrors.push('必须有路径');
+    if (!normalizeText(draft.description)) warnings.push('建议补充 description');
+    ['atmosphere', 'camera', 'event', 'visualHook'].forEach(key => {
+        if (!dnaFields.find(field => field.key === key && field.ok)) {
+            warnings.push(`建议补充 ${dnaFields.find(field => field.key === key).label}`);
+        }
+    });
+    if (referenceCount <= 0) warnings.push('如无参考图，采纳后会标记为待补图');
+    if (riskLevel === 'high') warnings.push('重复风险高，建议合并或人工复核');
+    return {
+        dnaCompleteness: {
+            count: dnaCompleteCount,
+            total: dnaFields.length,
+            fields: dnaFields,
+            missing: dnaFields.filter(field => !field.ok).map(field => field.key),
+            label: `${dnaCompleteCount} / ${dnaFields.length}`
+        },
+        visualDna,
+        referenceCount,
+        referenceTarget: 3,
+        promptSampleCount: promptCount,
+        successCaseCount,
+        duplicateRiskLevel: riskLevel,
+        duplicateRiskLabel: riskLevel === 'high' ? '高' : (riskLevel === 'medium' ? '中' : '低'),
+        similarDirectionCount: similarDirections.length,
+        preflight: {
+            hardErrors,
+            warnings,
+            canAccept: hardErrors.length === 0,
+            canDirectAccept: hardErrors.length === 0 && warnings.length === 0,
+            needsHumanEdit: hardErrors.length > 0 || warnings.length > 0,
+            needsReference: referenceCount <= 0,
+            shouldMerge: riskLevel === 'high',
+            needsDna: dnaCompleteCount < dnaFields.length,
+            hasGoodEvidence: successCaseCount > 0
+        }
+    };
+}
+
+function directionDraftMatchesGovernance(draft = {}, filter = '') {
+    const governance = draft.governance || {};
+    const preflight = governance.preflight || {};
+    if (!filter) return true;
+    if (filter === 'missing_dna') return preflight.needsDna === true;
+    if (filter === 'missing_reference') return Number(governance.referenceCount) < Number(governance.referenceTarget || 3);
+    if (filter === 'high_duplicate_risk') return governance.duplicateRiskLevel === 'high';
+    if (filter === 'has_good_evidence') return preflight.hasGoodEvidence === true || Number(governance.successCaseCount) > 0;
+    if (filter === 'ready_to_accept') return preflight.canDirectAccept === true && normalizeDirectionStatus(draft.status, 'draft') === 'draft';
+    if (filter === 'needs_edit') return preflight.needsHumanEdit === true;
+    return true;
+}
+
 function parseMarkdownTableRow(line) {
     return String(line || '')
         .trim()
@@ -488,19 +673,83 @@ function candidateDirectionsToDraftCandidates(candidateDirections = []) {
                     prompt: normalizeText(typeof prompt === 'string' ? prompt : (prompt && (prompt.prompt || prompt.finalPrompt || prompt.promptText)))
                 }))
                 .filter(prompt => prompt.prompt);
+            const dimensions = item.dimensions && typeof item.dimensions === 'object' ? item.dimensions : {};
             return {
+                reviewKey: normalizeText(item.reviewKey || item.extensionKey || item.key || item.id),
+                extensionKey: normalizeText(item.extensionKey || item.key || item.id),
                 referenceDirection: normalizeText(item.sourcePath || item.referenceDirection || ''),
-                name: normalizeText(item.label || item.name || item.newDirectionName || `候选方向${index + 1}`),
-                description: normalizeText(item.description),
-                sourceStrategy: normalizeText(item.sourceStrategy || item.reason),
+                name: normalizeText(item.label || item.name || item.newDirectionName || item.extensionName || `候选方向${index + 1}`),
+                description: normalizeText(item.description || item.extensionDescription || item.directionDescription),
+                sourceStrategy: normalizeText(item.sourceStrategy || item.productionAdvice || item.reason),
                 targetLevel: normalizeText(item.targetLevel),
-                dimensions: item.dimensions && typeof item.dimensions === 'object' ? item.dimensions : {},
-                duplicateRisk: normalizeText(item.duplicateRisk),
-                reason: normalizeText(item.reason),
+                dimensions,
+                visualHook: normalizeText(item.visualHook || item.hook || item.pictureHook || draftDimensionValue({ dimensions }, 'visualHook')),
+                riskNote: normalizeText(item.riskNote || item.qualityRisk || item.duplicateRisk),
+                productionAdvice: normalizeText(item.productionAdvice || item.makingAdvice || item.sourceStrategy),
+                avoidRules: safeArray(item.avoidRules).map(normalizeText).filter(Boolean),
+                duplicateRisk: normalizeText(item.duplicateRisk || item.dedupeReason || item.dedupReason),
+                reason: normalizeText(item.reason || item.scoreSummary || item.dedupeReason),
                 prompts
             };
         })
         .filter(item => item.name || item.description || item.prompts.length);
+}
+
+function reviewCandidatesToDraftCandidates(candidates = [], sourceDirection = {}, requestedCandidateKeys = new Set()) {
+    return safeArray(candidates)
+        .filter(candidate => {
+            if (!candidate || candidate.status === 'deleted') return false;
+            if (!requestedCandidateKeys.size) return true;
+            const keys = [
+                candidate.reviewKey,
+                candidate.extensionKey,
+                candidate.key,
+                candidate.id,
+                candidate.name,
+                candidate.newDirectionName,
+                candidate.extensionName
+            ].map(normalizeText).filter(Boolean);
+            return keys.some(key => requestedCandidateKeys.has(key));
+        })
+        .map(candidate => ({
+            reviewKey: normalizeText(candidate.reviewKey || candidate.extensionKey || candidate.key || candidate.id),
+            extensionKey: normalizeText(candidate.extensionKey || candidate.key || candidate.id),
+            referenceDirection: sourceDirection.name || sourceDirection.path || '',
+            name: candidate.name || candidate.newDirectionName || candidate.extensionName,
+            description: candidate.description || candidate.extensionDescription || '',
+            sourceStrategy: candidate.productionAdvice || candidate.sourceStrategy || '',
+            directionTags: safeArray(candidate.directionTags).length
+                ? safeArray(candidate.directionTags).map(normalizeText).filter(Boolean)
+                : safeArray(candidate.mainTags).concat(safeArray(candidate.extraTags)).map(normalizeText).filter(Boolean),
+            mainTags: safeArray(candidate.mainTags).map(normalizeText).filter(Boolean),
+            extraTags: safeArray(candidate.extraTags).map(normalizeText).filter(Boolean),
+            riskTags: safeArray(candidate.riskTags).map(normalizeText).filter(Boolean),
+            dimensions: candidate.dimensions || {},
+            duplicateRisk: candidate.dedupeReason || candidate.duplicateRisk || '',
+            reason: candidate.scoreSummary || candidate.dedupeReason || candidate.reason || '',
+            prompts: safeArray(candidate.prompts),
+            visualHook: candidate.visualHook || '',
+            riskNote: candidate.riskNote || '',
+            productionAdvice: candidate.productionAdvice || '',
+            avoidRules: safeArray(candidate.avoidRules)
+        }))
+        .filter(item => item.name || item.description || item.prompts.length);
+}
+
+function filterDraftCandidatesByKeys(candidates = [], requestedCandidateKeys = new Set()) {
+    if (!requestedCandidateKeys.size) return candidates;
+    return safeArray(candidates).filter(candidate => {
+        const keys = [
+            candidate.reviewKey,
+            candidate.extensionKey,
+            candidate.key,
+            candidate.id,
+            candidate.name,
+            candidate.newDirectionName,
+            candidate.extensionName
+        ].map(normalizeText).filter(Boolean);
+        return keys.some(key => requestedCandidateKeys.has(key));
+    });
 }
 
 function extractDraftCandidatesFromMarkdown(markdown = '') {
@@ -696,6 +945,175 @@ function fileExists(filePath) {
     } catch {
         return false;
     }
+}
+
+function directionReferenceTagStatus(count = 0, analyzed = false) {
+    const referenceCount = Math.max(0, Number(count) || 0);
+    if (referenceCount <= 0) {
+        return {
+            status: 'missing',
+            bucket: '0',
+            label: '0 图',
+            message: '待补参考图',
+            needsMoreReferences: true
+        };
+    }
+    if (referenceCount < DIRECTION_TAG_REFERENCE_MAX_IMAGES) {
+        return {
+            status: analyzed ? 'insufficient-analyzed' : 'insufficient',
+            bucket: '1-2',
+            label: `${referenceCount} 图`,
+            message: '参考图偏少',
+            needsMoreReferences: true
+        };
+    }
+    return {
+        status: analyzed ? 'analyzed' : 'ready',
+        bucket: '3+',
+        label: `${referenceCount} 图`,
+        message: analyzed ? '已分析' : '可分析',
+        needsMoreReferences: false
+    };
+}
+
+function compactText(value, maxLength = 800) {
+    const text = String(value || '').replace(/\s+/g, ' ').trim();
+    return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
+}
+
+function extractWinkyText(data) {
+    if (typeof data === 'string') return data.trim();
+    if (!data || typeof data !== 'object') return '';
+    if (typeof data.output_text === 'string' && data.output_text.trim()) return data.output_text.trim();
+    if (typeof data.text === 'string' && data.text.trim()) return data.text.trim();
+    const choice = Array.isArray(data.choices) ? data.choices[0] : null;
+    if (choice) {
+        if (typeof choice.text === 'string' && choice.text.trim()) return choice.text.trim();
+        const content = choice.message && choice.message.content;
+        if (typeof content === 'string' && content.trim()) return content.trim();
+        if (Array.isArray(content)) {
+            const text = content
+                .map(item => item && (item.text || item.content || ''))
+                .filter(Boolean)
+                .join('\n')
+                .trim();
+            if (text) return text;
+        }
+    }
+    return '';
+}
+
+function parseJsonObject(rawText = '') {
+    const text = String(rawText || '').trim();
+    const candidates = [
+        text,
+        text.replace(/^```(?:json)?\s*/i, '').replace(/```$/i, '').trim()
+    ];
+    const first = text.indexOf('{');
+    const last = text.lastIndexOf('}');
+    if (first !== -1 && last > first) candidates.push(text.slice(first, last + 1));
+    for (const candidate of candidates) {
+        try {
+            return JSON.parse(candidate);
+        } catch (_) {}
+    }
+    throw new Error(`Lumos Winky 未返回有效 JSON：${compactText(text, 220)}`);
+}
+
+function normalizeDirectionTagList(value, limit = 5) {
+    const input = Array.isArray(value) ? value : String(value || '').split(/[、，,;\n|/]+/);
+    const seen = new Set();
+    const output = [];
+    input.forEach(item => {
+        const tag = normalizeTag(item);
+        const key = directionMatchKey(tag);
+        if (!tag || !key || seen.has(key)) return;
+        if (!isCleanDirectionTag(tag, { maxLength: 8 })) return;
+        seen.add(key);
+        output.push(tag);
+    });
+    return output.slice(0, limit);
+}
+
+function normalizeDirectionTagVisionResult(parsed = {}, fallback = {}) {
+    const mainTags = normalizeDirectionTagList(parsed.mainTags || parsed.primaryTags || parsed.tags, 5);
+    const extraTags = normalizeDirectionTagList(parsed.extraTags || parsed.secondaryTags || parsed.relatedTags, 8)
+        .filter(tag => !mainTags.some(main => directionMatchKey(main) === directionMatchKey(tag)));
+    const riskTags = normalizeDirectionTagList(parsed.riskTags || parsed.risks || parsed.avoidTags, 6);
+    const summary = compactText(parsed.summary || parsed.visualSummary || parsed.description || fallback.summary, 180);
+    const rawConfidence = Number(parsed.confidence);
+    const confidence = Number.isFinite(rawConfidence)
+        ? Math.max(0, Math.min(1, Number(rawConfidence.toFixed(2))))
+        : Number(fallback.confidence) || 0.6;
+    return {
+        mainTags,
+        extraTags,
+        tags: mainTags.concat(extraTags).slice(0, 12),
+        riskTags,
+        summary,
+        confidence
+    };
+}
+
+function readWinkyVisionConfig() {
+    const secrets = readSecrets();
+    const config = {
+        apiKey: String(process.env.WINKY_API_KEY || secrets.winkyApiKey || secrets.WINKY_API_KEY || '').trim(),
+        apiUrl: String(process.env.WINKY_API_BASE_URL || secrets.winkyApiUrl || secrets.WINKY_API_BASE_URL || '').trim(),
+        model: String(process.env.WINKY_MODEL || secrets.winkyModel || secrets.WINKY_MODEL || '').trim(),
+        provider: String(process.env.WINKY_PROVIDER || secrets.winkyProvider || secrets.WINKY_PROVIDER || '').trim()
+    };
+    if (!config.apiKey || !config.apiUrl || !config.model) {
+        throw new Error('Lumos Winky 配置不完整：需要 WINKY_API_KEY / WINKY_API_BASE_URL / WINKY_MODEL。');
+    }
+    return config;
+}
+
+function shouldUseMaxCompletionTokens(model = '') {
+    return /^gpt-5/i.test(String(model || '').trim());
+}
+
+function imageFileToDataUrl(filePath = '') {
+    const ext = path.extname(filePath).toLowerCase();
+    const mime = ext === '.png'
+        ? 'image/png'
+        : ext === '.webp'
+            ? 'image/webp'
+            : ext === '.gif'
+                ? 'image/gif'
+                : 'image/jpeg';
+    return `data:${mime};base64,${fs.readFileSync(filePath).toString('base64')}`;
+}
+
+function buildDirectionTagVisionPrompt(direction = {}, references = []) {
+    const referenceNames = references
+        .map((reference, index) => `${index + 1}. ${reference.fileName || path.basename(reference.filePath || '') || reference.id}`)
+        .join('\n');
+    return `你是游戏买量创意方向库的视觉整理助手。请只根据方向描述和参考图画面，提炼用户一眼能看懂的“方向标签”。
+
+要求：
+1. 不要输出分类名，不要使用“氛围、视角、事件、钩子、DNA、visualHook”等字样。
+2. 标签必须是中文短标签，建议 2-6 个字，最多 8 个字。
+3. mainTags 输出 3-5 个最关键标签，用来概括这个方向的画面重点。
+4. extraTags 输出 0-8 个可组合拓展标签。
+5. riskTags 输出 0-6 个避坑标签，例如：文字干扰、主体不清、过度科幻、重复构图、品牌露出、画面过静。
+6. summary 用 1 句话概括方向重点，不要写成提示词。
+7. confidence 用 0-1 数字表示你对标签准确度的信心。
+
+方向路径：${direction.path || direction.name || ''}
+方向名称：${direction.name || ''}
+方向描述：${direction.description || '无'}
+参考图：
+${referenceNames || '无'}
+
+只返回 JSON：
+{
+  "mainTags": ["短中文", "短中文", "短中文"],
+  "extraTags": ["短中文"],
+  "riskTags": ["短中文"],
+  "summary": "一句话摘要",
+  "confidence": 0.85
+}`;
 }
 
 function compactAssetPostprocess(postprocess = {}) {
@@ -940,8 +1358,365 @@ function compactReferenceImage(image = {}) {
         imageUrl: exists && staticPath
             ? `/api/creative-knowledge/reference-static/${staticPath}`
             : exists && image.id
-                ? `/api/creative-knowledge/ref-files/${encodeURIComponent(image.id)}`
+                ? `/api/creative-knowledge/references/${encodeURIComponent(image.id)}/file`
             : (image.remoteUrl || '')
+    };
+}
+
+const VISUAL_DNA_DIMENSIONS = [
+    'atmosphere',
+    'camera',
+    'event',
+    'scale',
+    'visualHook',
+    'avoid'
+];
+
+const VISUAL_DNA_ALIASES = {
+    atmosphere: ['atmosphere', 'mood', 'emotion', 'tone', 'feeling', '氛围', '情绪'],
+    camera: ['camera', 'perspective', 'view', 'angle', 'lens', '视角', '镜头'],
+    event: ['event', 'action', 'narrative', 'mechanism', 'subjectAction', 'sceneMechanism', '事件', '动作', '机制', '叙事'],
+    scale: ['scale', 'sceneScale', 'landmark', 'scope', '尺度', '规模'],
+    visualHook: ['visualHook', 'hook', 'pictureHook', 'advertisingHook', '视觉钩子', '画面抓手', '钩子'],
+    avoid: ['avoid', 'risk', 'riskNote', 'mustAvoid', 'negativePrompt', '避坑', '风险', '避免']
+};
+
+const CREATIVE_AXIS_KEY_MAP = {
+    emotion: 'atmosphere',
+    mood: 'atmosphere',
+    atmosphere: 'atmosphere',
+    camera: 'camera',
+    perspective: 'camera',
+    view: 'camera',
+    event: 'event',
+    action: 'event',
+    narrative: 'event',
+    mechanism: 'event',
+    'scene-mechanism': 'event',
+    'subject-action': 'event',
+    scale: 'scale',
+    landmark: 'scale',
+    hook: 'visualHook',
+    visualhook: 'visualHook',
+    avoid: 'avoid',
+    risk: 'avoid'
+};
+
+const VISUAL_DNA_TEXT_HINTS = {
+    atmosphere: [
+        '紧张危机',
+        '史诗壮阔',
+        '温暖希望',
+        '神秘未知',
+        '荒凉孤独',
+        '冰雪危机',
+        '危机感',
+        '希望感',
+        '压迫感',
+        '紧张',
+        '危险',
+        '史诗',
+        '壮阔',
+        '温暖',
+        '神秘',
+        '荒凉',
+        '治愈',
+        '轻松'
+    ],
+    camera: [
+        '第一人称',
+        '俯瞰',
+        '鸟瞰',
+        '平视',
+        '低机位',
+        '近景',
+        '远景',
+        '特写',
+        '宽幅',
+        '广角',
+        '主视角'
+    ],
+    event: [
+        '救援',
+        '撤离',
+        '逃生',
+        '发现',
+        '护送',
+        '搭桥',
+        '交接',
+        '接力',
+        '补给',
+        '探索',
+        '求救',
+        '对抗',
+        '建造',
+        '修复',
+        '穿越',
+        '搜寻',
+        '采集',
+        '交易',
+        '警示',
+        '守护'
+    ],
+    scale: ['巨型地标', '地标', '大场景', '室内', '室外', '微缩', '宽幅']
+};
+
+function normalizeVisualDnaItems(value, options = {}) {
+    if (value === undefined || value === null) return [];
+    if (Array.isArray(value)) {
+        return value.flatMap(item => normalizeVisualDnaItems(item, options));
+    }
+    if (typeof value === 'object') {
+        return Object.values(value).flatMap(item => normalizeVisualDnaItems(item, options));
+    }
+    const text = normalizeText(value);
+    if (!text) return [];
+    if (options.keepSentence) return [text.slice(0, 180)];
+    return text
+        .split(/[、,，;；\n\r/]+/)
+        .map(item => normalizeText(item).replace(/^[：:]+/, '').slice(0, 80))
+        .filter(Boolean);
+}
+
+function createVisualDnaAccumulator() {
+    const values = {};
+    const sources = [];
+    VISUAL_DNA_DIMENSIONS.forEach(key => {
+        values[key] = new Map();
+    });
+    return { values, sources };
+}
+
+function addVisualDnaValue(accumulator, key, value, source = {}, options = {}) {
+    if (!accumulator || !accumulator.values[key]) return;
+    const items = normalizeVisualDnaItems(value, options);
+    items.forEach(item => {
+        if (!item) return;
+        const current = accumulator.values[key].get(item) || { value: item, count: 0, sources: [] };
+        current.count += 1;
+        if (source.type && current.sources.length < 5) {
+            current.sources.push({
+                type: source.type,
+                id: source.id || '',
+                field: source.field || key,
+                label: source.label || ''
+            });
+        }
+        accumulator.values[key].set(item, current);
+    });
+    if (items.length && source.type) {
+        accumulator.sources.push({
+            type: source.type,
+            id: source.id || '',
+            field: source.field || key,
+            label: source.label || ''
+        });
+    }
+}
+
+function getObjectValueByAliases(source = {}, aliases = []) {
+    if (!source || typeof source !== 'object') return undefined;
+    for (const alias of aliases) {
+        if (source[alias] !== undefined && source[alias] !== null && source[alias] !== '') {
+            return source[alias];
+        }
+    }
+    const entries = Object.entries(source);
+    for (const alias of aliases) {
+        const normalizedAlias = String(alias).toLowerCase().replace(/[\s_-]+/g, '');
+        const match = entries.find(([key, value]) => (
+            value !== undefined &&
+            value !== null &&
+            value !== '' &&
+            String(key).toLowerCase().replace(/[\s_-]+/g, '') === normalizedAlias
+        ));
+        if (match) return match[1];
+    }
+    return undefined;
+}
+
+function addVisualDnaFromText(accumulator, text, source = {}) {
+    const normalized = normalizeText(text);
+    if (!normalized) return;
+    Object.entries(VISUAL_DNA_TEXT_HINTS).forEach(([key, hints]) => {
+        hints.forEach(hint => {
+            if (normalized.includes(hint)) {
+                addVisualDnaValue(accumulator, key, hint, { ...source, field: key });
+            }
+        });
+    });
+    if (!accumulator.values.visualHook.size) {
+        const sentence = normalized.split(/[。.!！?？\n\r]+/).map(normalizeText).find(Boolean);
+        if (sentence && sentence.length >= 8) {
+            addVisualDnaValue(accumulator, 'visualHook', sentence.slice(0, 72), { ...source, field: 'description' }, { keepSentence: true });
+        }
+    }
+}
+
+function addVisualDnaFromAxes(accumulator, axes, source = {}) {
+    normalizeVisualDnaItems(axes).forEach(axis => {
+        const parts = axis.split(/[:：]/);
+        if (parts.length < 2) {
+            addVisualDnaFromText(accumulator, axis, { ...source, field: 'creativeAxes' });
+            return;
+        }
+        const rawKey = normalizeText(parts.shift()).toLowerCase();
+        const value = normalizeText(parts.join(':'));
+        const key = CREATIVE_AXIS_KEY_MAP[rawKey] || CREATIVE_AXIS_KEY_MAP[rawKey.replace(/[\s_]+/g, '-')];
+        if (key && value) {
+            addVisualDnaValue(accumulator, key, value, { ...source, field: 'creativeAxes' });
+        } else {
+            addVisualDnaFromText(accumulator, value || axis, { ...source, field: 'creativeAxes' });
+        }
+    });
+}
+
+function addVisualDnaFromRecord(accumulator, record = {}, source = {}) {
+    if (!record || typeof record !== 'object') return;
+    const explicitDna = record.visualDna && typeof record.visualDna === 'object' ? record.visualDna : null;
+    if (explicitDna) {
+        VISUAL_DNA_DIMENSIONS.forEach(key => {
+            const value = getObjectValueByAliases(explicitDna, VISUAL_DNA_ALIASES[key]);
+            addVisualDnaValue(accumulator, key, value, { ...source, field: `visualDna.${key}` });
+        });
+    }
+
+    const dimensions = record.dimensions && typeof record.dimensions === 'object' ? record.dimensions : null;
+    if (dimensions) {
+        addVisualDnaValue(accumulator, 'atmosphere', getObjectValueByAliases(dimensions, VISUAL_DNA_ALIASES.atmosphere), { ...source, field: 'dimensions.mood' });
+        addVisualDnaValue(accumulator, 'camera', getObjectValueByAliases(dimensions, VISUAL_DNA_ALIASES.camera), { ...source, field: 'dimensions.perspective' });
+        addVisualDnaValue(accumulator, 'event', getObjectValueByAliases(dimensions, VISUAL_DNA_ALIASES.event), { ...source, field: 'dimensions.narrative' });
+        addVisualDnaValue(accumulator, 'scale', getObjectValueByAliases(dimensions, VISUAL_DNA_ALIASES.scale), { ...source, field: 'dimensions.scale' });
+        addVisualDnaValue(accumulator, 'visualHook', getObjectValueByAliases(dimensions, VISUAL_DNA_ALIASES.visualHook), { ...source, field: 'dimensions.hook' });
+    }
+
+    addVisualDnaValue(accumulator, 'visualHook', record.visualHook || record.hook || record.pictureHook, { ...source, field: 'visualHook' }, { keepSentence: true });
+    addVisualDnaValue(accumulator, 'avoid', record.riskNote || record.duplicateRisk || record.mustAvoid, { ...source, field: 'riskNote' }, { keepSentence: true });
+    addVisualDnaFromAxes(accumulator, record.creativeAxes, source);
+    addVisualDnaFromText(accumulator, [
+        record.description,
+        record.productionAdvice,
+        record.prompt,
+        record.promptText,
+        record.finalPrompt
+    ].filter(Boolean).join('。'), { ...source, field: 'description' });
+}
+
+function finalizeVisualDna(accumulator) {
+    const visualDna = {};
+    const topValues = {};
+    VISUAL_DNA_DIMENSIONS.forEach(key => {
+        const sorted = Array.from(accumulator.values[key].values())
+            .sort((a, b) => b.count - a.count || a.value.localeCompare(b.value));
+        visualDna[key] = sorted.slice(0, key === 'visualHook' ? 4 : 6).map(item => item.value);
+        topValues[key] = sorted.slice(0, 8);
+    });
+    const coreKeys = ['atmosphere', 'camera', 'event', 'visualHook'];
+    const filledCoreCount = coreKeys.filter(key => visualDna[key].length > 0).length;
+    return {
+        visualDna,
+        topValues,
+        source: accumulator.sources[0]?.type || 'fallback',
+        sources: accumulator.sources.slice(0, 12),
+        evidenceCount: accumulator.sources.length,
+        confidence: Math.min(0.95, Number((0.2 + filledCoreCount * 0.16 + Math.min(accumulator.sources.length, 8) * 0.04).toFixed(2))),
+        missing: coreKeys.filter(key => visualDna[key].length === 0),
+        summaryText: `视觉 DNA：氛围 ${visualDna.atmosphere[0] || '--'} / 视角 ${visualDna.camera[0] || '--'} / 事件 ${visualDna.event[0] || '--'} / 钩子 ${visualDna.visualHook[0] || '--'}`
+    };
+}
+
+function directionRecordMatches(direction = {}, record = {}) {
+    if (!direction || !record) return false;
+    const directionId = normalizeText(direction.id);
+    const idFields = [
+        record.directionId,
+        record.targetDirectionId,
+        record.sourceDirectionId,
+        record.matchedDirectionId
+    ].map(normalizeText).filter(Boolean);
+    if (directionId && idFields.includes(directionId)) return true;
+
+    const directionPath = normalizeForDuplicate(direction.path || direction.name || direction.id);
+    const recordPath = normalizeForDuplicate(
+        record.directionPath ||
+        record.targetDirectionPath ||
+        record.sourceDirectionPath ||
+        record.path ||
+        record.referenceDirection ||
+        record.directionKey
+    );
+    const recordName = normalizeForDuplicate(record.name || record.newDirectionName || record.extensionName || record.targetDirectionName);
+    if (!directionPath) return false;
+    return Boolean(
+        recordPath && (directionPath === recordPath || directionPath.includes(recordPath) || recordPath.includes(directionPath))
+    ) || Boolean(recordName && directionPath.includes(recordName));
+}
+
+function buildDirectionDefinitionsByName(run = {}) {
+    const definitions = new Map();
+    safeArray(run.directionDefinitions).forEach(definition => {
+        const keys = [
+            definition.newDirectionName,
+            definition.name,
+            definition.extensionName,
+            definition.extensionKey
+        ].map(normalizeText).filter(Boolean);
+        keys.forEach(key => definitions.set(key, definition));
+    });
+    return definitions;
+}
+
+function compactDirectionCandidate(candidate = {}, status = 'selected', index = 0, definitions = new Map()) {
+    const name = normalizeText(candidate.name || candidate.newDirectionName || candidate.extensionName || candidate.extensionKey || `候选方向 ${index + 1}`);
+    const definition = definitions.get(name) || definitions.get(normalizeText(candidate.extensionKey)) || {};
+    const tagFallback = normalizeDirectionTagsForRecord({
+        ...definition,
+        ...candidate,
+        name,
+        description: candidate.description || definition.description || definition.newDirectionName || ''
+    });
+    return {
+        status,
+        index: index + 1,
+        name,
+        description: normalizeText(candidate.description || definition.description || definition.newDirectionName || ''),
+        directionTags: safeArray(candidate.directionTags).length ? safeArray(candidate.directionTags) : tagFallback.tags,
+        riskTags: safeArray(candidate.riskTags).length ? safeArray(candidate.riskTags) : tagFallback.riskTags,
+        extensionKey: normalizeText(candidate.extensionKey || definition.extensionKey || ''),
+        extensionType: normalizeText(candidate.extensionType || definition.extensionType || candidate.sourceStrategy || definition.sourceStrategy || ''),
+        score: Number(candidate.score) || 0,
+        scoreSummary: normalizeText(candidate.scoreSummary || candidate.reason || ''),
+        visualHook: normalizeText(candidate.visualHook || definition.visualHook || ''),
+        dedupeReason: normalizeText(candidate.dedupeReason || candidate.duplicateReason || candidate.reason || ''),
+        riskNote: normalizeText(candidate.riskNote || candidate.duplicateRisk || ''),
+        productionAdvice: normalizeText(candidate.productionAdvice || definition.productionAdvice || ''),
+        creativeAxes: safeArray(candidate.creativeAxes || definition.creativeAxes),
+        promptCount: Number(candidate.promptCount) || Number(definition.promptCount) || 0
+    };
+}
+
+function buildDirectionCandidateReview(run = {}) {
+    const report = run.directionPlanReport || {};
+    if (!report || typeof report !== 'object' || (!report.selectedExtensions && !report.rejectedExtensions)) {
+        return null;
+    }
+    const definitions = buildDirectionDefinitionsByName(run);
+    const selected = safeArray(report.selectedExtensions)
+        .concat(safeArray(report.lowScoreSelectedExtensions))
+        .map((candidate, index) => compactDirectionCandidate(candidate, 'selected', index, definitions));
+    const rejected = safeArray(report.rejectedExtensions || report.discardedExtensions || report.filteredExtensions)
+        .map((candidate, index) => compactDirectionCandidate(candidate, 'rejected', index, definitions));
+    return {
+        success: report.success !== false,
+        checkedAt: report.checkedAt || '',
+        selectedCount: Number(report.selectedExtensionCount) || selected.length,
+        rejectedCount: Number(report.rejectedExtensionCount) || rejected.length,
+        candidateCount: Number(report.candidateExtensionCount) || selected.length + rejected.length,
+        qualifiedCount: Number(report.qualifiedExtensionCount) || 0,
+        needsRepair: report.needsRepair === true,
+        summary: normalizeText(report.summary || ''),
+        selected,
+        rejected
     };
 }
 
@@ -988,6 +1763,7 @@ function compactRun(run = {}) {
             ? safeArray(run.assetIds)
             : safeArray(assets.assetIds),
         outputFolder: run.config && run.config.outputFolder ? run.config.outputFolder : '',
+        directionCandidateReview: buildDirectionCandidateReview(run),
         message: run.message || ''
     };
 }
@@ -995,6 +1771,7 @@ function compactRun(run = {}) {
 function createCreativeKnowledgeService(options = {}) {
     const rootDir = options.rootDir || options.ROOT_DIR || process.cwd();
     const logger = options.logger || console;
+    const httpClient = options.axios || axios;
     const assetFileLookupCache = new Map();
     const referenceFileLookupCache = new Map();
 
@@ -1017,6 +1794,7 @@ function createCreativeKnowledgeService(options = {}) {
         writeIfMissing(store, 'scheduler-state.json', emptySchedulerState);
         writeIfMissing(store, 'direction-drafts.json', emptyDirectionDrafts);
         writeIfMissing(store, 'direction-evidence.json', emptyDirectionEvidence);
+        writeIfMissing(store, DIRECTION_TAGS_FILE, emptyDirectionTags);
         writeIfMissing(store, 'material-learnings.json', emptyMaterialLearnings);
         writeIfMissing(store, 'creative-memory.json', emptyCreativeMemory);
         writeIfMissing(store, REFERENCE_POOL_FILE, () => ({
@@ -1283,6 +2061,9 @@ function createCreativeKnowledgeService(options = {}) {
                 runCounts.set(id, (runCounts.get(id) || 0) + 1);
             }
         });
+        const visualDnaSources = preloadVisualDnaSources(store);
+        const directionTags = readDirectionTagsOrBuild(store);
+        const directionTagsIndex = buildDirectionTagsIndex(directionTags);
         const filtered = applyDirectionFilters(data.directions, query);
         const offset = Math.max(0, Math.floor(Number(query.offset) || 0));
         const limit = Math.max(1, Math.min(500, Math.floor(Number(query.limit) || 100)));
@@ -1291,9 +2072,37 @@ function createCreativeKnowledgeService(options = {}) {
                 .filter(entry => directionEvidenceMatches(direction, entry))
                 .sort((a, b) => toTimeMs(b.updatedAt || b.createdAt) - toTimeMs(a.updatedAt || a.createdAt));
             const activePoolReferences = activeReferenceImagesForDirection(references.images, direction.id).map(compactReferenceImage);
+            const visualDnaSummary = collectDirectionVisualDnaEvidence(direction, visualDnaSources);
+            const directionTagSummary = directionTagRecordForDirection(direction, directionTagsIndex);
+            const tagReferenceStatus = directionReferenceTagStatus(
+                activePoolReferences.length,
+                Boolean(directionTagSummary.analysis && directionTagSummary.analysis.source === DIRECTION_TAG_REFERENCE_VISION_SOURCE)
+            );
+            const enrichedDirectionTagSummary = {
+                ...directionTagSummary,
+                referenceImageCount: activePoolReferences.length,
+                referenceImageStatus: directionTagSummary.referenceImageStatus || tagReferenceStatus.status,
+                referenceImageStatusLabel: directionTagSummary.referenceImageStatusLabel || tagReferenceStatus.label,
+                referenceImageBucket: tagReferenceStatus.bucket,
+                needsMoreReferences: tagReferenceStatus.needsMoreReferences,
+                referenceImageMessage: tagReferenceStatus.message
+            };
 
             return {
                 ...direction,
+                directionTags: enrichedDirectionTagSummary.tags,
+                riskTags: enrichedDirectionTagSummary.riskTags,
+                directionTagSummary: enrichedDirectionTagSummary,
+                tagReferenceStatus,
+                visualDna: direction.visualDna || visualDnaSummary.visualDna,
+                visualDnaSummary: {
+                    visualDna: visualDnaSummary.visualDna,
+                    summaryText: visualDnaSummary.summaryText,
+                    source: visualDnaSummary.source,
+                    confidence: visualDnaSummary.confidence,
+                    evidenceCount: visualDnaSummary.evidenceCount,
+                    missing: visualDnaSummary.missing
+                },
                 evidenceCount: matchedEvidence.length,
                 knowledgeStats: {
                     matchedReferenceCount: referenceCounts.get(direction.id) || 0,
@@ -1319,10 +2128,14 @@ function createCreativeKnowledgeService(options = {}) {
         };
     }
 
-    function compactDirectionDraft(draft = {}, directions = []) {
+    function compactDirectionDraft(draft = {}, directions = [], context = {}) {
         const similarDirections = Array.isArray(draft.similarDirections)
             ? draft.similarDirections
             : findSimilarDirections(directions, draft);
+        const governance = buildDirectionDraftGovernance(draft, directions, {
+            ...context,
+            evidenceEntries: context.evidenceEntries || []
+        });
         return {
             id: draft.id || '',
             status: normalizeDirectionStatus(draft.status, 'draft'),
@@ -1342,6 +2155,10 @@ function createCreativeKnowledgeService(options = {}) {
             sourceStrategy: draft.sourceStrategy || '',
             targetLevel: draft.targetLevel || '',
             dimensions: draft.dimensions || {},
+            visualHook: draft.visualHook || draftDimensionValue(draft, 'visualHook'),
+            riskNote: draft.riskNote || '',
+            productionAdvice: draft.productionAdvice || '',
+            avoidRules: safeArray(draft.avoidRules),
             duplicateRisk: draft.duplicateRisk || '',
             reason: draft.reason || '',
             sourceLearningId: draft.sourceLearningId || '',
@@ -1356,6 +2173,7 @@ function createCreativeKnowledgeService(options = {}) {
             prompts: compactPromptList(draft.prompts).slice(0, 5),
             promptCount: compactPromptList(draft.prompts).length,
             similarDirections,
+            governance,
             acceptedDirectionId: draft.acceptedDirectionId || '',
             decisionReason: draft.decisionReason || '',
             rejectionReason: draft.rejectionReason || '',
@@ -1397,9 +2215,18 @@ function createCreativeKnowledgeService(options = {}) {
         const { store } = getStore(query);
         const data = readDirectionDrafts(store);
         const directionData = store.read('directions.json', { directions: [] });
-        let drafts = safeArray(data.drafts).map(draft => compactDirectionDraft(draft, directionData.directions));
+        const referenceData = store.read('reference-images.json', { images: [] });
+        const feedbackData = store.read('feedback.json', { feedback: [] });
+        const evidenceData = store.read('direction-evidence.json', emptyDirectionEvidence());
+        const governanceContext = {
+            referenceImages: safeArray(referenceData.images),
+            feedbackEntries: safeArray(feedbackData.feedback),
+            evidenceEntries: safeArray(evidenceData.evidence)
+        };
+        let drafts = safeArray(data.drafts).map(draft => compactDirectionDraft(draft, directionData.directions, governanceContext));
         const keyword = normalizeText(query.q || query.keyword).toLowerCase();
         const status = normalizeText(query.status).toLowerCase();
+        const governanceFilter = normalizeText(query.governance || query.queue || query.filter).toLowerCase();
         const runId = normalizeText(query.runId);
         const sourceDirectionId = normalizeText(query.sourceDirectionId);
 
@@ -1425,6 +2252,9 @@ function createCreativeKnowledgeService(options = {}) {
         if (sourceDirectionId) {
             drafts = drafts.filter(draft => draft.sourceDirectionId === sourceDirectionId);
         }
+        if (governanceFilter) {
+            drafts = drafts.filter(draft => directionDraftMatchesGovernance(draft, governanceFilter));
+        }
 
         drafts.sort((a, b) => toTimeMs(b.updatedAt || b.createdAt) - toTimeMs(a.updatedAt || a.createdAt));
         const { offset, limit } = parsePaging(query, { limit: 50, maxLimit: 300 });
@@ -1433,6 +2263,15 @@ function createCreativeKnowledgeService(options = {}) {
             const draftStatus = normalizeDirectionStatus(draft.status, 'draft');
             counts[draftStatus] = (counts[draftStatus] || 0) + 1;
         });
+        const allCompactedDrafts = safeArray(data.drafts).map(draft => compactDirectionDraft(draft, directionData.directions, governanceContext));
+        const governanceCounts = {
+            missingDna: allCompactedDrafts.filter(draft => directionDraftMatchesGovernance(draft, 'missing_dna')).length,
+            missingReference: allCompactedDrafts.filter(draft => directionDraftMatchesGovernance(draft, 'missing_reference')).length,
+            highDuplicateRisk: allCompactedDrafts.filter(draft => directionDraftMatchesGovernance(draft, 'high_duplicate_risk')).length,
+            hasGoodEvidence: allCompactedDrafts.filter(draft => directionDraftMatchesGovernance(draft, 'has_good_evidence')).length,
+            readyToAccept: allCompactedDrafts.filter(draft => directionDraftMatchesGovernance(draft, 'ready_to_accept')).length,
+            needsEdit: allCompactedDrafts.filter(draft => directionDraftMatchesGovernance(draft, 'needs_edit')).length
+        };
 
         return {
             success: true,
@@ -1441,6 +2280,7 @@ function createCreativeKnowledgeService(options = {}) {
             offset,
             limit,
             counts,
+            governanceCounts,
             drafts: drafts.slice(offset, offset + limit)
         };
     }
@@ -1458,12 +2298,27 @@ function createCreativeKnowledgeService(options = {}) {
 
         const directionData = store.read('directions.json', { directions: [] });
         const sourceDirection = run.sourceDirection || {};
-        let candidates = candidateDirectionsToDraftCandidates(
-            (run.agentTask && run.agentTask.result && run.agentTask.result.candidateDirections)
-            || (run.agentOutput && run.agentOutput.candidateDirections)
-            || run.candidateDirections
-            || []
-        );
+        const requestedCandidateKeys = new Set(safeArray(payload.candidateKeys || payload.reviewKeys || (payload.candidateKey ? [payload.candidateKey] : []))
+            .map(value => normalizeText(value))
+            .filter(Boolean));
+        const payloadCandidates = safeArray(payload.candidates || payload.reviewCandidates)
+            .concat(payload.candidate && typeof payload.candidate === 'object' ? [payload.candidate] : []);
+        let candidates = reviewCandidatesToDraftCandidates(payloadCandidates, sourceDirection, requestedCandidateKeys);
+        if (!candidates.length && run.directionCandidateReview) {
+            candidates = reviewCandidatesToDraftCandidates(
+                safeArray(run.directionCandidateReview.selected).concat(safeArray(run.directionCandidateReview.rejected)),
+                sourceDirection,
+                requestedCandidateKeys
+            );
+        }
+        if (!candidates.length) {
+            candidates = filterDraftCandidatesByKeys(candidateDirectionsToDraftCandidates(
+                (run.agentTask && run.agentTask.result && run.agentTask.result.candidateDirections)
+                || (run.agentOutput && run.agentOutput.candidateDirections)
+                || run.candidateDirections
+                || []
+            ), requestedCandidateKeys);
+        }
         if (!candidates.length) {
             candidates = extractDraftCandidatesFromWorkbook(run.agentOutput && run.agentOutput.localPath);
         }
@@ -1531,7 +2386,15 @@ function createCreativeKnowledgeService(options = {}) {
                 sourceDirectionName: sourceDirection.name || '',
                 sourceStrategy: normalizeText(candidate.sourceStrategy).slice(0, 1200),
                 targetLevel: normalizeText(candidate.targetLevel).slice(0, 40),
+                directionTags: safeArray(candidate.directionTags).map(normalizeText).filter(Boolean).slice(0, 8),
+                mainTags: safeArray(candidate.mainTags).map(normalizeText).filter(Boolean).slice(0, 5),
+                extraTags: safeArray(candidate.extraTags).map(normalizeText).filter(Boolean).slice(0, 8),
+                riskTags: safeArray(candidate.riskTags).map(normalizeText).filter(Boolean).slice(0, 6),
                 dimensions: candidate.dimensions && typeof candidate.dimensions === 'object' ? candidate.dimensions : {},
+                visualHook: normalizeText(candidate.visualHook || draftDimensionValue(candidate, 'visualHook')).slice(0, 600),
+                riskNote: normalizeText(candidate.riskNote).slice(0, 600),
+                productionAdvice: normalizeText(candidate.productionAdvice).slice(0, 1200),
+                avoidRules: safeArray(candidate.avoidRules).map(normalizeText).filter(Boolean).slice(0, 12),
                 duplicateRisk: normalizeText(candidate.duplicateRisk).slice(0, 120),
                 reason: normalizeText(candidate.reason).slice(0, 1200),
                 original: description,
@@ -1604,20 +2467,51 @@ function createCreativeKnowledgeService(options = {}) {
         }
 
         const draft = data.drafts[draftIndex];
-        if (normalizeDirectionStatus(draft.status, 'draft') === 'accepted' && draft.acceptedDirectionId) {
-            return {
-                success: true,
-                message: '方向草案此前已采纳',
-                draft: compactDirectionDraft(draft),
-                directionId: draft.acceptedDirectionId
-            };
-        }
-
         const directionData = store.read('directions.json', {
             version: 1,
             importedAt: null,
             directions: []
         });
+        const referenceData = store.read('reference-images.json', { images: [] });
+        const feedbackData = store.read('feedback.json', { feedback: [] });
+        const evidenceData = store.read('direction-evidence.json', emptyDirectionEvidence());
+        const governanceContext = {
+            referenceImages: safeArray(referenceData.images),
+            feedbackEntries: safeArray(feedbackData.feedback),
+            evidenceEntries: safeArray(evidenceData.evidence)
+        };
+        const governance = buildDirectionDraftGovernance(draft, directionData.directions, governanceContext);
+        if (governance.preflight.hardErrors.length) {
+            return {
+                success: false,
+                code: 'draft_preflight_error',
+                message: governance.preflight.hardErrors.join('；'),
+                preflight: governance.preflight,
+                governance,
+                draft: compactDirectionDraft(draft, directionData.directions, governanceContext)
+            };
+        }
+        if (governance.preflight.warnings.length && payload.confirmPreflight !== true) {
+            return {
+                success: false,
+                code: 'draft_preflight',
+                needsConfirmation: true,
+                needsPreflightConfirmation: true,
+                message: '采纳前检查发现需要确认的事项',
+                preflight: governance.preflight,
+                governance,
+                draft: compactDirectionDraft(draft, directionData.directions, governanceContext)
+            };
+        }
+        if (normalizeDirectionStatus(draft.status, 'draft') === 'accepted' && draft.acceptedDirectionId) {
+            return {
+                success: true,
+                message: '方向草案此前已采纳',
+                draft: compactDirectionDraft(draft, directionData.directions, governanceContext),
+                directionId: draft.acceptedDirectionId
+            };
+        }
+
         const directionId = draft.acceptedDirectionId || buildAcceptedDirectionId(draft);
         const similarDirections = findSimilarDirections(directionData.directions, draft, {
             excludeId: directionId
@@ -1663,7 +2557,19 @@ function createCreativeKnowledgeService(options = {}) {
             parentDirectionId: draft.sourceDirectionId || '',
             parentDirectionPath: draft.sourceDirectionPath || '',
             sourceStrategy: draft.sourceStrategy || '',
-            referenceImageStatus: draft.referenceImageStatus || 'manual_pending',
+            visualDna: governance.visualDna,
+            dimensions: draft.dimensions && typeof draft.dimensions === 'object' ? draft.dimensions : {},
+            visualHook: draft.visualHook || draftDimensionValue(draft, 'visualHook'),
+            riskNote: draft.riskNote || '',
+            productionAdvice: draft.productionAdvice || '',
+            avoidRules: safeArray(draft.avoidRules),
+            duplicateRisk: draft.duplicateRisk || '',
+            governance: {
+                dnaCompleteness: governance.dnaCompleteness,
+                duplicateRiskLevel: governance.duplicateRiskLevel,
+                acceptedFromDraftId: draft.id
+            },
+            referenceImageStatus: governance.referenceCount > 0 ? (draft.referenceImageStatus || 'ready') : 'manual_pending',
             acceptanceReason: normalizeText(payload.reason || payload.acceptanceReason || payload.whyGood).slice(0, 1200),
             samplePrompts: compactPromptList(draft.prompts).slice(0, 5),
             createdAt: timestamp,
@@ -1714,6 +2620,8 @@ function createCreativeKnowledgeService(options = {}) {
             legilError: normalizeText(payload.legilError || draft.legilError).slice(0, 1200),
             selectedAsReference: payload.selectedAsReference === true || draft.selectedAsReference === true,
             rating: payload.rating === null || payload.rating === undefined || payload.rating === '' ? (draft.rating || null) : Number(payload.rating),
+            referenceImageStatus: nextDirection.referenceImageStatus,
+            governanceSnapshot: governance,
             similarDirections
         };
         const nextDrafts = safeArray(data.drafts).slice();
@@ -2342,6 +3250,1009 @@ function createCreativeKnowledgeService(options = {}) {
             offset,
             limit,
             runs: runs.slice(offset, offset + limit)
+        };
+    }
+
+    function readRawRuns(store) {
+        store.ensureBase();
+        const runsDir = store.filePath('runs');
+        if (!fs.existsSync(runsDir)) {
+            return [];
+        }
+
+        return fs.readdirSync(runsDir)
+            .filter(fileName => fileName.endsWith('.json'))
+            .map(fileName => store.read(path.join('runs', fileName), null))
+            .filter(Boolean)
+            .sort((a, b) => toTimeMs(b.startedAt || b.createdAt) - toTimeMs(a.startedAt || a.createdAt));
+    }
+
+    function preloadVisualDnaSources(store) {
+        const historyData = store.read('direction-expansion-history.json', { items: [] });
+        const draftData = store.read('direction-drafts.json', emptyDirectionDrafts());
+        const evidenceData = store.read('direction-evidence.json', emptyDirectionEvidence());
+        const feedbackData = store.read('feedback.json', emptyFeedback());
+        const memoryData = store.read('creative-memory.json', emptyCreativeMemory());
+        return {
+            drafts: safeArray(draftData.drafts),
+            evidence: safeArray(evidenceData.evidence).filter(entry => entry && entry.source !== 'material-analysis'),
+            history: safeArray(historyData.items || historyData.history || historyData.expansions),
+            runs: readRawRuns(store),
+            feedback: safeArray(feedbackData.feedback),
+            memory: memoryData
+        };
+    }
+
+    function directionTagParentPath(value = '') {
+        const parts = normalizeText(value).split('/').map(part => part.trim()).filter(Boolean);
+        return parts.length > 1 ? parts.slice(0, -1).join('/') : normalizeText(value);
+    }
+
+    function readDirectionTagsFile(store) {
+        writeIfMissing(store, DIRECTION_TAGS_FILE, emptyDirectionTags);
+        return store.read(DIRECTION_TAGS_FILE, emptyDirectionTags());
+    }
+
+    function mergePersistedDirectionTagMeta(records = [], existingDirections = []) {
+        const persistedById = new Map();
+        safeArray(existingDirections)
+            .filter(item => item && (
+                item.manual === true ||
+                item.source === 'manual' ||
+                item.source === DIRECTION_TAG_REFERENCE_VISION_SOURCE ||
+                item.source === 'vision'
+            ))
+            .forEach(item => {
+                const id = item.directionId || item.id;
+                if (id) persistedById.set(id, item);
+            });
+
+        return safeArray(records).map(record => {
+            const persisted = persistedById.get(record.directionId);
+            if (!persisted) return record;
+            const normalized = normalizeDirectionTagsForRecord(persisted, { limit: 12, riskLimit: 6 });
+            const isManual = persisted.manual === true || persisted.source === 'manual';
+            const persistedRiskTags = normalizeDirectionTagList(persisted.riskTags, 6);
+            return {
+                ...record,
+                source: isManual ? 'manual' : DIRECTION_TAG_REFERENCE_VISION_SOURCE,
+                manual: isManual || undefined,
+                mainTags: safeArray(persisted.mainTags).length
+                    ? normalizeDirectionTagList(persisted.mainTags, 5)
+                    : safeArray(record.tags).slice(0, 5),
+                extraTags: safeArray(persisted.extraTags).length
+                    ? normalizeDirectionTagList(persisted.extraTags, 8)
+                    : safeArray(normalized.tags).filter(tag => !safeArray(record.tags).includes(tag)).slice(0, 8),
+                riskTags: isManual && persistedRiskTags.length
+                    ? persistedRiskTags
+                    : record.riskTags,
+                tags: isManual && normalized.tags.length
+                    ? normalized.tags.slice(0, 5)
+                    : record.tags,
+                summary: persisted.summary || persisted.visualSummary || record.summary || '',
+                referenceImageStatus: persisted.referenceImageStatus || record.referenceImageStatus || '',
+                referenceImageStatusLabel: persisted.referenceImageStatusLabel || record.referenceImageStatusLabel || '',
+                referenceImageCount: Number(persisted.referenceImageCount) || Number(record.referenceImageCount) || 0,
+                referenceImageIds: safeArray(persisted.referenceImageIds),
+                analysis: persisted.analysis || persisted.referenceAnalysis || record.analysis || null,
+                confidence: Number(persisted.confidence) || Number(record.confidence) || 0,
+                updatedAt: persisted.updatedAt || record.updatedAt || ''
+            };
+        });
+    }
+
+    function buildDirectionTagDataset(store, existingData = null) {
+        const directionsData = store.read('directions.json', { directions: [] });
+        const draftData = store.read('direction-drafts.json', emptyDirectionDrafts());
+        const historyData = store.read('direction-expansion-history.json', { items: [] });
+        const feedbackData = store.read('feedback.json', emptyFeedback());
+        const assetsData = store.read('assets.json', emptyAssets());
+        const evidenceData = store.read('direction-evidence.json', emptyDirectionEvidence());
+        const existing = existingData || readDirectionTagsFile(store);
+        const directions = buildDirectionTagRecords({
+            directions: safeArray(directionsData.directions),
+            drafts: safeArray(draftData.drafts),
+            history: safeArray(historyData.items || historyData.history || historyData.expansions),
+            feedback: safeArray(feedbackData.feedback),
+            assets: safeArray(assetsData.assets),
+            evidence: safeArray(evidenceData.evidence).filter(entry => entry && entry.source !== 'material-analysis'),
+            runs: readRawRuns(store),
+            existing: safeArray(existing.directions)
+        });
+        return {
+            version: 1,
+            updatedAt: nowIso(),
+            source: 'aggregated',
+            directions: mergePersistedDirectionTagMeta(directions, existing.directions)
+        };
+    }
+
+    function readDirectionTagsOrBuild(store) {
+        const current = readDirectionTagsFile(store);
+        if (safeArray(current.directions).length > 0) {
+            return current;
+        }
+        return buildDirectionTagDataset(store, current);
+    }
+
+    function directionTagRecordForDirection(direction = {}, tagsIndex = new Map()) {
+        const record = [
+            direction.id,
+            direction.path,
+            direction.name
+        ].map(normalizeText).filter(Boolean)
+            .map(key => tagsIndex.get(key) || tagsIndex.get(directionMatchKey(key)))
+            .find(Boolean) || {};
+        const fallback = normalizeDirectionTagsForRecord(direction);
+        const tags = safeArray(record.tags).length ? safeArray(record.tags) : fallback.tags;
+        const riskTags = safeArray(record.riskTags).length ? safeArray(record.riskTags) : fallback.riskTags;
+        return {
+            ...record,
+            directionId: record.directionId || direction.id || '',
+            path: record.path || direction.path || direction.name || '',
+            name: record.name || direction.name || direction.path || '',
+            parentPath: record.parentPath || directionTagParentPath(direction.path || direction.name || ''),
+            tags,
+            riskTags,
+            topTags: safeArray(record.topTags).length ? safeArray(record.topTags) : tags.map(value => ({ value, count: 1, score: 1, sources: [] })),
+            topRiskTags: safeArray(record.topRiskTags).length ? safeArray(record.topRiskTags) : riskTags.map(value => ({ value, count: 1, score: 1, sources: [] })),
+            sourceCount: Number(record.sourceCount) || (tags.length || riskTags.length ? 1 : 0),
+            confidence: Number(record.confidence) || (tags.length ? 0.42 : 0),
+            updatedAt: record.updatedAt || ''
+        };
+    }
+
+    function refreshDirectionTags(query = {}) {
+        const { store } = getStore(query);
+        ensureEmptyFiles(store);
+        const current = readDirectionTagsFile(store);
+        const data = buildDirectionTagDataset(store, current);
+        store.write(DIRECTION_TAGS_FILE, data);
+        return {
+            success: true,
+            message: '方向标签已刷新。',
+            updatedAt: data.updatedAt,
+            total: data.directions.length,
+            directionTags: data
+        };
+    }
+
+    function buildDirectionTagsOverview(query = {}) {
+        const { store } = getStore(query);
+        ensureEmptyFiles(store);
+        const directionsData = store.read('directions.json', { directions: [] });
+        const data = readDirectionTagsOrBuild(store);
+        const tagsById = buildDirectionTagsIndex(data);
+        const summaries = safeArray(directionsData.directions).map(direction => directionTagRecordForDirection(direction, tagsById));
+        const tagCounts = new Map();
+        const riskCounts = new Map();
+        summaries.forEach(summary => {
+            safeArray(summary.tags).forEach(tag => tagCounts.set(tag, (tagCounts.get(tag) || 0) + 1));
+            safeArray(summary.riskTags).forEach(tag => riskCounts.set(tag, (riskCounts.get(tag) || 0) + 1));
+        });
+        const sortCounts = map => Array.from(map.entries())
+            .map(([value, count]) => ({ value, count }))
+            .sort((a, b) => b.count - a.count || a.value.localeCompare(b.value));
+        const total = safeArray(directionsData.directions).length;
+        const covered = summaries.filter(item => safeArray(item.tags).length > 0).length;
+        return {
+            success: true,
+            updatedAt: data.updatedAt || '',
+            counts: {
+                totalDirections: total,
+                coveredDirections: covered,
+                missingTagDirections: Math.max(0, total - covered),
+                riskTagDirections: summaries.filter(item => safeArray(item.riskTags).length > 0).length
+            },
+            coverageRatio: total ? Number((covered / total).toFixed(2)) : 0,
+            topTags: sortCounts(tagCounts).slice(0, 20),
+            topRiskTags: sortCounts(riskCounts).slice(0, 20),
+            directions: summaries.slice(0, Math.max(1, Math.min(500, Number(query.limit) || 100)))
+        };
+    }
+
+    function getDirectionTags(directionId, query = {}) {
+        const { store } = getStore(query);
+        ensureEmptyFiles(store);
+        const directionsData = store.read('directions.json', { directions: [] });
+        const id = normalizeText(directionId);
+        const idKey = directionMatchKey(id);
+        const direction = safeArray(directionsData.directions).find(item => {
+            const keys = [item.id, item.path, item.name].map(normalizeText).filter(Boolean);
+            return keys.includes(id) || keys.map(directionMatchKey).includes(idKey);
+        });
+        if (!direction) {
+            return {
+                success: false,
+                message: '未找到方向。'
+            };
+        }
+        const data = readDirectionTagsOrBuild(store);
+        const record = directionTagRecordForDirection(direction, buildDirectionTagsIndex(data));
+        const references = getDirectionReferenceTagInputs(store, direction);
+        const referenceStatus = directionReferenceTagStatus(
+            references.length,
+            Boolean(record.analysis && record.analysis.source === DIRECTION_TAG_REFERENCE_VISION_SOURCE)
+        );
+        return {
+            success: true,
+            direction: {
+                id: direction.id || '',
+                path: direction.path || '',
+                name: direction.name || ''
+            },
+            referenceStatus,
+            directionTags: {
+                ...record,
+                referenceImageCount: references.length,
+                referenceImageStatus: record.referenceImageStatus || referenceStatus.status,
+                referenceImageStatusLabel: record.referenceImageStatusLabel || referenceStatus.label,
+                referenceImageBucket: referenceStatus.bucket,
+                needsMoreReferences: referenceStatus.needsMoreReferences
+            }
+        };
+    }
+
+    function findDirectionForTags(store, directionId) {
+        const directionsData = store.read('directions.json', { directions: [] });
+        const id = normalizeText(directionId);
+        const idKey = directionMatchKey(id);
+        return safeArray(directionsData.directions).find(item => {
+            const keys = [item.id, item.path, item.name].map(normalizeText).filter(Boolean);
+            return keys.includes(id) || keys.map(directionMatchKey).includes(idKey);
+        }) || null;
+    }
+
+    function getDirectionReferenceTagInputs(store, direction = {}) {
+        const referenceData = readReferenceImages(store);
+        return activeReferenceImagesForDirection(referenceData.images, direction.id, 0)
+            .filter(reference => fileExists(reference.filePath))
+            .map(reference => ({
+                ...reference,
+                compact: compactReferenceImage(reference)
+            }));
+    }
+
+    function writeDirectionTagRecord(store, direction = {}, patch = {}) {
+        const current = readDirectionTagsOrBuild(store);
+        const tagsIndex = buildDirectionTagsIndex(current);
+        const base = directionTagRecordForDirection(direction, tagsIndex);
+        const directions = safeArray(current.directions).slice();
+        const id = direction.id || patch.directionId || base.directionId;
+        const index = directions.findIndex(item => item && (
+            item.directionId === id ||
+            directionMatchKey(item.path || item.name || '') === directionMatchKey(direction.path || direction.name || '')
+        ));
+        const updated = {
+            ...base,
+            ...patch,
+            directionId: id,
+            path: direction.path || patch.path || base.path || '',
+            name: direction.name || patch.name || base.name || '',
+            parentPath: directionTagParentPath(direction.path || direction.name || ''),
+            updatedAt: nowIso()
+        };
+        if (index >= 0) {
+            directions[index] = updated;
+        } else {
+            directions.push(updated);
+        }
+        const data = {
+            version: 1,
+            updatedAt: nowIso(),
+            source: current.source || 'aggregated',
+            directions
+        };
+        store.write(DIRECTION_TAGS_FILE, data);
+        return updated;
+    }
+
+    async function callDirectionTagVision(direction, references, dataUrls) {
+        if (typeof options.callDirectionTagVision === 'function') {
+            return options.callDirectionTagVision({ direction, references, dataUrls });
+        }
+        const config = readWinkyVisionConfig();
+        const prompt = buildDirectionTagVisionPrompt(direction, references);
+        const payload = {
+            model: config.model,
+            messages: [
+                {
+                    role: 'user',
+                    content: [
+                        { type: 'text', text: prompt },
+                        ...dataUrls.map(url => ({
+                            type: 'image_url',
+                            image_url: { url, detail: 'auto' }
+                        }))
+                    ]
+                }
+            ],
+            stream: false,
+            response_format: { type: 'json_object' }
+        };
+        if (shouldUseMaxCompletionTokens(config.model)) {
+            payload.max_completion_tokens = DIRECTION_TAG_VISION_MAX_TOKENS;
+        } else {
+            payload.temperature = 0.1;
+            payload.max_tokens = DIRECTION_TAG_VISION_MAX_TOKENS;
+        }
+        if (config.provider) payload.provider = config.provider;
+        const response = await httpClient.post(config.apiUrl, payload, {
+            headers: {
+                Authorization: `Bearer ${config.apiKey}`,
+                'Content-Type': 'application/json'
+            },
+            timeout: DIRECTION_TAG_VISION_TIMEOUT_MS,
+            maxContentLength: Infinity,
+            maxBodyLength: Infinity,
+            validateStatus: () => true
+        });
+        if (response.status < 200 || response.status >= 300) {
+            const detail = typeof response.data === 'string'
+                ? response.data
+                : JSON.stringify(response.data || {}).slice(0, 600);
+            throw new Error(`Lumos Winky 方向标签识别失败 HTTP ${response.status}: ${detail}`);
+        }
+        const rawText = extractWinkyText(response.data);
+        if (!rawText) throw new Error('Lumos Winky 未返回方向标签内容');
+        return {
+            config,
+            rawText,
+            parsed: parseJsonObject(rawText)
+        };
+    }
+
+    async function analyzeDirectionTagsFromReferences(directionId, payload = {}, query = {}) {
+        const { store } = getStore(query);
+        ensureEmptyFiles(store);
+        const direction = findDirectionForTags(store, directionId);
+        if (!direction) return { success: false, message: '未找到方向。' };
+
+        const data = readDirectionTagsOrBuild(store);
+        const currentRecord = directionTagRecordForDirection(direction, buildDirectionTagsIndex(data));
+        if (currentRecord.manual === true && payload.overwriteManual !== true) {
+            return {
+                success: true,
+                skipped: true,
+                code: 'manual_override',
+                message: '该方向已有手动覆盖标签，未用 AI 结果覆盖。',
+                direction,
+                directionTags: currentRecord
+            };
+        }
+
+        const references = getDirectionReferenceTagInputs(store, direction);
+        const referenceStatus = directionReferenceTagStatus(
+            references.length,
+            Boolean(currentRecord.analysis && currentRecord.analysis.source === DIRECTION_TAG_REFERENCE_VISION_SOURCE)
+        );
+        if (!references.length) {
+            const record = writeDirectionTagRecord(store, direction, {
+                ...currentRecord,
+                referenceImageCount: 0,
+                referenceImageIds: [],
+                referenceImageStatus: referenceStatus.status,
+                referenceImageStatusLabel: referenceStatus.label,
+                needsMoreReferences: true
+            });
+            return {
+                success: true,
+                analyzed: false,
+                message: '该方向还没有可读参考图，已标记为待补图。',
+                direction,
+                referenceStatus,
+                directionTags: record
+            };
+        }
+
+        const selectedReferences = references.slice(0, DIRECTION_TAG_REFERENCE_MAX_IMAGES);
+        const selectedIds = selectedReferences.map(reference => reference.id).filter(Boolean);
+        const sameImages = safeArray(currentRecord.referenceImageIds).join('|') === selectedIds.join('|');
+        if (payload.force !== true && sameImages && currentRecord.analysis && safeArray(currentRecord.tags).length) {
+            return {
+                success: true,
+                cached: true,
+                message: '该方向参考图标签已分析，可使用重新分析刷新。',
+                direction,
+                referenceStatus,
+                directionTags: currentRecord
+            };
+        }
+
+        const dataUrls = selectedReferences.map(reference => imageFileToDataUrl(reference.filePath));
+        const vision = await callDirectionTagVision(
+            direction,
+            selectedReferences.map(reference => reference.compact),
+            dataUrls
+        );
+        const fallback = normalizeDirectionTagsForRecord(direction, { limit: 5, riskLimit: 6 });
+        const normalized = normalizeDirectionTagVisionResult(vision.parsed || vision.result || {}, {
+            summary: direction.description || '',
+            confidence: selectedReferences.length >= 3 ? 0.72 : 0.58
+        });
+        if (!normalized.mainTags.length && fallback.tags.length) {
+            normalized.mainTags = fallback.tags.slice(0, 5);
+            normalized.tags = fallback.tags.slice(0, 5).concat(normalized.extraTags).slice(0, 12);
+        }
+        const analyzedStatus = directionReferenceTagStatus(references.length, true);
+        const record = writeDirectionTagRecord(store, direction, {
+            source: DIRECTION_TAG_REFERENCE_VISION_SOURCE,
+            manual: false,
+            mainTags: normalized.mainTags,
+            extraTags: normalized.extraTags,
+            tags: normalized.tags.slice(0, 5),
+            riskTags: normalized.riskTags,
+            summary: normalized.summary,
+            confidence: normalized.confidence,
+            referenceImageCount: references.length,
+            referenceImageIds: selectedIds,
+            referenceImageStatus: analyzedStatus.status,
+            referenceImageStatusLabel: analyzedStatus.label,
+            needsMoreReferences: analyzedStatus.needsMoreReferences,
+            analysis: {
+                source: DIRECTION_TAG_REFERENCE_VISION_SOURCE,
+                analyzedAt: nowIso(),
+                model: vision.config && vision.config.model || 'stub',
+                imageCount: selectedReferences.length,
+                referenceImageIds: selectedIds,
+                summary: normalized.summary
+            }
+        });
+        return {
+            success: true,
+            analyzed: true,
+            message: references.length < DIRECTION_TAG_REFERENCE_MAX_IMAGES
+                ? '方向标签已分析，但参考图偏少，建议后续补图。'
+                : '方向标签已根据参考图更新。',
+            direction,
+            referenceStatus: analyzedStatus,
+            directionTags: record
+        };
+    }
+
+    async function batchAnalyzeDirectionTagsFromReferences(payload = {}, query = {}) {
+        const { store } = getStore(query);
+        ensureEmptyFiles(store);
+        const directionsData = store.read('directions.json', { directions: [] });
+        const limit = Math.max(1, Math.min(50, Math.floor(Number(payload.limit || query.limit) || 12)));
+        const force = payload.force === true || query.force === 'true';
+        const data = readDirectionTagsOrBuild(store);
+        const tagsIndex = buildDirectionTagsIndex(data);
+        const selected = [];
+        safeArray(directionsData.directions).forEach(direction => {
+            if (selected.length >= limit) return;
+            const record = directionTagRecordForDirection(direction, tagsIndex);
+            if (record.manual === true && payload.overwriteManual !== true) return;
+            const references = getDirectionReferenceTagInputs(store, direction);
+            const needsAnalysis = force ||
+                !record.analysis ||
+                !safeArray(record.tags).length ||
+                !record.referenceImageStatus ||
+                references.length === 0;
+            if (needsAnalysis) selected.push(direction);
+        });
+
+        const results = [];
+        for (const direction of selected) {
+            try {
+                results.push(await analyzeDirectionTagsFromReferences(direction.id, {
+                    force,
+                    overwriteManual: payload.overwriteManual === true
+                }, query));
+            } catch (error) {
+                results.push({
+                    success: false,
+                    direction: {
+                        id: direction.id || '',
+                        path: direction.path || '',
+                        name: direction.name || ''
+                    },
+                    message: error.message
+                });
+            }
+        }
+        return {
+            success: results.every(item => item.success !== false),
+            message: `批量补齐完成：处理 ${results.length} 个方向。`,
+            total: results.length,
+            analyzed: results.filter(item => item.analyzed).length,
+            skipped: results.filter(item => item.skipped || item.cached).length,
+            missingReferences: results.filter(item => item.referenceStatus && item.referenceStatus.status === 'missing').length,
+            failed: results.filter(item => item.success === false).length,
+            results
+        };
+    }
+
+    function updateDirectionTagsManualOverride(directionId, payload = {}, query = {}) {
+        const { store } = getStore(query);
+        ensureEmptyFiles(store);
+        const direction = findDirectionForTags(store, directionId);
+        if (!direction) return { success: false, message: '未找到方向。' };
+        const references = getDirectionReferenceTagInputs(store, direction);
+        const normalized = normalizeDirectionTagVisionResult(payload, {
+            summary: payload.summary || direction.description || '',
+            confidence: 1
+        });
+        const status = directionReferenceTagStatus(references.length, Boolean(payload.analysis));
+        const record = writeDirectionTagRecord(store, direction, {
+            source: 'manual',
+            manual: true,
+            mainTags: normalized.mainTags,
+            extraTags: normalized.extraTags,
+            tags: normalized.tags.slice(0, 5),
+            riskTags: normalized.riskTags,
+            summary: normalized.summary,
+            confidence: 1,
+            referenceImageCount: references.length,
+            referenceImageIds: references.slice(0, DIRECTION_TAG_REFERENCE_MAX_IMAGES).map(reference => reference.id).filter(Boolean),
+            referenceImageStatus: status.status,
+            referenceImageStatusLabel: status.label,
+            needsMoreReferences: status.needsMoreReferences,
+            analysis: {
+                source: 'manual',
+                updatedAt: nowIso()
+            }
+        });
+        return {
+            success: true,
+            message: '方向标签已手动覆盖。',
+            direction,
+            referenceStatus: status,
+            directionTags: record
+        };
+    }
+
+    function collectDirectionVisualDnaEvidence(direction = {}, preloaded = {}) {
+        const accumulator = createVisualDnaAccumulator();
+        addVisualDnaFromRecord(accumulator, direction, {
+            type: 'directions',
+            id: direction.id || '',
+            label: direction.path || direction.name || ''
+        });
+
+        safeArray(preloaded.drafts).forEach(draft => {
+            if (!directionRecordMatches(direction, draft)) return;
+            addVisualDnaFromRecord(accumulator, draft, {
+                type: 'direction-drafts',
+                id: draft.id || '',
+                label: draft.path || draft.name || ''
+            });
+            safeArray(draft.prompts).forEach(prompt => addVisualDnaFromRecord(accumulator, prompt, {
+                type: 'direction-drafts',
+                id: draft.id || '',
+                field: 'prompts',
+                label: draft.name || ''
+            }));
+        });
+
+        safeArray(preloaded.evidence).forEach(entry => {
+            if (!directionEvidenceMatches(direction, entry) && !directionRecordMatches(direction, entry)) return;
+            addVisualDnaFromRecord(accumulator, entry, {
+                type: 'direction-evidence',
+                id: entry.id || entry.evidenceId || '',
+                label: entry.targetDirectionPath || entry.directionPath || ''
+            });
+        });
+
+        safeArray(preloaded.history).forEach(item => {
+            if (!directionRecordMatches(direction, item)) return;
+            addVisualDnaFromRecord(accumulator, item, {
+                type: 'direction-expansion-history',
+                id: item.runId || item.dedupeKey || '',
+                label: item.newDirectionName || item.extensionName || ''
+            });
+        });
+
+        safeArray(preloaded.runs).forEach(run => {
+            const runDirection = run.sourceDirection || {};
+            const matchedRun = directionRecordMatches(direction, {
+                sourceDirectionId: runDirection.id,
+                sourceDirectionPath: runDirection.path,
+                sourceDirectionName: runDirection.name
+            });
+            if (!matchedRun) return;
+            const report = run.directionPlanReport || {};
+            safeArray(report.selectedExtensions).forEach(extension => addVisualDnaFromRecord(accumulator, extension, {
+                type: 'runs',
+                id: run.runId || '',
+                field: 'selectedExtensions',
+                label: extension.name || ''
+            }));
+        });
+
+        safeArray(preloaded.feedback).forEach(feedback => {
+            if (!directionRecordMatches(direction, feedback)) return;
+            addVisualDnaFromRecord(accumulator, feedback, {
+                type: 'feedback',
+                id: feedback.id || feedback.feedbackId || '',
+                label: feedback.directionPath || feedback.targetDirectionPath || ''
+            });
+        });
+
+        safeArray(getAllMemoryRules(preloaded.memory)).forEach(rule => {
+            if (!directionRecordMatches(direction, rule) && !directionRecordMatches(direction, rule.scope || {})) return;
+            addVisualDnaFromRecord(accumulator, rule, {
+                type: 'creative-memory',
+                id: rule.id || rule.ruleId || '',
+                label: rule.title || ''
+            });
+            safeArray(rule.evidence).forEach(item => addVisualDnaFromText(accumulator, item, {
+                type: 'creative-memory',
+                id: rule.id || rule.ruleId || '',
+                field: 'evidence',
+                label: rule.title || ''
+            }));
+        });
+
+        return finalizeVisualDna(accumulator);
+    }
+
+    function buildVisualDnaOverview(query = {}) {
+        const { store } = getStore(query);
+        store.ensureBase();
+        const directionsData = store.read('directions.json', { directions: [] });
+        const directions = safeArray(directionsData.directions);
+        const preloaded = preloadVisualDnaSources(store);
+        const topAtmospheres = new Map();
+        const topCameras = new Map();
+        const directionSummaries = directions.map(direction => {
+            const result = collectDirectionVisualDnaEvidence(direction, preloaded);
+            result.visualDna.atmosphere.forEach(value => topAtmospheres.set(value, (topAtmospheres.get(value) || 0) + 1));
+            result.visualDna.camera.forEach(value => topCameras.set(value, (topCameras.get(value) || 0) + 1));
+            return {
+                directionId: direction.id || '',
+                path: direction.path || direction.name || '',
+                visualDna: result.visualDna,
+                summaryText: result.summaryText,
+                source: result.source,
+                confidence: result.confidence,
+                evidenceCount: result.evidenceCount,
+                missing: result.missing
+            };
+        });
+        const coveredDirections = directionSummaries.filter(item => (
+            VISUAL_DNA_DIMENSIONS.some(key => safeArray(item.visualDna[key]).length > 0)
+        ));
+        const countMap = map => Array.from(map.entries())
+            .map(([value, count]) => ({ value, count }))
+            .sort((a, b) => b.count - a.count || a.value.localeCompare(b.value))
+            .slice(0, 8);
+
+        return {
+            success: true,
+            updatedAt: nowIso(),
+            counts: {
+                totalDirections: directions.length,
+                coveredDirections: coveredDirections.length,
+                missingEventDirections: directionSummaries.filter(item => safeArray(item.visualDna.event).length === 0).length,
+                missingVisualHookDirections: directionSummaries.filter(item => safeArray(item.visualDna.visualHook).length === 0).length
+            },
+            topAtmospheres: countMap(topAtmospheres),
+            topCameras: countMap(topCameras),
+            directions: directionSummaries
+        };
+    }
+
+    function getDirectionVisualDna(directionId, query = {}) {
+        const { store } = getStore(query);
+        store.ensureBase();
+        const data = store.read('directions.json', { directions: [] });
+        const direction = safeArray(data.directions).find(item => String(item.id || '') === String(directionId || ''));
+        if (!direction) {
+            return { success: false, message: `方向不存在：${directionId}` };
+        }
+        const result = collectDirectionVisualDnaEvidence(direction, preloadVisualDnaSources(store));
+        return {
+            success: true,
+            direction: {
+                id: direction.id || '',
+                path: direction.path || '',
+                name: direction.name || '',
+                description: direction.description || ''
+            },
+            ...result
+        };
+    }
+
+    function visualDnaParentFromPath(value = '', fallback = '未分组') {
+        const pathText = normalizeText(value);
+        const parts = splitDirectionPath(pathText);
+        const label = parts.length ? parts[parts.length - 1] : fallback;
+        return {
+            path: pathText || fallback,
+            label: label || fallback
+        };
+    }
+
+    function visualDnaParentPathFromDraft(draft = {}) {
+        const sourcePath = normalizeText(draft.sourceDirectionPath);
+        if (sourcePath) return sourcePath;
+        const parts = splitDirectionPath(draft.path);
+        if (parts.length > 1) return parts.slice(0, -1).join('/');
+        return draft.path || draft.name || '未分组';
+    }
+
+    function addPreferenceCount(bucket, key, value, sourceId = '') {
+        const text = normalizeText(value);
+        if (!text) return;
+        const item = bucket[key].get(text) || { value: text, count: 0, sourceIds: [] };
+        item.count += 1;
+        if (sourceId && item.sourceIds.length < 20) item.sourceIds.push(sourceId);
+        bucket[key].set(text, item);
+    }
+
+    function sortedPreferenceValues(map, limit = 6) {
+        return Array.from(map.values())
+            .sort((a, b) => b.count - a.count || a.value.localeCompare(b.value))
+            .slice(0, limit)
+            .map(item => ({
+                value: item.value,
+                count: item.count,
+                sourceIds: item.sourceIds
+            }));
+    }
+
+    function buildVisualDnaForSample(record = {}, source = {}) {
+        const accumulator = createVisualDnaAccumulator();
+        addVisualDnaFromRecord(accumulator, record, source);
+        return finalizeVisualDna(accumulator);
+    }
+
+    function compactVisualDnaTags(dna = {}) {
+        return [
+            safeArray(dna.atmosphere)[0],
+            safeArray(dna.camera)[0],
+            safeArray(dna.event)[0],
+            safeArray(dna.scale)[0],
+            safeArray(dna.visualHook)[0]
+        ].filter(Boolean);
+    }
+
+    function buildAdoptionSample(input = {}) {
+        const parent = visualDnaParentFromPath(input.groupPath, '未分组');
+        const result = buildVisualDnaForSample(input.record || {}, {
+            type: input.source || 'unknown',
+            id: input.id || '',
+            label: input.name || ''
+        });
+        return {
+            id: input.id || `${input.source || 'sample'}:${input.name || parent.path}`,
+            source: input.source || 'unknown',
+            sourceLabel: input.sourceLabel || input.source || 'unknown',
+            status: input.status || '',
+            groupPath: parent.path,
+            groupLabel: parent.label,
+            name: input.name || parent.label,
+            directionPath: input.directionPath || parent.path,
+            createdAt: input.createdAt || '',
+            visualDna: result.visualDna,
+            tags: compactVisualDnaTags(result.visualDna),
+            evidence: input.evidence || '',
+            confidence: result.confidence,
+            feedbackId: input.feedbackId || '',
+            assetId: input.assetId || ''
+        };
+    }
+
+    function pushVisualDnaWorkbenchSample(groups, sample) {
+        if (!sample || !sample.groupPath) return;
+        const group = groups.get(sample.groupPath) || {
+            path: sample.groupPath,
+            label: sample.groupLabel,
+            sampleCount: 0,
+            sources: {
+                feedback: 0,
+                evidence: 0,
+                history: 0,
+                drafts: 0
+            },
+            samples: [],
+            preferences: {
+                atmosphere: new Map(),
+                camera: new Map(),
+                event: new Map(),
+                scale: new Map(),
+                visualHook: new Map()
+            }
+        };
+        group.sampleCount += 1;
+        if (sample.source === 'feedback') group.sources.feedback += 1;
+        if (sample.source === 'direction-evidence') group.sources.evidence += 1;
+        if (sample.source === 'direction-expansion-history') group.sources.history += 1;
+        if (sample.source === 'direction-drafts') group.sources.drafts += 1;
+        if (group.samples.length < 12) group.samples.push(sample);
+        ['atmosphere', 'camera', 'event', 'scale', 'visualHook'].forEach(key => {
+            safeArray(sample.visualDna[key]).slice(0, 4).forEach(value => addPreferenceCount(group.preferences, key, value, sample.id));
+        });
+        groups.set(sample.groupPath, group);
+    }
+
+    function compactVisualDnaWorkbenchGroup(group = {}) {
+        return {
+            path: group.path || '',
+            label: group.label || group.path || '未分组',
+            sampleCount: Number(group.sampleCount) || 0,
+            sources: group.sources || {},
+            samples: safeArray(group.samples),
+            preferences: {
+                atmosphere: sortedPreferenceValues(group.preferences.atmosphere),
+                camera: sortedPreferenceValues(group.preferences.camera),
+                event: sortedPreferenceValues(group.preferences.event),
+                scale: sortedPreferenceValues(group.preferences.scale),
+                visualHook: sortedPreferenceValues(group.preferences.visualHook, 4)
+            }
+        };
+    }
+
+    function buildDnaPreferenceRuleDraft(group = {}) {
+        const camera = safeArray(group.preferences && group.preferences.camera).slice(0, 2);
+        const atmosphere = safeArray(group.preferences && group.preferences.atmosphere).slice(0, 2);
+        const event = safeArray(group.preferences && group.preferences.event).slice(0, 2);
+        const strongest = camera.length ? camera : (atmosphere.length ? atmosphere : event);
+        if (!strongest.length || Number(group.sampleCount) < 3) return null;
+        const strongestText = strongest.map(item => item.value).join('或');
+        const evidenceParts = [];
+        if (camera.length) evidenceParts.push(`视角 ${camera.map(item => `${item.value} ${item.count} 次`).join('、')}`);
+        if (atmosphere.length) evidenceParts.push(`氛围 ${atmosphere.map(item => `${item.value} ${item.count} 次`).join('、')}`);
+        if (event.length) evidenceParts.push(`事件 ${event.map(item => `${item.value} ${item.count} 次`).join('、')}`);
+        return normalizeMemoryRule({
+            scope: 'node',
+            type: 'preferred',
+            target: group.path,
+            title: `${group.label}方向优先使用${strongestText}`,
+            pattern: `${group.label}方向下，优先沿用 ${evidenceParts.join('；')} 的视觉 DNA 组合。`,
+            rationale: `来自视觉 DNA 工作台的采纳模式统计，共 ${group.sampleCount} 条样本。`,
+            action: `生成 ${group.label} 相关方向时，优先选择 ${strongestText}，并结合历史高频事件与视觉钩子形成可生产画面。`,
+            evidence: [
+                `采纳样本 ${group.sampleCount} 条`,
+                ...evidenceParts
+            ],
+            sourceFeedbackIds: safeArray(group.samples).map(sample => sample.feedbackId).filter(Boolean),
+            confidence: Math.min(0.9, 0.55 + Math.min(Number(group.sampleCount) || 0, 10) * 0.03),
+            source: 'visual-dna-workbench',
+            status: 'draft'
+        }, {
+            status: 'draft'
+        });
+    }
+
+    function buildVisualDnaWorkbench(query = {}) {
+        const { store } = getStore(query);
+        store.ensureBase();
+        const assetsData = store.read('assets.json', emptyAssets());
+        const feedbackData = store.read('feedback.json', emptyFeedback());
+        const draftData = store.read('direction-drafts.json', emptyDirectionDrafts());
+        const evidenceData = store.read('direction-evidence.json', emptyDirectionEvidence());
+        const historyData = store.read('direction-expansion-history.json', { items: [] });
+        const assetsById = new Map(safeArray(assetsData.assets).map(asset => [asset.assetId, asset]));
+        const groups = new Map();
+
+        safeArray(feedbackData.feedback)
+            .filter(feedback => ['good', 'normal'].includes(normalizeReviewStatus(feedback.status || feedback.reviewStatus, 'unreviewed')))
+            .forEach(feedback => {
+                const asset = assetsById.get(feedback.assetId) || {};
+                pushVisualDnaWorkbenchSample(groups, buildAdoptionSample({
+                    id: feedback.feedbackId || feedback.assetId,
+                    source: 'feedback',
+                    sourceLabel: feedback.status === 'good' ? '好图反馈' : '一般反馈',
+                    status: feedback.status,
+                    groupPath: feedback.directionPath || asset.directionPath || feedback.directionName || asset.directionName,
+                    directionPath: feedback.directionPath || asset.directionPath || '',
+                    name: feedback.promptDirection || asset.promptDirection || feedback.promptTitle || asset.promptTitle || feedback.directionName || asset.directionName,
+                    createdAt: feedback.updatedAt || feedback.createdAt || asset.savedAt || '',
+                    record: {
+                        ...asset,
+                        ...feedback,
+                        description: [feedback.note, asset.promptDirection, asset.prompt].filter(Boolean).join('。'),
+                        prompt: asset.prompt
+                    },
+                    evidence: feedback.note || asset.promptTitle || '',
+                    feedbackId: feedback.feedbackId || '',
+                    assetId: feedback.assetId || asset.assetId || ''
+                }));
+            });
+
+        safeArray(evidenceData.evidence)
+            .filter(entry => entry && entry.source !== 'material-analysis')
+            .forEach(entry => {
+                pushVisualDnaWorkbenchSample(groups, buildAdoptionSample({
+                    id: entry.id || entry.evidenceId || entry.assetGroupKey,
+                    source: 'direction-evidence',
+                    sourceLabel: '成功案例',
+                    status: entry.status || 'success',
+                    groupPath: entry.targetDirectionPath || entry.directionPath || entry.directionKey,
+                    directionPath: entry.targetDirectionPath || entry.directionPath || '',
+                    name: entry.targetDirectionName || entry.directionName || entry.directionKey || entry.assetGroupKey,
+                    createdAt: entry.updatedAt || entry.createdAt || entry.collectedAt || '',
+                    record: entry,
+                    evidence: entry.whyGood || entry.reason || ''
+                }));
+            });
+
+        safeArray(historyData.items || historyData.history || historyData.expansions)
+            .forEach(item => {
+                pushVisualDnaWorkbenchSample(groups, buildAdoptionSample({
+                    id: `${item.runId || 'history'}:${item.dedupeKey || item.extensionKey || item.newDirectionName}`,
+                    source: 'direction-expansion-history',
+                    sourceLabel: '入选候选',
+                    status: 'selected',
+                    groupPath: item.sourceDirectionPath || item.directionPath || item.targetDirectionPath,
+                    directionPath: item.sourceDirectionPath || '',
+                    name: item.newDirectionName || item.extensionName || item.name,
+                    createdAt: item.createdAt || '',
+                    record: item,
+                    evidence: item.dedupeReason || item.productionAdvice || ''
+                }));
+            });
+
+        safeArray(draftData.drafts)
+            .filter(draft => normalizeDirectionStatus(draft.status, 'draft') === 'accepted')
+            .forEach(draft => {
+                pushVisualDnaWorkbenchSample(groups, buildAdoptionSample({
+                    id: draft.id,
+                    source: 'direction-drafts',
+                    sourceLabel: '已采纳方向',
+                    status: 'accepted',
+                    groupPath: visualDnaParentPathFromDraft(draft),
+                    directionPath: draft.path || draft.sourceDirectionPath || '',
+                    name: draft.name || draft.path,
+                    createdAt: draft.updatedAt || draft.createdAt || '',
+                    record: draft,
+                    evidence: draft.sourceStrategy || draft.description || ''
+                }));
+            });
+
+        const compactGroups = Array.from(groups.values())
+            .map(compactVisualDnaWorkbenchGroup)
+            .sort((a, b) => b.sampleCount - a.sampleCount || a.label.localeCompare(b.label));
+        const suggestedRules = compactGroups
+            .map(buildDnaPreferenceRuleDraft)
+            .filter(Boolean)
+            .slice(0, 12);
+        return {
+            success: true,
+            updatedAt: nowIso(),
+            counts: {
+                parentDirections: compactGroups.length,
+                adoptionSamples: compactGroups.reduce((sum, group) => sum + group.sampleCount, 0),
+                feedbackSamples: compactGroups.reduce((sum, group) => sum + (Number(group.sources.feedback) || 0), 0),
+                evidenceSamples: compactGroups.reduce((sum, group) => sum + (Number(group.sources.evidence) || 0), 0),
+                historySamples: compactGroups.reduce((sum, group) => sum + (Number(group.sources.history) || 0), 0),
+                acceptedDraftSamples: compactGroups.reduce((sum, group) => sum + (Number(group.sources.drafts) || 0), 0),
+                suggestedRules: suggestedRules.length
+            },
+            adoptionPatterns: compactGroups,
+            stylePreferences: compactGroups.map(group => ({
+                path: group.path,
+                label: group.label,
+                sampleCount: group.sampleCount,
+                preferences: group.preferences
+            })),
+            suggestedRules
+        };
+    }
+
+    function generateVisualDnaRuleDrafts(payload = {}, query = {}) {
+        const { store } = getStore(query);
+        ensureEmptyFiles(store);
+        const limit = Math.max(1, Math.min(20, Math.floor(Number(payload.limit || query.limit) || 12)));
+        const workbench = buildVisualDnaWorkbench(query);
+        const drafts = safeArray(workbench.suggestedRules).slice(0, limit);
+        if (!drafts.length) {
+            return {
+                success: false,
+                message: '当前视觉 DNA 采纳样本不足，暂未生成规则草案。',
+                drafts: []
+            };
+        }
+        const memory = readCreativeMemory(store);
+        upsertDrafts(memory, drafts);
+        const saved = writeCreativeMemory(store, memory);
+        return {
+            success: true,
+            message: `已生成 ${drafts.length} 条视觉 DNA 规则草案，等待人工启用。`,
+            drafts,
+            memory: compactCreativeMemory(saved)
         };
     }
 
@@ -3531,6 +5442,8 @@ function createCreativeKnowledgeService(options = {}) {
             }
             primaryTags.set(tag, current);
         });
+        const visualDnaOverview = buildVisualDnaOverview(query);
+        const directionTagsOverview = buildDirectionTagsOverview(query);
 
         return {
             success: true,
@@ -3572,6 +5485,8 @@ function createCreativeKnowledgeService(options = {}) {
             draftStatusCounts,
             reviewCounts,
             scheduler: schedulerState,
+            visualDnaOverview,
+            directionTagsOverview,
             primaryTags: Array.from(primaryTags.values())
                 .sort((a, b) => b.total - a.total || a.tag.localeCompare(b.tag)),
             recentRuns: runs.slice(0, 5),
@@ -3590,9 +5505,17 @@ function createCreativeKnowledgeService(options = {}) {
         createFeedback,
         disableMemoryRule,
         extractDirectionDraftsFromRun,
+        buildVisualDnaOverview,
+        buildVisualDnaWorkbench,
+        buildDirectionTagsOverview,
+        generateVisualDnaRuleDrafts,
+        analyzeDirectionTagsFromReferences,
+        batchAnalyzeDirectionTagsFromReferences,
         getConfig,
         getAssetFile,
         getCreativeMemory,
+        getDirectionVisualDna,
+        getDirectionTags,
         getDirectionPromptReferences,
         getOverview,
         getReferenceFile,
@@ -3609,6 +5532,7 @@ function createCreativeKnowledgeService(options = {}) {
         mergeDirection,
         mergeDirectionDraft,
         analyzeReferenceDna,
+        updateDirectionTagsManualOverride,
         archiveReference,
         deleteReference,
         replaceReference,
@@ -3616,6 +5540,7 @@ function createCreativeKnowledgeService(options = {}) {
         rejectMemoryRule,
         rejectDirectionDraft,
         rejectReference,
+        refreshDirectionTags,
         uploadDirectionReference,
         updateMemoryRule,
         updateDirectionStatus,

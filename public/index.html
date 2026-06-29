@@ -336,7 +336,7 @@
                                         </div>
                                         <span class="workflow-prompt-count" id="lumosPromptCount">0 字</span>
                                     </div>
-                                    <textarea id="lumosPromptTemplate" rows="7" placeholder="输入想对模型说的话，例如：参考这张图生成 4 组差异明显的新画面提示词，保留核心主题，忽略原图文字，保持冰雪极寒氛围，避免科幻、高科技和奇幻元素。"></textarea>
+                                    <textarea id="lumosPromptTemplate" rows="7" placeholder="输入想对模型说的话，例如：参考这张图生成 4 组差异明显的新画面提示词，保留核心主题，忽略原图文字，保持冰雪极寒感，避免科幻、高科技和奇幻元素。"></textarea>
                                     <div class="workflow-prompt-meta">随每张参考图发送给 Winky，用来控制提示词组数、画面风格、主题保留、禁忌项和差异化方向。Winky 生成的提示词会继续发送给 Legil 产图。</div>
                                 </div>
                             </div>
@@ -1072,7 +1072,7 @@
 
                 <details class="mass-legil-panel creative-legil-card creative-production-params" id="creativeLegilGenerationConfigCard">
                     <summary class="mass-legil-summary">
-                        <span>生图参数</span>
+                        <span>投产设置</span>
                         <small>
                             <strong id="creativeSummaryModel">Nano Banana 2</strong>
                             <em id="creativeSummaryRatio">1:1</em>
@@ -1084,7 +1084,7 @@
 
                     <div class="mass-legil-body creative-legil-body">
                         <div class="mass-legil-heading">
-                            <span>生成设置</span>
+                            <span>生图参数</span>
                             <button type="button" class="mass-text-button" onclick="saveCreativeConfig()">保存参数</button>
                         </div>
 
@@ -1155,6 +1155,13 @@
                             </select>
                         </label>
                         <label>
+                            <span>标签组合策略</span>
+                            <select id="creativeAutoTagStrategy">
+                                <option value="stable" selected>稳定拓展</option>
+                                <option value="explore">探索拓展</option>
+                            </select>
+                        </label>
+                        <label>
                             <span>历史避重范围</span>
                             <select id="creativeAutoHistoryScope">
                                 <option value="recent30" selected>近 30 条</option>
@@ -1166,9 +1173,18 @@
                             <span>候选倍率</span>
                             <input type="number" id="creativeAutoCandidateMultiplier" min="1" max="5" step="1" value="2">
                         </label>
+                        <label>
+                            <span>候选方向审核模式</span>
+                            <select id="creativeAutoDirectionReviewMode">
+                                <option value="auto" selected>自动通过</option>
+                                <option value="manual">人工审核</option>
+                            </select>
+                        </label>
                     </div>
                     <div class="creative-target-queue-list" id="creativeAutoTargetQueueList">暂无待拓展方向。</div>
                 </div>
+
+                <section class="creative-direction-review-workbench creative-direction-review-standalone" id="creativeDirectionReviewPanel" hidden></section>
 
                 <div class="progress-panel creative-progress-panel creative-auto-progress-panel creative-runtime-panel active" id="creativeAutoProgressPanel">
                     <div class="progress-header creative-progress-header">
@@ -1422,6 +1438,29 @@
                         </div>
                     </div>
 
+                    <div class="knowledge-visual-dna-overview" id="knowledgeVisualDnaOverview">
+                        <div class="knowledge-dna-metric">
+                            <span>标签覆盖</span>
+                            <strong id="knowledgeDnaCoverage">--</strong>
+                        </div>
+                        <div class="knowledge-dna-metric">
+                            <span>高频标签</span>
+                            <strong id="knowledgeDnaTopAtmospheres">--</strong>
+                        </div>
+                        <div class="knowledge-dna-metric">
+                            <span>高采纳标签</span>
+                            <strong id="knowledgeDnaTopCameras">--</strong>
+                        </div>
+                        <div class="knowledge-dna-metric">
+                            <span>待补标签方向</span>
+                            <strong id="knowledgeDnaMissingEvent">--</strong>
+                        </div>
+                        <div class="knowledge-dna-metric">
+                            <span>待复核方向</span>
+                            <strong id="knowledgeDnaMissingHook">--</strong>
+                        </div>
+                    </div>
+
                     <div class="knowledge-health-row">
                         <div class="knowledge-health-item">
                             <span>已跑方向</span>
@@ -1639,6 +1678,7 @@
                         <button class="creative-mini-btn" type="button" id="knowledgeSelectVisibleDirectionsBtn">选择当前筛选全部内容</button>
                         <button class="creative-mini-btn" type="button" id="knowledgeInvertVisibleDirectionsBtn">反选当前筛选</button>
                         <button class="creative-mini-btn" type="button" id="knowledgeClearSelectedDirectionsBtn">清空选择</button>
+                        <button class="creative-mini-btn" type="button" id="knowledgeBatchAnalyzeTagsBtn">批量补齐标签</button>
                     </div>
                     <div class="knowledge-list-meta" id="knowledgeDirectionMeta">等待加载</div>
                     <div class="knowledge-direction-list" id="knowledgeDirectionList"></div>
@@ -1665,9 +1705,61 @@
                                 <option value="archived">已归档</option>
                             </select>
                         </div>
+                        <div class="form-group knowledge-review-filter">
+                            <label for="knowledgeDraftGovernanceFilter">待补齐队列</label>
+                            <select id="knowledgeDraftGovernanceFilter">
+                                <option value="">全部队列</option>
+                                <option value="missing_dna">缺方向标签</option>
+                                <option value="missing_reference">缺参考图</option>
+                                <option value="high_duplicate_risk">重复风险高</option>
+                                <option value="has_good_evidence">已有好图证据</option>
+                                <option value="ready_to_accept">可直接采纳</option>
+                                <option value="needs_edit">需要人工编辑</option>
+                            </select>
+                        </div>
                         <button class="btn btn-secondary" type="button" onclick="loadCreativeKnowledgeDrafts()">刷新草案</button>
                     </div>
+                    <div class="knowledge-draft-governance-summary" id="knowledgeDraftGovernanceSummary"></div>
                     <div class="knowledge-draft-list" id="knowledgeDraftList"></div>
+                </details>
+
+                <details class="card card-wide collapsible-card knowledge-visual-dna-card product-collapsible" open>
+                    <summary class="card-title">
+                        <span class="icon icon-blue icon-chat" aria-hidden="true"></span>
+                        维护记录 / 方向标签
+                    </summary>
+                    <div class="knowledge-visual-dna-toolbar">
+                        <div class="knowledge-dna-workbench-metrics">
+                            <div class="knowledge-dna-metric">
+                                <span>父方向</span>
+                                <strong id="knowledgeDnaWorkbenchParents">--</strong>
+                            </div>
+                            <div class="knowledge-dna-metric">
+                                <span>采纳样本</span>
+                                <strong id="knowledgeDnaWorkbenchSamples">--</strong>
+                            </div>
+                            <div class="knowledge-dna-metric">
+                                <span>规则草案</span>
+                                <strong id="knowledgeDnaWorkbenchRules">--</strong>
+                            </div>
+                        </div>
+                        <div class="knowledge-dna-workbench-actions">
+                            <button class="btn btn-primary" type="button" id="knowledgeDnaRuleDraftBtn" onclick="generateKnowledgeVisualDnaRules()">生成标签规则草案</button>
+                            <button class="btn btn-secondary" type="button" onclick="loadKnowledgeVisualDnaWorkbench()">刷新方向标签</button>
+                        </div>
+                    </div>
+                    <div class="knowledge-visual-dna-workbench">
+                        <section class="knowledge-dna-column">
+                            <div class="knowledge-memory-section-title">采纳模式</div>
+                            <div class="knowledge-dna-board" id="knowledgeDnaAdoptionBoard"></div>
+                        </section>
+                        <section class="knowledge-dna-column">
+                            <div class="knowledge-memory-section-title">风格偏好</div>
+                            <div class="knowledge-dna-board" id="knowledgeDnaPreferenceBoard"></div>
+                            <div class="knowledge-dna-rule-list" id="knowledgeDnaRuleDrafts"></div>
+                        </section>
+                    </div>
+                    <div class="info-box" id="knowledgeVisualDnaInfo"></div>
                 </details>
 
                 <details class="card card-wide collapsible-card knowledge-auto-curator-card product-collapsible">

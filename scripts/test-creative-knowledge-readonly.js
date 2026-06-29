@@ -69,6 +69,12 @@ function seedKnowledgeBase(root) {
             prompt: 'A clear survival signpost in a frozen street.',
             promptDirection: 'Signpost direction',
             promptTitle: 'Frozen Street Sign',
+            visualDna: {
+                atmosphere: ['tense crisis'],
+                camera: ['first person'],
+                event: ['discovery'],
+                visualHook: ['readable survival signpost']
+            },
             promptIndex: 1,
             outputIndex: 1,
             filePath: existingImagePath,
@@ -138,7 +144,103 @@ function seedKnowledgeBase(root) {
     });
     writeJson(path.join(dataDir, 'feedback.json'), {
         version: 1,
-        feedback: [{ assetId: 'asset-a', value: 'liked' }]
+        feedback: [{
+            feedbackId: 'feedback-a',
+            assetId: 'asset-a',
+            status: 'good',
+            value: 'liked',
+            directionPath: 'Subject/Discovery/Signpost',
+            note: 'Strong readable hook.'
+        }, {
+            feedbackId: 'feedback-draft-ready',
+            directionDraftId: 'draft-ready',
+            status: 'good',
+            directionPath: 'Subject/Discovery/Signpost/Rescue Crate Handoff',
+            note: 'Draft has a usable visual hook.'
+        }]
+    });
+    writeJson(path.join(dataDir, 'direction-drafts.json'), {
+        version: 1,
+        updatedAt: now,
+        drafts: [
+            {
+                id: 'draft-ready',
+                status: 'draft',
+                name: 'Rescue Crate Handoff',
+                path: 'Subject/Discovery/Signpost/Rescue Crate Handoff',
+                description: 'Survivors hand off a glowing rescue crate near a survival signpost.',
+                source: 'agent',
+                sourceRunId: 'run-a',
+                sourceDirectionId: 'direction-a',
+                sourceDirectionPath: 'Subject/Discovery/Signpost',
+                sourceStrategy: 'Use the crate and signpost as a production-ready action hook.',
+                dimensions: {
+                    atmosphere: 'tense crisis',
+                    camera: 'first person',
+                    event: 'handoff',
+                    visualHook: 'glowing rescue crate'
+                },
+                visualHook: 'glowing rescue crate',
+                duplicateRisk: '',
+                selectedAsReference: true,
+                prompts: [{
+                    title: 'Crate handoff',
+                    prompt: 'Survivors pass a glowing rescue crate beside a readable signpost.'
+                }],
+                createdAt: '2026-05-26T12:30:00.000Z',
+                updatedAt: '2026-05-26T12:30:00.000Z'
+            },
+            {
+                id: 'draft-risk',
+                status: 'draft',
+                name: 'Similar Signpost',
+                path: 'Subject/Discovery/Signpost/Similar Signpost',
+                description: '',
+                source: 'agent',
+                sourceRunId: 'run-a',
+                sourceDirectionId: 'direction-a',
+                sourceDirectionPath: 'Subject/Discovery/Signpost',
+                sourceStrategy: 'Too close to existing signpost scene.',
+                dimensions: {},
+                duplicateRisk: 'high duplicate risk',
+                prompts: [],
+                createdAt: '2026-05-26T12:31:00.000Z',
+                updatedAt: '2026-05-26T12:31:00.000Z'
+            }
+        ]
+    });
+    writeJson(path.join(dataDir, 'direction-expansion-history.json'), {
+        version: 1,
+        items: [
+            {
+                runId: 'run-history-a',
+                dedupeKey: 'history-a',
+                sourceDirectionPath: 'Subject/Discovery/Signpost',
+                newDirectionName: 'Dawn Signpost Discovery',
+                visualDna: {
+                    atmosphere: ['tense crisis'],
+                    camera: ['first person'],
+                    event: ['discovery'],
+                    visualHook: ['readable survival signpost']
+                },
+                productionAdvice: 'Keep the sign readable and close to the viewer.',
+                createdAt: '2026-05-26T12:20:00.000Z'
+            },
+            {
+                runId: 'run-history-b',
+                dedupeKey: 'history-b',
+                sourceDirectionPath: 'Subject/Discovery/Signpost',
+                newDirectionName: 'Snow Route Signpost',
+                visualDna: {
+                    atmosphere: ['tense crisis'],
+                    camera: ['first person'],
+                    event: ['discovery'],
+                    visualHook: ['readable survival signpost']
+                },
+                productionAdvice: 'Use the signpost as the hook for route discovery.',
+                createdAt: '2026-05-26T12:25:00.000Z'
+            }
+        ]
     });
     writeJson(path.join(dataDir, 'scheduler-state.json'), {
         version: 1,
@@ -231,9 +333,11 @@ function main() {
         assert.strictEqual(overview.counts.referenceImages, 1);
         assert.strictEqual(overview.counts.assets, 2);
         assert.strictEqual(overview.counts.assetsWithFiles, 1);
-        assert.strictEqual(overview.counts.feedback, 1);
+        assert.strictEqual(overview.counts.feedback, 2);
         assert.strictEqual(overview.counts.runs, 2);
         assert.strictEqual(overview.counts.completedRuns, 1);
+        assert.strictEqual(overview.visualDnaOverview.counts.totalDirections, 2);
+        assert.strictEqual(overview.visualDnaOverview.counts.coveredDirections, 2);
         assert.strictEqual(overview.primaryTags.length, 2);
         assert.strictEqual(overview.recentRuns[0].runId, 'run-a');
         assert.strictEqual(overview.recentAssets[0].assetId, 'asset-a');
@@ -247,6 +351,7 @@ function main() {
         assert.strictEqual(directions.directions[0].referenceImages[0].imageUrl, '/api/creative-knowledge/references/ref-a/file');
         assert.deepStrictEqual(directions.directions[0].knowledgeStats, {
             matchedReferenceCount: 1,
+            activeReferenceCount: 1,
             referenceHintCount: 1,
             runCount: 1,
             assetCount: 1,
@@ -283,6 +388,58 @@ function main() {
         assert.strictEqual(failedRuns.total, 1);
         assert.strictEqual(failedRuns.runs[0].runId, 'run-b');
         logPass('runs list is sorted, compact, searchable, and status-filtered');
+
+        const drafts = service.listDirectionDrafts({ limit: 10 });
+        assert.strictEqual(drafts.success, true);
+        assert.strictEqual(drafts.total, 2);
+        assert.strictEqual(drafts.governanceCounts.missingDna, 1);
+        assert.strictEqual(drafts.governanceCounts.missingReference, 2);
+        assert.strictEqual(drafts.governanceCounts.highDuplicateRisk, 1);
+        assert.strictEqual(drafts.governanceCounts.hasGoodEvidence, 1);
+        assert.strictEqual(drafts.governanceCounts.readyToAccept, 1);
+        const readyDraft = drafts.drafts.find(draft => draft.id === 'draft-ready');
+        assert.strictEqual(readyDraft.governance.dnaCompleteness.label, '6 / 6');
+        assert.strictEqual(readyDraft.governance.referenceCount, 1);
+        assert.strictEqual(readyDraft.governance.duplicateRiskLabel, '低');
+        assert.strictEqual(readyDraft.governance.promptSampleCount, 1);
+        assert.strictEqual(readyDraft.governance.successCaseCount, 1);
+
+        const missingDna = service.listDirectionDrafts({ governance: 'missing_dna', limit: 10 });
+        assert.strictEqual(missingDna.total, 1);
+        assert.strictEqual(missingDna.drafts[0].id, 'draft-risk');
+
+        const preflight = service.acceptDirectionDraft('draft-risk', {}, {});
+        assert.strictEqual(preflight.success, false);
+        assert.strictEqual(preflight.needsPreflightConfirmation, true);
+        assert.ok(preflight.preflight.warnings.length >= 1);
+
+        const accepted = service.acceptDirectionDraft('draft-ready', { reason: 'Ready for production.', confirmPreflight: true }, {});
+        assert.strictEqual(accepted.success, true);
+        assert.strictEqual(accepted.direction.visualDna.visualHook[0], 'glowing rescue crate');
+        assert.strictEqual(accepted.direction.referenceImageStatus, 'ready');
+        logPass('direction draft governance exposes completeness queues and preflight checks');
+
+        const workbench = service.buildVisualDnaWorkbench();
+        assert.strictEqual(workbench.success, true);
+        assert.strictEqual(workbench.counts.parentDirections, 2);
+        assert.strictEqual(workbench.counts.adoptionSamples, 6);
+        assert.strictEqual(workbench.counts.feedbackSamples, 3);
+        assert.strictEqual(workbench.counts.historySamples, 2);
+        assert.strictEqual(workbench.counts.suggestedRules, 1);
+        assert.strictEqual(workbench.adoptionPatterns[0].label, 'Signpost');
+        assert.deepStrictEqual(workbench.adoptionPatterns[0].preferences.camera[0], {
+            value: 'first person',
+            count: 4,
+            sourceIds: ['feedback-a', 'run-history-a:history-a', 'run-history-b:history-b', 'draft-ready']
+        });
+        logPass('visual DNA workbench aggregates accepted feedback into adoption patterns');
+
+        const generatedRules = service.generateVisualDnaRuleDrafts({ limit: 5 });
+        assert.strictEqual(generatedRules.success, true);
+        assert.strictEqual(generatedRules.drafts.length, 1);
+        assert.strictEqual(generatedRules.memory.draftRules.length, 1);
+        assert.strictEqual(generatedRules.memory.draftRules[0].source, 'visual-dna-workbench');
+        logPass('visual DNA workbench can write preferred-rule drafts into creative memory');
 
         console.log('[S1] Knowledge readonly MVP contract is locked.');
     } finally {

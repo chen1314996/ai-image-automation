@@ -22,7 +22,9 @@ let creativeAutoCurrentRunId = '';
             promptGroupsPerNewDirection: 2,
             diversityMode: 'balanced',
             historyScope: 'recent30',
-            candidateMultiplier: 2
+            candidateMultiplier: 2,
+            directionReviewMode: 'auto',
+            tagStrategy: 'stable'
         };
 
         const CREATIVE_AUTO_MODE_DEFAULTS = {
@@ -270,6 +272,12 @@ let creativeAutoCurrentRunId = '';
                 document.getElementById('creativeAutoCandidateMultiplier')?.value,
                 CREATIVE_AUTO_TARGET_QUEUE_DEFAULTS.candidateMultiplier
             );
+            const directionReviewMode = document.getElementById('creativeAutoDirectionReviewMode')?.value === 'manual'
+                ? 'manual'
+                : 'auto';
+            const tagStrategy = document.getElementById('creativeAutoTagStrategy')?.value === 'explore'
+                ? 'explore'
+                : 'stable';
             return {
                 newDirectionsPerSource: clampCreativeAutoSmallCount(
                     document.getElementById('creativeAutoNewDirectionsPerSource')?.value,
@@ -281,7 +289,9 @@ let creativeAutoCurrentRunId = '';
                 ),
                 diversityMode: ['stable', 'balanced', 'explore'].includes(diversityMode) ? diversityMode : CREATIVE_AUTO_TARGET_QUEUE_DEFAULTS.diversityMode,
                 historyScope: ['recent10', 'recent30', 'all'].includes(historyScope) ? historyScope : CREATIVE_AUTO_TARGET_QUEUE_DEFAULTS.historyScope,
-                candidateMultiplier: Math.max(1, Math.min(5, candidateMultiplier))
+                candidateMultiplier: Math.max(1, Math.min(5, candidateMultiplier)),
+                directionReviewMode,
+                tagStrategy
             };
         }
 
@@ -657,6 +667,19 @@ let creativeAutoCurrentRunId = '';
             };
         }
 
+        function getCreativeAutoDirectionTags(direction = {}, limit = 5) {
+            const summary = direction.directionTagSummary || {};
+            const topTags = Array.isArray(summary.topTags)
+                ? summary.topTags.map(item => item && (item.value || item.name || item.tag))
+                : [];
+            return creativeAutoUniqueTags([
+                direction.directionTags,
+                summary.tags,
+                summary.mainTags,
+                topTags
+            ].flatMap(item => creativeAutoSplitDirectionTags(item)), limit);
+        }
+
         function buildCreativeAutoTargetCards(directions = []) {
             const aggregateMap = new Map();
             directions.forEach((direction, index) => {
@@ -679,6 +702,7 @@ let creativeAutoCurrentRunId = '';
                             directionIds: [],
                             descriptions: [],
                             referenceImages: [],
+                            tags: [],
                             stats: { referenceCount: 0, runCount: 0, assetCount: 0, promptCount: 0 }
                         });
                     }
@@ -688,6 +712,7 @@ let creativeAutoCurrentRunId = '';
                     target.directionIds.push(direction.id);
                     if (direction.description && target.descriptions.length < 4) target.descriptions.push(direction.description);
                     target.referenceImages.push(...getCreativeAutoReferenceImages(direction));
+                    target.tags.push(...getCreativeAutoDirectionTags(direction));
                     target.stats.referenceCount += stats.referenceCount;
                     target.stats.runCount += stats.runCount;
                     target.stats.assetCount += stats.assetCount;
@@ -698,7 +723,8 @@ let creativeAutoCurrentRunId = '';
             const aggregateTargets = Array.from(aggregateMap.values()).map(target => ({
                 ...target,
                 directionIds: creativeAutoUnique(target.directionIds),
-                referenceImages: target.referenceImages.slice(0, 4)
+                referenceImages: target.referenceImages.slice(0, 4),
+                tags: creativeAutoUniqueTags(target.tags, 5)
             }));
             const directionTargets = directions.map(direction => ({
                 type: 'direction',
@@ -710,6 +736,7 @@ let creativeAutoCurrentRunId = '';
                 directionIds: [direction.id],
                 descriptions: [direction.description || ''],
                 referenceImages: getCreativeAutoReferenceImages(direction),
+                tags: getCreativeAutoDirectionTags(direction),
                 stats: getCreativeAutoDirectionStats(direction)
             }));
             return aggregateTargets.concat(directionTargets);
@@ -916,7 +943,7 @@ let creativeAutoCurrentRunId = '';
             checkbox.addEventListener('change', () => toggleCreativeAutoTarget(target, checkbox.checked));
             card.appendChild(checkbox);
 
-            const body = document.createElement('span');
+            const body = document.createElement('div');
             body.className = 'creative-direction-leaf-body';
             const top = document.createElement('span');
             top.className = 'creative-direction-card-top';
@@ -934,6 +961,18 @@ let creativeAutoCurrentRunId = '';
                 ? `覆盖 ${target.directionIds.length} 个细分方向，用于归纳共同点后做大方向迭代。`
                 : (target.descriptions && target.descriptions[0]) || '未记录描述';
             body.appendChild(desc);
+
+            const tagPanel = document.createElement('div');
+            tagPanel.className = 'creative-direction-leaf-tags';
+            const tagLabel = document.createElement('span');
+            tagLabel.className = 'creative-direction-leaf-tag-label';
+            tagLabel.textContent = '方向标签';
+            tagPanel.appendChild(tagLabel);
+            tagPanel.appendChild(renderCreativeDirectionTagPills(target.tags || [], {
+                compact: true,
+                emptyText: '标签待分析'
+            }));
+            body.appendChild(tagPanel);
 
             const refs = document.createElement('span');
             refs.className = 'creative-direction-card-refs';
@@ -1219,6 +1258,9 @@ let creativeAutoCurrentRunId = '';
                 });
                 item.appendChild(stats);
 
+                const candidateReview = renderCreativeAutoDirectionCandidateReview(run);
+                if (candidateReview) item.appendChild(candidateReview);
+
                 const actions = document.createElement('div');
                 actions.className = 'creative-run-history-actions';
                 const inspectBtn = document.createElement('button');
@@ -1262,6 +1304,7 @@ let creativeAutoCurrentRunId = '';
         function canResumeCreativeAutoRun(run = creativeAutoLastRun) {
             if (hasLegacyCreativeResume()) return true;
             if (!run || !run.runId) return false;
+            if (run.phase === 'pending_direction_review') return false;
             if (run.status === 'paused') return true;
             const queue = run.targetQueueProgress || run.targetQueue || null;
             if (
@@ -1334,14 +1377,15 @@ let creativeAutoCurrentRunId = '';
             const isStopping = (running && (phase.includes('stopping') || phase.includes('stop'))) ||
                 (liveLegilTask && liveLegilTask.stopRequested === true);
             const queue = run && (run.targetQueueProgress || run.targetQueue);
+            const pendingDirectionReview = run && phase === 'pending_direction_review';
             const runRunning = running === true || runStatus === 'running';
             const queueRunning = runRunning && queue && String(queue.queueStatus || queue.status || '') === 'running';
             const effectivelyRunning = runRunning || queueRunning || liveLegilRunning;
             const canResume = !effectivelyRunning && canResumeCreativeAutoRun(run);
             if (runBtn) {
                 runBtn.hidden = canResume;
-                runBtn.disabled = effectivelyRunning;
-                runBtn.textContent = effectivelyRunning ? '运行中...' : '开始创意拓展产图';
+                runBtn.disabled = effectivelyRunning || pendingDirectionReview;
+                runBtn.textContent = pendingDirectionReview ? '等待候选审核' : (effectivelyRunning ? '运行中...' : '开始创意拓展产图');
             }
             if (stopBtn) {
                 stopBtn.hidden = !effectivelyRunning;
@@ -1361,10 +1405,13 @@ let creativeAutoCurrentRunId = '';
             if (stickyBtn) {
                 stickyBtn.classList.toggle('btn-danger', effectivelyRunning);
                 stickyBtn.classList.toggle('btn-primary', !effectivelyRunning);
-                stickyBtn.disabled = isStopping;
+                stickyBtn.disabled = isStopping || pendingDirectionReview;
                 if (effectivelyRunning) {
                     stickyBtn.textContent = isStopping ? '停止中...' : '停止任务';
                     stickyBtn.dataset.creativeStickyAction = 'stop';
+                } else if (pendingDirectionReview) {
+                    stickyBtn.textContent = '等待候选审核';
+                    stickyBtn.dataset.creativeStickyAction = 'review';
                 } else if (canResume) {
                     stickyBtn.textContent = '继续产图';
                     stickyBtn.dataset.creativeStickyAction = 'resume';
@@ -1520,6 +1567,7 @@ let creativeAutoCurrentRunId = '';
             if (rejectedEl) rejectedEl.textContent = '0';
             if (savedEl) savedEl.textContent = '0';
             if (failedEl) failedEl.textContent = '0';
+            renderCreativeDirectionReviewPanel({});
             renderCreativeAutoPromptPanel({});
             clearCreativeAutoRecentAssets({}, '生图完成并写入资产索引后，这里会显示最近图片和反馈入口。');
             updateCreativeMiniStatus({
@@ -1531,6 +1579,16 @@ let creativeAutoCurrentRunId = '';
         }
 
         function getCreativeAutoProgress(run = {}) {
+            if (run.phase === 'pending_direction_review') {
+                const review = run.directionCandidateReview || {};
+                const total = (Array.isArray(review.selected) ? review.selected.length : 0) +
+                    (Array.isArray(review.rejected) ? review.rejected.length : 0);
+                return {
+                    label: '候选方向审核',
+                    total: Math.max(1, total),
+                    completed: 0
+                };
+            }
             const legil = run.legilProgress || null;
             if (legil) {
                 const total = Math.max(0, Number(legil.total) || Number(run.promptTotal) || 0);
@@ -1940,6 +1998,9 @@ let creativeAutoCurrentRunId = '';
                 return '当前生图批次已完成';
             }
             if (run.status === 'paused') {
+                if (run.phase === 'pending_direction_review') {
+                    return '候选方向待人工审核，确认后才会生成 prompt';
+                }
                 return '任务已暂停，可继续之前任务';
             }
             return '';
@@ -2000,6 +2061,773 @@ let creativeAutoCurrentRunId = '';
             button.textContent = label;
             button.addEventListener('click', onClick);
             return button;
+        }
+
+        function getCreativeAutoCandidateReview(run = {}) {
+            if (run.directionCandidateReview) return run.directionCandidateReview;
+            const report = run.directionPlanReport || {};
+            if (!report || (!Array.isArray(report.selectedExtensions) && !Array.isArray(report.rejectedExtensions))) return null;
+            const selected = Array.isArray(report.selectedExtensions) ? report.selectedExtensions : [];
+            const rejected = Array.isArray(report.rejectedExtensions) ? report.rejectedExtensions : [];
+            return {
+                selectedCount: Number(report.selectedExtensionCount) || selected.length,
+                rejectedCount: Number(report.rejectedExtensionCount) || rejected.length,
+                selected: selected.map((candidate, index) => ({ ...candidate, status: 'selected', index: index + 1 })),
+                rejected: rejected.map((candidate, index) => ({ ...candidate, status: 'rejected', index: index + 1 }))
+            };
+        }
+
+        const CREATIVE_DIRECTION_TAG_LABELS = {
+            'comic relief under danger': '危中幽默',
+            'urgent hope': '急迫希望',
+            'last chance pressure': '最后机会',
+            'surprise reward': '惊喜奖励',
+            'low-angle close foreground': '低机位近景',
+            'macro prop with human stakes': '道具特写',
+            'top-down map-like view': '地图俯瞰',
+            'evacuation countdown': '撤离倒计时',
+            'temporary bridge': '临时桥',
+            'blocked entrance': '入口受阻',
+            'collapsing shelter': '庇护坍塌',
+            'escort through danger': '护送穿越',
+            'frozen vehicle route': '冰面车路',
+            'repair restart': '维修重启',
+            evacuation: '撤离',
+            danger: '危险',
+            hope: '希望',
+            'warm hope': '温暖希望',
+            warning: '警示',
+            discovery: '发现',
+            'first person': '第一人称',
+            'first-person': '第一人称',
+            overhead: '俯瞰',
+            'top down': '俯瞰',
+            'close-up': '近景',
+            'close up': '近景',
+            'low angle': '低机位'
+        };
+
+        function creativeAutoDirectionTagKey(value = '') {
+            return String(value || '')
+                .trim()
+                .replace(/[()（）\d]+/g, '')
+                .replace(/[_/]+/g, ' ')
+                .replace(/\s+/g, ' ')
+                .toLowerCase();
+        }
+
+        function creativeAutoNormalizeDirectionTag(value = '') {
+            let text = String(value || '').trim();
+            if (!text) return '';
+            text = text
+                .replace(/^(visualHook|dedupeReason|riskNote|productionAdvice)\s*[:：]\s*/i, '')
+                .replace(/^(氛围|视角|事件|钩子|视觉钩子|DNA|视觉 DNA)\s*[:：]\s*/i, '')
+                .replace(/[。；;,.，、]+$/g, '')
+                .trim();
+            const key = creativeAutoDirectionTagKey(text);
+            if (CREATIVE_DIRECTION_TAG_LABELS[key]) return CREATIVE_DIRECTION_TAG_LABELS[key];
+            if (/^[a-z0-9\s-]+$/i.test(text)) {
+                if (key.includes('comic')) return '危中幽默';
+                if (key.includes('urgent') && key.includes('hope')) return '急迫希望';
+                if (key.includes('last') && key.includes('chance')) return '最后机会';
+                if (key.includes('surprise') || key.includes('reward')) return '惊喜奖励';
+                if (key.includes('low') && key.includes('angle')) return '低机位';
+                if (key.includes('macro') || key.includes('prop')) return '道具特写';
+                if (key.includes('top') || key.includes('overhead') || key.includes('map')) return '俯瞰';
+                if (key.includes('evac')) return '撤离';
+                if (key.includes('shelter')) return '庇护所';
+                if (key.includes('escort')) return '护送';
+                if (key.includes('repair')) return '维修';
+                if (key.includes('danger')) return '危险';
+                if (key.includes('hope')) return '希望';
+                return '';
+            }
+            const hookRules = [
+                [/方向正确|主体明确|一眼|吸引人/, '主体明确'],
+                [/没啥吸引|常规图|吸引力弱/, '吸引力弱'],
+                [/探索发现感弱|发现感弱/, '探索弱'],
+                [/多余.*文字|上下.*文字|文字信息|英文|小字|包装|品牌|标识|地名|UI/, '文字干扰'],
+                [/信号弹|信号|光束/, '信号线索'],
+                [/标语|文字|短牌|中文/, '中文标语'],
+                [/路标|指示牌|箭头/, '指示路标'],
+                [/巨型|地标/, '巨型地标'],
+                [/暖光|暖灯|窗口|灯/, '暖光目标'],
+                [/选择压力|犹豫|是否|转向|分叉/, '选择压力'],
+                [/守护|保护阵型|围成保护|护住/, '守护动作'],
+                [/手套|伸手|手部|拉扯/, '手部动作'],
+                [/绳梯|绳索|绳结|攀/, '绳索攀爬'],
+                [/工具箱|工具小件|破冰工具/, '工具箱'],
+                [/零件包|维修零件|破损零件/, '维修零件'],
+                [/搭建支架|搭建|支架/, '搭建动作'],
+                [/车辆|车辙|雪橇|小推车|载具/, '载具路线'],
+                [/桥|桥面|断桥/, '桥梁通行'],
+                [/裂缝|裂冰|冰裂/, '冰裂危机'],
+                [/补给|物资|药包|木柴|热汤/, '物资补给'],
+                [/地图|路线/, '地图线索'],
+                [/入口|仓门|门/, '入口目标'],
+                [/火光|暖炉|炉/, '火光庇护'],
+                [/冰洞|天窗|洞口/, '洞口撤离'],
+                [/队列|排队|订单/, '订单队列']
+            ];
+            const found = hookRules.find(([pattern]) => pattern.test(text));
+            if (found) return found[1];
+            text = creativeAutoLocalizeDirectionText(text).replace(/\s+/g, '');
+            if (/^(感|镜头|动作|抓手|视觉|方向|主体|画面|制作|风险)$/.test(text)) return '';
+            return text.length > 8 ? text.slice(0, 8) : text;
+        }
+
+        function creativeAutoLocalizeDirectionText(value = '') {
+            let text = String(value || '');
+            [
+                ['seeded axis 的 frozen vehicle route', '冻车路线标签'],
+                ['visible hook 为 signal flare clue', '画面重点改为信号弹线索'],
+                ['静态氛围', '静态场景'],
+                ['风景氛围', '风景感'],
+                ['场景氛围', '场景感'],
+                ['情绪氛围', '情绪感'],
+                ['冰雪氛围', '冰雪感'],
+                ['事件机制', '画面机制'],
+                ['明确事件', '明确动作'],
+                ['广告钩子', '画面重点'],
+                ['紧张氛围', '紧张感'],
+                ['多视角', '多镜头'],
+                ['不同视角', '不同镜头'],
+                ['direction tags complete', '标签完整'],
+                ['matches high-performing tags', '命中高表现标签'],
+                ['covers gap tags', '覆盖缺口标签'],
+                ['tag combo is new in current pool', '本轮组合新'],
+                ['hits risk tags', '命中风险标签'],
+                ['direction tags', '方向标签'],
+                ['DNA完整度高', '标签完整'],
+                ['DNA基本可用', '标签可用'],
+                ['DNA维度缺失', '标签缺失'],
+                ['DNA组合有差异', '标签组合有差异'],
+                ['本轮DNA组合重复', '本轮标签组合重复'],
+                ['匹配高采纳DNA', '匹配高采纳标签'],
+                ['历史DNA组合重复', '历史标签组合重复'],
+                ['命中风险DNA', '命中风险标签'],
+                ['seeded axis', '方向标签'],
+                ['visible hook', '画面重点'],
+                ['visual hook', '画面重点'],
+                ['signal flare clue', '信号弹线索'],
+                ['frozen vehicle route', '冻车路线'],
+                ['repair restart', '维修重启'],
+                ['macro prop with human stakes', '道具特写'],
+                ['low-angle close foreground', '低机位近景'],
+                ['top-down map-like view', '地图俯瞰'],
+                ['evacuation countdown', '撤离倒计时'],
+                ['temporary bridge', '临时桥'],
+                ['blocked entrance', '入口受阻'],
+                ['collapsing shelter', '庇护坍塌'],
+                ['escort through danger', '护送穿越']
+            ].forEach(([from, to]) => {
+                text = text.replace(new RegExp(from.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), to);
+            });
+            return text
+                .replace(/\b(visualDna|visualHook)\b/gi, '方向标签')
+                .replace(/\bDNA\b/gi, '方向标签')
+                .replace(/DNA/g, '方向标签')
+                .replace(/视觉\s*钩子/g, '画面重点')
+                .replace(/钩子/g, '重点')
+                .replace(/视角/g, '镜头')
+                .replace(/事件/g, '动作')
+                .replace(/氛围/g, '感')
+                .replace(/\s{2,}/g, ' ')
+                .replace(/\s+([，。；、])/g, '$1')
+                .trim();
+        }
+
+        function creativeAutoSplitDirectionTags(value) {
+            if (Array.isArray(value)) return value.flatMap(item => creativeAutoSplitDirectionTags(item));
+            if (value && typeof value === 'object') return Object.values(value).flatMap(item => creativeAutoSplitDirectionTags(item));
+            return String(value || '')
+                .split(/[、,，;；\n|/]+/)
+                .map(item => creativeAutoNormalizeDirectionTag(item))
+                .filter(Boolean);
+        }
+
+        function creativeAutoUniqueTags(values = [], limit = 5) {
+            const seen = new Set();
+            const output = [];
+            values.forEach(value => {
+                const tag = creativeAutoNormalizeDirectionTag(value);
+                if (!tag || seen.has(tag)) return;
+                seen.add(tag);
+                output.push(tag);
+            });
+            return output.slice(0, limit);
+        }
+
+        function creativeAutoCandidateDirectionTags(candidate = {}, limit = 5) {
+            const visualDna = candidate.visualDna && typeof candidate.visualDna === 'object' ? candidate.visualDna : {};
+            const dimensions = candidate.dimensions && typeof candidate.dimensions === 'object' ? candidate.dimensions : {};
+            const directTags = [
+                candidate.mainTags,
+                candidate.directionTags,
+                candidate.tags,
+                candidate.extraTags
+            ].flatMap(item => creativeAutoSplitDirectionTags(item));
+            const legacyTags = [
+                visualDna.mainTags,
+                visualDna.atmosphere,
+                visualDna.camera,
+                visualDna.event,
+                visualDna.visualHook,
+                dimensions.mood,
+                dimensions.atmosphere,
+                dimensions.perspective,
+                dimensions.camera,
+                dimensions.narrative,
+                dimensions.event,
+                dimensions.hook,
+                dimensions.visualHook,
+                candidate.visualHook
+            ].flatMap(item => creativeAutoSplitDirectionTags(item));
+            const textTags = [
+                candidate.name,
+                candidate.newDirectionName,
+                candidate.description
+            ].flatMap(item => creativeAutoSplitDirectionTags(item)).filter(tag => tag.length <= 6);
+            return creativeAutoUniqueTags(directTags.concat(legacyTags, textTags), limit);
+        }
+
+        function creativeAutoCandidateRiskTags(candidate = {}, limit = 5) {
+            return creativeAutoUniqueTags([
+                candidate.riskTags,
+                candidate.avoidRules,
+                candidate.riskNote,
+                candidate.duplicateRisk
+            ].flatMap(item => creativeAutoSplitDirectionTags(item)), limit);
+        }
+
+        function renderCreativeDirectionTagPills(tags = [], options = {}) {
+            const row = document.createElement('div');
+            row.className = `direction-tag-pill-row${options.risk ? ' is-risk' : ''}${options.compact ? ' is-compact' : ''}`;
+            const list = creativeAutoUniqueTags(tags, options.limit || 5);
+            if (!list.length) {
+                const empty = document.createElement('span');
+                empty.className = 'direction-tag-pill is-empty';
+                empty.textContent = options.emptyText || '标签待分析';
+                row.appendChild(empty);
+                return row;
+            }
+            list.forEach(tagText => {
+                const tag = document.createElement('span');
+                tag.className = 'direction-tag-pill';
+                tag.textContent = tagText;
+                tag.title = tagText;
+                row.appendChild(tag);
+            });
+            const rawCount = Array.isArray(tags) ? tags.length : 0;
+            if (rawCount > list.length) {
+                const more = document.createElement('span');
+                more.className = 'direction-tag-pill is-more';
+                more.textContent = `+${rawCount - list.length}`;
+                row.appendChild(more);
+            }
+            return row;
+        }
+
+        function creativeAutoCandidateText(candidate = {}) {
+            const tags = creativeAutoCandidateDirectionTags(candidate, 8);
+            const risks = creativeAutoCandidateRiskTags(candidate, 5);
+            return [
+                candidate.name,
+                creativeAutoLocalizeDirectionText(candidate.description),
+                candidate.score ? `分数：${candidate.score}` : '',
+                tags.length ? `方向标签：${tags.join('、')}` : '',
+                candidate.scoreSummary ? `值得保留：${creativeAutoLocalizeDirectionText(candidate.scoreSummary)}` : '',
+                candidate.dedupeReason ? `注意：${creativeAutoLocalizeDirectionText(candidate.dedupeReason)}` : '',
+                risks.length ? `风险标签：${risks.join('、')}` : '',
+                candidate.productionAdvice ? `投产建议：${creativeAutoLocalizeDirectionText(candidate.productionAdvice)}` : ''
+            ].filter(Boolean).join('\n');
+        }
+
+        function renderCreativeAutoCandidateCard(candidate = {}) {
+            const card = document.createElement('div');
+            card.className = `direction-candidate-card is-${candidate.status || 'selected'}`;
+            const top = document.createElement('div');
+            top.className = 'direction-candidate-top';
+            const title = document.createElement('strong');
+            title.textContent = candidate.name || candidate.newDirectionName || '未命名候选方向';
+            const score = document.createElement('span');
+            score.textContent = `${candidate.status === 'rejected' ? '淘汰' : '入选'} · ${candidate.score || '--'} 分`;
+            top.appendChild(title);
+            top.appendChild(score);
+            card.appendChild(top);
+
+            card.appendChild(renderCreativeDirectionTagPills(creativeAutoCandidateDirectionTags(candidate), {
+                emptyText: '标签待分析'
+            }));
+
+            if (candidate.description) {
+                const desc = document.createElement('p');
+                desc.className = 'direction-candidate-desc';
+                desc.textContent = creativeAutoLocalizeDirectionText(candidate.description);
+                card.appendChild(desc);
+            }
+
+            [
+                ['值得保留', candidate.scoreSummary || (Array.isArray(candidate.scoreReasons) ? candidate.scoreReasons.join('、') : candidate.visualHook)],
+                ['注意', candidate.dedupeReason || candidate.riskNote],
+                ['投产建议', candidate.productionAdvice]
+            ].forEach(([label, value]) => {
+                const row = document.createElement('div');
+                row.className = 'direction-candidate-field';
+                const key = document.createElement('span');
+                key.textContent = label;
+                const val = document.createElement('em');
+                val.textContent = creativeAutoLocalizeDirectionText(value || '--');
+                row.appendChild(key);
+                row.appendChild(val);
+                card.appendChild(row);
+            });
+
+            const riskTags = creativeAutoCandidateRiskTags(candidate);
+            if (riskTags.length) {
+                card.appendChild(renderCreativeDirectionTagPills(riskTags, { risk: true, emptyText: '' }));
+            }
+
+            const actions = document.createElement('div');
+            actions.className = 'direction-candidate-actions';
+            actions.appendChild(makeCreativeMiniButton('复制', () => copyCreativeAutoText(creativeAutoCandidateText(candidate), '候选方向')));
+            ['送入草案', '标记优秀', '标记风险'].forEach(label => {
+                const button = makeCreativeMiniButton(label, () => {});
+                button.disabled = true;
+                button.title = '第一版只读展示，后续接入写入操作';
+                actions.appendChild(button);
+            });
+            card.appendChild(actions);
+            return card;
+        }
+
+        function renderCreativeAutoDirectionCandidateReview(run = {}) {
+            const review = getCreativeAutoCandidateReview(run);
+            if (!review) return null;
+            const selected = Array.isArray(review.selected) ? review.selected : [];
+            const rejected = Array.isArray(review.rejected) ? review.rejected : [];
+            if (!selected.length && !rejected.length) return null;
+            const details = document.createElement('details');
+            details.className = 'direction-candidate-review creative-direction-candidate-review';
+            const summary = document.createElement('summary');
+            const title = document.createElement('strong');
+            title.textContent = '方向候选审核记录';
+            const count = document.createElement('span');
+            count.textContent = `入选 ${review.selectedCount || selected.length} 个 / 淘汰 ${review.rejectedCount || rejected.length} 个`;
+            summary.appendChild(title);
+            summary.appendChild(count);
+            details.appendChild(summary);
+            const grid = document.createElement('div');
+            grid.className = 'direction-candidate-grid';
+            selected.concat(rejected).forEach(candidate => grid.appendChild(renderCreativeAutoCandidateCard(candidate)));
+            details.appendChild(grid);
+            return details;
+        }
+
+        function isCreativeAutoPendingDirectionReview(run = {}) {
+            return run && run.phase === 'pending_direction_review' && run.directionCandidateReview;
+        }
+
+        function creativeAutoDimensionValue(candidate = {}, key = '') {
+            const dimensions = candidate.dimensions && typeof candidate.dimensions === 'object' ? candidate.dimensions : {};
+            const aliases = {
+                atmosphere: ['atmosphere', 'mood', '氛围'],
+                camera: ['camera', 'perspective', 'view', '视角'],
+                event: ['event', 'narrative', '事件'],
+                visualHook: ['visualHook', 'hook', '钩子']
+            };
+            const keys = aliases[key] || [key];
+            for (const alias of keys) {
+                const value = dimensions[alias];
+                if (Array.isArray(value) && value.length) return value.join('、');
+                if (value) return String(value);
+            }
+            if (key === 'visualHook') return candidate.visualHook || '';
+            return '';
+        }
+
+        function setCreativeDirectionReviewInfo(text = '', type = 'loading') {
+            const info = document.getElementById('creativeDirectionReviewInfo');
+            if (!info) return;
+            info.className = `info-box ${type}`;
+            info.textContent = text;
+        }
+
+        function renderCreativeDirectionReviewField(label, field, value = '', multiline = false) {
+            const group = document.createElement('label');
+            group.className = 'creative-direction-review-field';
+            const span = document.createElement('span');
+            span.textContent = label;
+            const input = multiline ? document.createElement('textarea') : document.createElement('input');
+            input.value = value || '';
+            input.dataset.reviewField = field;
+            if (multiline) input.rows = 2;
+            group.appendChild(span);
+            group.appendChild(input);
+            return group;
+        }
+
+        function renderCreativeDirectionReviewCard(candidate = {}, options = {}) {
+            const card = document.createElement('article');
+            card.className = `creative-direction-review-card is-${candidate.status || 'selected'}`;
+            card.dataset.reviewKey = candidate.reviewKey || candidate.extensionKey || candidate.name || `candidate-${options.index + 1}`;
+            card.dataset.reviewStatus = candidate.status === 'rejected' ? 'deleted' : 'selected';
+
+            const head = document.createElement('div');
+            head.className = 'creative-direction-review-head';
+            const title = document.createElement('strong');
+            title.textContent = candidate.name || candidate.newDirectionName || '未命名候选方向';
+            const score = document.createElement('span');
+            score.textContent = `${candidate.status === 'rejected' ? '淘汰' : '入选'} · ${candidate.score || '--'} 分`;
+            head.appendChild(title);
+            head.appendChild(score);
+            card.appendChild(head);
+
+            const tags = document.createElement('div');
+            tags.className = 'creative-direction-review-tags';
+            const mainTags = creativeAutoCandidateDirectionTags(candidate);
+            mainTags.forEach(value => {
+                const tag = document.createElement('span');
+                tag.textContent = value;
+                tag.title = value;
+                tags.appendChild(tag);
+            });
+            if (!tags.children.length) {
+                const tag = document.createElement('span');
+                tag.className = 'is-empty';
+                tag.textContent = '标签待分析';
+                tags.appendChild(tag);
+            }
+            card.appendChild(tags);
+
+            const fields = document.createElement('div');
+            fields.className = 'creative-direction-review-fields';
+            fields.appendChild(renderCreativeDirectionReviewField('方向名', 'name', candidate.name || candidate.newDirectionName || ''));
+            fields.appendChild(renderCreativeDirectionReviewField('主标签', 'mainTags', mainTags.join('、')));
+            fields.appendChild(renderCreativeDirectionReviewField('扩展标签', 'extraTags', creativeAutoUniqueTags([
+                candidate.extraTags,
+                candidate.directionTags,
+                creativeAutoDimensionValue(candidate, 'atmosphere'),
+                creativeAutoDimensionValue(candidate, 'camera'),
+                creativeAutoDimensionValue(candidate, 'event'),
+                creativeAutoDimensionValue(candidate, 'visualHook')
+            ].flatMap(item => creativeAutoSplitDirectionTags(item)), 5).filter(tag => !mainTags.includes(tag)).join('、')));
+            fields.appendChild(renderCreativeDirectionReviewField('风险标签', 'riskTags', creativeAutoCandidateRiskTags(candidate).join('、')));
+            fields.appendChild(renderCreativeDirectionReviewField('描述', 'description', candidate.description || '', true));
+            fields.appendChild(renderCreativeDirectionReviewField('避坑规则', 'avoidRules', (Array.isArray(candidate.avoidRules) ? candidate.avoidRules.join('、') : candidate.riskNote) || '', true));
+            card.appendChild(fields);
+
+            const notes = document.createElement('div');
+            notes.className = 'creative-direction-review-notes';
+            [
+                ['为什么值得保留', candidate.scoreSummary || (Array.isArray(candidate.scoreReasons) ? candidate.scoreReasons.join('、') : '')],
+                ['注意', candidate.dedupeReason],
+                ['投产建议', candidate.productionAdvice],
+                ['避坑说明', candidate.riskNote]
+            ].forEach(([label, value]) => {
+                const row = document.createElement('div');
+                row.appendChild(Object.assign(document.createElement('strong'), { textContent: label }));
+                row.appendChild(Object.assign(document.createElement('span'), { textContent: creativeAutoLocalizeDirectionText(value || '--') }));
+                notes.appendChild(row);
+            });
+            card.appendChild(notes);
+
+            const actions = document.createElement('div');
+            actions.className = 'creative-direction-review-actions';
+            const markCardAccepted = () => {
+                card.dataset.reviewStatus = 'selected';
+                card.classList.remove('is-deleted');
+                card.classList.remove('is-rejected');
+                card.classList.add('is-selected');
+                refreshCreativeDirectionReviewAcceptedCount();
+            };
+            const acceptBtn = makeCreativeMiniButton('采纳', markCardAccepted);
+            const editBtn = makeCreativeMiniButton('编辑', () => {
+                const firstInput = card.querySelector('[data-review-field="name"]');
+                card.classList.add('is-editing');
+                if (firstInput) {
+                    firstInput.focus();
+                    if (typeof firstInput.select === 'function') firstInput.select();
+                }
+            });
+            const deleteBtn = makeCreativeMiniButton('删除', () => {
+                card.dataset.reviewStatus = 'deleted';
+                card.classList.add('is-deleted');
+                refreshCreativeDirectionReviewAcceptedCount();
+            });
+            const draftBtn = makeCreativeMiniButton('入成长层', () => {
+                markCardAccepted();
+                addCreativeDirectionCandidateToDrafts(options.runId, card.dataset.reviewKey);
+            });
+            const promptBtn = makeCreativeMiniButton('直接生成 prompt', () => {
+                markCardAccepted();
+                submitCreativeDirectionReview(options.runId, {
+                    promptOnly: true,
+                    reviewKey: card.dataset.reviewKey
+                });
+            });
+            actions.appendChild(acceptBtn);
+            actions.appendChild(editBtn);
+            actions.appendChild(deleteBtn);
+            actions.appendChild(draftBtn);
+            actions.appendChild(promptBtn);
+            card.appendChild(actions);
+            return card;
+        }
+
+        function collectCreativeDirectionReviewCandidates(root = document.getElementById('creativeDirectionReviewPanel'), onlyKey = '') {
+            if (!root) return [];
+            return Array.from(root.querySelectorAll('.creative-direction-review-card')).map(card => {
+                const reviewKey = card.dataset.reviewKey || '';
+                if (onlyKey && reviewKey !== onlyKey) return null;
+                const value = field => card.querySelector(`[data-review-field="${field}"]`)?.value.trim() || '';
+                const status = card.dataset.reviewStatus || 'selected';
+                const mainTags = creativeAutoUniqueTags(creativeAutoSplitDirectionTags(value('mainTags')), 5);
+                const extraTags = creativeAutoUniqueTags(creativeAutoSplitDirectionTags(value('extraTags')), 5);
+                const riskTags = creativeAutoUniqueTags(creativeAutoSplitDirectionTags(value('riskTags')), 5);
+                const legacyHook = mainTags.concat(extraTags).slice(0, 6).join('、');
+                return {
+                    reviewKey,
+                    status,
+                    selected: status !== 'deleted',
+                    name: value('name'),
+                    description: value('description'),
+                    mainTags,
+                    extraTags,
+                    riskTags,
+                    visualHook: legacyHook,
+                    riskNote: value('avoidRules'),
+                    avoidRules: value('avoidRules').split(/[、,，;\n]+/).map(item => item.trim()).filter(Boolean),
+                    dimensions: {
+                        atmosphere: mainTags[0] || '',
+                        camera: mainTags[1] || '',
+                        event: mainTags[2] || '',
+                        visualHook: legacyHook
+                    }
+                };
+            }).filter(Boolean);
+        }
+
+        function openCreativeDirectionKnowledgeWorkbench() {
+            if (typeof switchPage === 'function') switchPage('knowledge');
+            setTimeout(() => {
+                if (typeof loadCreativeKnowledgePage === 'function') {
+                    loadCreativeKnowledgePage({ silent: true }).catch(() => {});
+                }
+                const card = document.querySelector('.knowledge-visual-dna-card, .knowledge-directions-card');
+                if (card) {
+                    if (card.tagName === 'DETAILS') card.open = true;
+                    card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }
+            }, 120);
+        }
+
+        function openCreativeFeishuWritebackPanel() {
+            if (typeof switchPage === 'function') switchPage('knowledge');
+            setTimeout(() => {
+                const card = document.querySelector('.knowledge-feishu-sync-card');
+                if (card) {
+                    card.open = true;
+                    card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }
+                if (typeof previewKnowledgeFeishuWriteback === 'function') {
+                    previewKnowledgeFeishuWriteback().catch(() => {});
+                }
+            }, 160);
+        }
+
+        function handleCreativeDirectionReviewProduction(run = creativeAutoLastRun) {
+            if (!run || !run.runId) {
+                showToast('当前没有可投产的候选方向', 'error');
+                return;
+            }
+            if (isCreativeAutoPendingDirectionReview(run)) {
+                submitCreativeDirectionReview(run.runId, { promptOnly: run.agentOnly === true });
+                return;
+            }
+            if (run.agentOnly === true && run.status === 'completed' && Number(run.promptTotal) > 0) {
+                continueCreativeAutoRunToLegil(run.runId);
+                return;
+            }
+            if (run.status === 'completed' && Number(run.promptTotal) > 0) {
+                showToast('当前任务已生成投产内容，可在提示词和资产区继续处理');
+                return;
+            }
+            showToast('候选方向还未准备好投产', 'error');
+        }
+
+        function refreshCreativeDirectionReviewAcceptedCount() {
+            const panel = document.getElementById('creativeDirectionReviewPanel');
+            if (!panel || !isCreativeAutoPendingDirectionReview(creativeAutoLastRun || {})) return;
+            const target = panel.querySelector('.creative-direction-review-accepted-count');
+            if (!target) return;
+            const acceptedCount = collectCreativeDirectionReviewCandidates(panel)
+                .filter(item => item.selected).length;
+            const total = Number(target.dataset.total) || panel.querySelectorAll('.creative-direction-review-card').length;
+            target.textContent = `已采纳 ${acceptedCount} / 候选 ${total}`;
+        }
+
+        function renderCreativeDirectionReviewActionBar(container, run = {}, review = {}) {
+            const selected = Array.isArray(review.selected) ? review.selected : [];
+            const rejected = Array.isArray(review.rejected) ? review.rejected : [];
+            const acceptedCount = isCreativeAutoPendingDirectionReview(run)
+                ? collectCreativeDirectionReviewCandidates(container).filter(item => item.selected).length
+                : selected.length;
+            const bar = document.createElement('div');
+            bar.className = 'creative-direction-review-bottom-bar';
+            const meta = document.createElement('div');
+            meta.className = 'creative-direction-review-bottom-meta';
+            const countLabel = Object.assign(document.createElement('strong'), {
+                className: 'creative-direction-review-accepted-count',
+                textContent: `已采纳 ${acceptedCount} / 候选 ${selected.length + rejected.length}`
+            });
+            countLabel.dataset.total = String(selected.length + rejected.length);
+            meta.appendChild(countLabel);
+            meta.appendChild(Object.assign(document.createElement('span'), {
+                textContent: isCreativeAutoPendingDirectionReview(run)
+                    ? '确认后再进入 prompt 和投产阶段'
+                    : '当前为候选方向回看，可继续整理或投产'
+            }));
+            bar.appendChild(meta);
+
+            const actions = document.createElement('div');
+            actions.className = 'creative-direction-review-bottom-actions';
+            const knowledgeBtn = makeCreativeMiniButton('去知识库整理', openCreativeDirectionKnowledgeWorkbench);
+            const productionBtn = makeCreativeMiniButton('生成投产任务', () => handleCreativeDirectionReviewProduction(run));
+            productionBtn.classList.add('is-primary');
+            productionBtn.disabled = !run.runId || (!isCreativeAutoPendingDirectionReview(run) && !(run.agentOnly === true && Number(run.promptTotal) > 0));
+            const feishuBtn = makeCreativeMiniButton('回填飞书', openCreativeFeishuWritebackPanel);
+            actions.appendChild(knowledgeBtn);
+            actions.appendChild(productionBtn);
+            actions.appendChild(feishuBtn);
+            bar.appendChild(actions);
+            container.appendChild(bar);
+        }
+
+        function renderCreativeDirectionReviewPanel(run = {}) {
+            const container = document.getElementById('creativeDirectionReviewPanel');
+            if (!container) return;
+            container.textContent = '';
+            const review = getCreativeAutoCandidateReview(run);
+            const selected = review && Array.isArray(review.selected) ? review.selected : [];
+            const rejected = review && Array.isArray(review.rejected) ? review.rejected : [];
+            if (!review || (!selected.length && !rejected.length)) {
+                container.hidden = true;
+                return;
+            }
+            container.hidden = false;
+            container.dataset.runId = run.runId || '';
+            container.classList.toggle('is-editable', isCreativeAutoPendingDirectionReview(run));
+
+            const header = document.createElement('div');
+            header.className = 'creative-direction-review-toolbar';
+            const title = document.createElement('div');
+            title.appendChild(Object.assign(document.createElement('strong'), { textContent: '审核候选方向' }));
+            title.appendChild(Object.assign(document.createElement('span'), {
+                textContent: isCreativeAutoPendingDirectionReview(run)
+                    ? `入选 ${selected.length} 个 / 淘汰 ${rejected.length} 个。编辑方向标签后再进入 prompt 阶段。`
+                    : `入选 ${review.selectedCount || selected.length} 个 / 淘汰 ${review.rejectedCount || rejected.length} 个。已转成短中文方向标签。`
+            }));
+            const actions = document.createElement('div');
+            actions.className = 'creative-direction-review-actions';
+            if (isCreativeAutoPendingDirectionReview(run)) {
+                actions.appendChild(makeCreativeMiniButton('全部采纳并生成 prompt', () => submitCreativeDirectionReview(run.runId, { promptOnly: true })));
+                const continueBtn = makeCreativeMiniButton(run.agentOnly ? '确认生成 prompt' : '确认并继续生图', () => submitCreativeDirectionReview(run.runId, { promptOnly: run.agentOnly === true }));
+                continueBtn.classList.add('is-primary');
+                actions.appendChild(continueBtn);
+            } else {
+                actions.appendChild(makeCreativeMiniButton('复制全部方向', () => copyCreativeAutoText(selected.concat(rejected).map(creativeAutoCandidateText).join('\n\n'), '候选方向')));
+                if (run.agentOnly === true && Number(run.promptTotal) > 0) {
+                    const continueBtn = makeCreativeMiniButton('继续调用生图平台', () => continueCreativeAutoRunToLegil(run.runId));
+                    continueBtn.classList.add('is-primary');
+                    actions.appendChild(continueBtn);
+                }
+            }
+            header.appendChild(title);
+            header.appendChild(actions);
+            container.appendChild(header);
+
+            const grid = document.createElement('div');
+            grid.className = 'creative-direction-review-grid';
+            selected.concat(rejected).forEach((candidate, index) => {
+                if (isCreativeAutoPendingDirectionReview(run)) {
+                    grid.appendChild(renderCreativeDirectionReviewCard(candidate, {
+                        index,
+                        runId: run.runId
+                    }));
+                } else {
+                    grid.appendChild(renderCreativeAutoCandidateCard(candidate));
+                }
+            });
+            container.appendChild(grid);
+            const info = document.createElement('div');
+            info.className = 'info-box loading';
+            info.id = 'creativeDirectionReviewInfo';
+            info.textContent = isCreativeAutoPendingDirectionReview(run)
+                ? '等待人工确认候选方向。删除的候选不会进入 prompt 生成。'
+                : '候选方向已按方向标签展示，可回看 Agent 为什么保留这些方向。';
+            container.appendChild(info);
+            renderCreativeDirectionReviewActionBar(container, run, review);
+        }
+
+        async function submitCreativeDirectionReview(runId = '', options = {}) {
+            const targetRunId = String(runId || creativeAutoCurrentRunId || '').trim();
+            const candidates = collectCreativeDirectionReviewCandidates(document.getElementById('creativeDirectionReviewPanel'), options.reviewKey);
+            const selected = candidates.filter(candidate => candidate.status !== 'deleted' && candidate.selected !== false);
+            if (!targetRunId || !selected.length) {
+                showToast('请至少采纳 1 个候选方向', 'error');
+                return;
+            }
+            const confirmed = confirm(options.promptOnly
+                ? `确认用 ${selected.length} 个候选方向生成 prompt？`
+                : `确认用 ${selected.length} 个候选方向继续生成 prompt 并调用生图平台？`);
+            if (!confirmed) return;
+            setCreativeDirectionReviewInfo('正在提交候选方向审核结果...', 'loading');
+            setCreativeAutoRunning(true, creativeAutoLastRun);
+            try {
+                const data = await fetchJsonWithTimeout(`/api/creative-auto/runs/${encodeURIComponent(targetRunId)}/direction-review`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        candidates,
+                        promptOnly: options.promptOnly === true,
+                        browserMode: config.creativeBrowserMode
+                    })
+                }, 30000, '提交候选方向审核失败');
+                if (!data.success || !data.run) throw new Error(data.message || '提交候选方向审核失败');
+                creativeAutoCurrentRunId = data.run.runId;
+                renderCreativeAutoRun(data.run);
+                startCreativeAutoPolling();
+                showToast('候选方向审核已提交');
+            } catch (error) {
+                setCreativeDirectionReviewInfo(error.message || '提交候选方向审核失败', 'error');
+                setCreativeAutoRunning(false, creativeAutoLastRun);
+                showToast(error.message || '提交候选方向审核失败', 'error');
+            }
+        }
+
+        async function addCreativeDirectionCandidateToDrafts(runId = '', reviewKey = '') {
+            const targetRunId = String(runId || creativeAutoCurrentRunId || '').trim();
+            if (!targetRunId || !reviewKey) return;
+            const candidates = collectCreativeDirectionReviewCandidates(document.getElementById('creativeDirectionReviewPanel'), reviewKey);
+            setCreativeDirectionReviewInfo('正在送入成长层草案...', 'loading');
+            try {
+                const res = await fetch(`/api/creative-knowledge/direction-drafts/from-run/${encodeURIComponent(targetRunId)}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        candidateKey: reviewKey,
+                        candidates
+                    })
+                });
+                const data = await readJsonResponse(res, '送入成长层失败');
+                if (!data.success) throw new Error(data.message || '送入成长层失败');
+                setCreativeDirectionReviewInfo(data.message || '已送入成长层草案', 'success');
+                showToast('已送入成长层草案');
+            } catch (error) {
+                setCreativeDirectionReviewInfo(error.message || '送入成长层失败', 'error');
+                showToast(error.message || '送入成长层失败', 'error');
+            }
         }
 
         function renderCreativeAutoEmptyState(container, titleText, messageText, actions = []) {
@@ -2092,7 +2920,7 @@ let creativeAutoCurrentRunId = '';
                 });
                 selector.appendChild(checkbox);
                 const name = document.createElement('span');
-                name.textContent = `${index + 1}. ${item.promptTitle || item.newDirectionName || item.direction || '提示词'}`;
+                name.textContent = `${index + 1}. ${creativeAutoLocalizeDirectionText(item.promptTitle || item.newDirectionName || item.direction || '提示词')}`;
                 selector.appendChild(name);
                 top.appendChild(selector);
                 top.appendChild(makeCreativeMiniButton('复制', () => copyCreativeAutoText(getCreativeAutoPromptText(item), `提示词 ${index + 1}`)));
@@ -2102,7 +2930,7 @@ let creativeAutoCurrentRunId = '';
                 const meta = document.createElement('div');
                 meta.className = 'creative-auto-prompt-meta';
                 meta.textContent = [
-                    item.newDirectionName || item.direction || '',
+                    creativeAutoLocalizeDirectionText(item.newDirectionName || item.direction || ''),
                     item.promptHash ? `hash ${item.promptHash}` : '',
                     item.translationVersion || ''
                 ].filter(Boolean).join(' · ');
@@ -2110,7 +2938,7 @@ let creativeAutoCurrentRunId = '';
 
                 const text = document.createElement('div');
                 text.className = 'creative-auto-prompt-text';
-                text.textContent = getCreativeAutoPromptText(item);
+                text.textContent = creativeAutoLocalizeDirectionText(getCreativeAutoPromptText(item));
                 card.appendChild(text);
                 list.appendChild(card);
             });
@@ -2121,12 +2949,12 @@ let creativeAutoCurrentRunId = '';
                 const top = document.createElement('div');
                 top.className = 'creative-auto-prompt-title';
                 const name = document.createElement('span');
-                name.textContent = `丢弃 ${index + 1}. ${item.promptTitle || item.newDirectionName || item.direction || '提示词'}`;
+                name.textContent = `丢弃 ${index + 1}. ${creativeAutoLocalizeDirectionText(item.promptTitle || item.newDirectionName || item.direction || '提示词')}`;
                 top.appendChild(name);
                 card.appendChild(top);
                 const meta = document.createElement('div');
                 meta.className = 'creative-auto-prompt-meta';
-                meta.textContent = `${item.reason || 'rejected'} · ${item.message || '提示词质检已丢弃'}`;
+                meta.textContent = creativeAutoLocalizeDirectionText(`${item.reason || 'rejected'} · ${item.message || '提示词质检已丢弃'}`);
                 card.appendChild(meta);
                 list.appendChild(card);
             });
@@ -2137,7 +2965,7 @@ let creativeAutoCurrentRunId = '';
                 const top = document.createElement('div');
                 top.className = 'creative-auto-prompt-title';
                 const name = document.createElement('span');
-                name.textContent = `失败 ${index + 1}. ${item.promptTitle || item.newDirectionName || item.direction || '提示词'}`;
+                name.textContent = `失败 ${index + 1}. ${creativeAutoLocalizeDirectionText(item.promptTitle || item.newDirectionName || item.direction || '提示词')}`;
                 top.appendChild(name);
                 if (getCreativeAutoPromptText(item)) {
                     top.appendChild(makeCreativeMiniButton('复制', () => copyCreativeAutoText(getCreativeAutoPromptText(item), `失败提示词 ${index + 1}`)));
@@ -2148,7 +2976,7 @@ let creativeAutoCurrentRunId = '';
                 meta.textContent = [
                     item.displayIndex ? `批次序号 ${item.displayIndex}` : '',
                     item.promptHash ? `hash ${item.promptHash}` : '',
-                    item.error || item.message || '生图生成失败'
+                    creativeAutoLocalizeDirectionText(item.error || item.message || '生图生成失败')
                 ].filter(Boolean).join(' · ');
                 card.appendChild(meta);
                 list.appendChild(card);
@@ -2352,7 +3180,7 @@ let creativeAutoCurrentRunId = '';
                     ? `修复 ${repairReport.attempts.length} 轮，补候选 ${repairReport.generatedPromptCount || 0} 条，最终 ${repairReport.finalAcceptedPromptCount || 0}/${repairReport.targetPromptCount || 0}`
                     : '';
                 appendCreativeAutoDetail(detail, '任务 ID', run.runId);
-                appendCreativeAutoDetail(detail, '闃舵', `${run.status || ''} / ${run.phase || ''}`);
+                appendCreativeAutoDetail(detail, '阶段', `${run.status || ''} / ${run.phase || ''}`);
                 appendCreativeAutoDetail(detail, '阶段说明', stageText);
                 appendCreativeAutoDetail(detail, '方向规划', planSummary);
                 appendCreativeAutoDetail(detail, '自动修复', repairSummary);
@@ -2366,6 +3194,7 @@ let creativeAutoCurrentRunId = '';
                 const files = run.assets && Array.isArray(run.assets.filePaths) ? run.assets.filePaths.slice(0, 4) : [];
                 if (files.length) appendCreativeAutoDetail(detail, '文件', files.join(' | '));
             }
+            renderCreativeDirectionReviewPanel(run);
             renderCreativeAutoPromptPanel(run);
             const savedCount = Number(result.savedCount) || Number(run.assets?.newAssetCount) || 0;
             if (run.agentOnly !== true && savedCount > 0) {
@@ -2480,6 +3309,7 @@ let creativeAutoCurrentRunId = '';
 
         function buildCreativeAutoStartConfirmation(settings = getCreativeAutoRunSettings()) {
             const queueTargets = getCreativeAutoTargetQueueTargets();
+            const directionDefaults = getCreativeAutoTargetQueueDefaults();
             const queueLine = queueTargets.length
                 ? `待拓展方向：${queueTargets.length} 个，将按队列逐个拓展并生图，预计 ${getCreativeAutoTargetQueueExpectedPromptCount()} 条提示词\n`
                 : '';
@@ -2491,6 +3321,8 @@ let creativeAutoCurrentRunId = '';
             return (
                 '确认启动“开始创意拓展产图”：\n\n' +
                 `模式：${settings.label}\n` +
+                `候选方向审核：${directionDefaults.directionReviewMode === 'manual' ? '人工审核，先停在候选方向确认' : '自动通过，候选入选后直接生成 prompt'}\n` +
+                `标签组合策略：${directionDefaults.tagStrategy === 'explore' ? '探索拓展，优先补缺口标签' : '稳定拓展，优先复用高表现标签'}\n` +
                 `目标：${getCreativeAutoEffectiveTargetLabel()}\n` +
                 queueLine +
                 `${expectedLine}\n` +
@@ -2573,9 +3405,15 @@ let creativeAutoCurrentRunId = '';
                             diversityMode: directionDefaults.diversityMode,
                             historyScope: directionDefaults.historyScope,
                             candidateMultiplier: directionDefaults.candidateMultiplier,
+                            reviewMode: directionDefaults.directionReviewMode,
+                            tagStrategy: directionDefaults.tagStrategy,
+                            expansionStrategy: directionDefaults.tagStrategy,
                             minScore: 70,
                             preferredScore: 85,
                             maxRepairAttempts: 2
+                        },
+                        directionReview: {
+                            mode: directionDefaults.directionReviewMode
                         },
                         directionIds: manualDirection.ids.length ? manualDirection.ids : undefined,
                         directionId: manualDirection.ids.length === 1 ? manualDirection.ids[0] : undefined,
@@ -3083,6 +3921,9 @@ let creativeAutoCurrentRunId = '';
             });
             document.getElementById('creativeAutoCandidateMultiplier')?.addEventListener('input', () => {
                 renderCreativeAutoTargetQueue();
+                updateCreativeS3Flow(creativeAutoLastRun, creativeAutoLastStatus);
+            });
+            document.getElementById('creativeAutoDirectionReviewMode')?.addEventListener('change', () => {
                 updateCreativeS3Flow(creativeAutoLastRun, creativeAutoLastStatus);
             });
             document.getElementById('creativeAutoDirectionSearch')?.addEventListener('input', () => renderCreativeAutoDirectionTree());

@@ -46,6 +46,9 @@ class LegilAutomation extends EventEmitter {
         // 当前使用的参考图索引
         this.currentRefIndex = 0;
         this.generationSettings = { ...LEGIL_DEFAULT_SETTINGS };
+        this.lastGenerationOutcome = null;
+        this.lastUploadedReferenceImagePath = '';
+        this.lastUploadedReferenceImagePaths = [];
     }
 }
 
